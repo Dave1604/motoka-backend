@@ -1,32 +1,7 @@
-/**
- * Generate a 6-character alphanumeric user ID
- * Matches the Laravel backend format
- */
-export function generateUserId() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let userId = '';
-  for (let i = 0; i < 6; i++) {
-    userId += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return userId;
-}
+const CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
 
-/**
- * Generate a 6-digit numeric OTP
- */
-export function generateOTP() {
-  return Math.floor(100000 + Math.random() * 900000).toString();
-}
+export const generateUserId = () => Array.from({ length: 6 }, () => CHARS.charAt(Math.floor(Math.random() * CHARS.length))).join('');
 
-/**
- * Generate a secure random token
- */
-export function generateToken(length = 32) {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let token = '';
-  for (let i = 0; i < length; i++) {
-    token += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return token;
-}
+export const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+export const generateToken = (length = 32) => Array.from({ length }, () => CHARS.charAt(Math.floor(Math.random() * CHARS.length))).join('');

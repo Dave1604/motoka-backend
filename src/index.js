@@ -2,7 +2,6 @@ import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 
-// Load environment variables FIRST
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 config({ path: join(__dirname, '..', '.env') });
@@ -12,30 +11,19 @@ import cors from 'cors';
 import authRoutes from './routes/auth.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 
-// Validate required environment variables
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
 const missingEnvVars = requiredEnvVars.filter(key => !process.env[key]);
 
-if (missingEnvVars.length > 0) {
-  console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
-  console.error('   Please set these in your .env file or Render dashboard.');
-  // Don't exit in production - let health checks fail gracefully
-  if (process.env.NODE_ENV !== 'production') {
-    process.exit(1);
-  }
+if (missingEnvVars.length > 0 && process.env.NODE_ENV !== 'production') {
+  console.error('Missing environment variables:', missingEnvVars.join(', '));
+  process.exit(1);
 }
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ===========================================
-// SECURITY & MIDDLEWARE
-// ===========================================
-
-// Trust proxy (required for Render, Heroku, etc.)
 app.set('trust proxy', 1);
 
-// Security headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
@@ -44,23 +32,18 @@ app.use((req, res, next) => {
   next();
 });
 
-// CORS - Configure for your frontend domain
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:3001',
-  'http://localhost:5173', // Vite default
+  'http://localhost:5173',
   process.env.FRONTEND_URL
 ].filter(Boolean);
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
       return callback(null, true);
     }
-    
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -68,30 +51,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// Body parsing with size limits
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-
-// Rate limiting
 app.use(apiLimiter);
 
-// Request logging (simple version - use winston/morgan in production)
-app.use((req, res, next) => {
-  const start = Date.now();
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    if (process.env.NODE_ENV !== 'test') {
-      console.log(`${req.method} ${req.path} ${res.statusCode} - ${duration}ms`);
-    }
-  });
-  next();
-});
-
-// ===========================================
-// ROUTES
-// ===========================================
-
-// Health check (required for Render)
 app.get('/', (req, res) => {
   res.json({
     success: true,
@@ -107,18 +70,12 @@ app.get('/health', (req, res) => {
   res.status(healthy ? 200 : 503).json({
     success: healthy,
     status: healthy ? 'healthy' : 'degraded',
-    checks: {
-      environment: missingEnvVars.length === 0 ? 'ok' : 'missing variables',
-      database: 'supabase' // Could add actual DB ping here
-    },
     timestamp: new Date().toISOString()
   });
 });
 
-// API routes
 app.use('/api', authRoutes);
 
-// API documentation endpoint
 app.get('/api/docs', (req, res) => {
   res.json({
     name: 'Motoka Authentication API',
@@ -151,79 +108,43 @@ app.get('/api/docs', (req, res) => {
   });
 });
 
-// ===========================================
-// ERROR HANDLING
-// ===========================================
-
-// 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: `Route ${req.method} ${req.path} not found`,
-    hint: 'Check /api/docs for available endpoints'
+    message: `Route ${req.method} ${req.path} not found`
   });
 });
 
-// Global error handler
 app.use((err, req, res, next) => {
-  console.error('Error:', err.message);
-  
-  // Don't leak error details in production
   const isDev = process.env.NODE_ENV === 'development';
   
-  // CORS error
   if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({
-      success: false,
-      message: 'Origin not allowed'
-    });
+    return res.status(403).json({ success: false, message: 'Origin not allowed' });
   }
   
-  // Validation errors
   if (err.name === 'ValidationError') {
-    return res.status(422).json({
-      success: false,
-      message: 'Validation failed',
-      errors: isDev ? err.errors : undefined
-    });
+    return res.status(422).json({ success: false, message: 'Validation failed' });
   }
   
-  // JWT errors
   if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
-    return res.status(401).json({
-      success: false,
-      message: err.name === 'TokenExpiredError' ? 'Token expired' : 'Invalid token'
-    });
+    return res.status(401).json({ success: false, message: 'Invalid or expired token' });
   }
   
-  // Default error
   res.status(err.status || 500).json({
     success: false,
-    message: isDev ? err.message : 'Internal server error',
-    stack: isDev ? err.stack : undefined
+    message: isDev ? err.message : 'Internal server error'
   });
 });
-
-// ===========================================
-// START SERVER
-// ===========================================
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 ╔══════════════════════════════════════════════╗
-║                                              ║
-║   🚗  MOTOKA API SERVER                      ║
-║                                              ║
+║   MOTOKA API SERVER                          ║
 ║   URL: http://localhost:${PORT}                 ║
 ║   Environment: ${(process.env.NODE_ENV || 'development').padEnd(16)}       ║
-║   Status: ${missingEnvVars.length ? 'DEGRADED ⚠️' : 'READY ✅'}                     ║
-║                                              ║
+║   Status: ${missingEnvVars.length ? 'DEGRADED' : 'READY ✅'}                       ║
 ╚══════════════════════════════════════════════╝
   `);
-  
-  if (missingEnvVars.length) {
-    console.warn('⚠️  Missing:', missingEnvVars.join(', '));
-  }
 });
 
 export default app;

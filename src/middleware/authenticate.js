@@ -1,54 +1,42 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { unauthorized, forbidden } from '../utils/responses.js';
 
-/**
- * Middleware to verify Supabase JWT token
- * Extracts user from Authorization header
- */
 export const authenticate = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (!authHeader?.startsWith('Bearer ')) {
       return unauthorized(res, 'No token provided');
     }
     
     const token = authHeader.split(' ')[1];
     const supabaseAdmin = getSupabaseAdmin();
     
-    // Verify token with Supabase
     const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
     
     if (error || !user) {
       return unauthorized(res, 'Invalid or expired token');
     }
     
-    // Fetch user profile
-    const { data: profile, error: profileError } = await supabaseAdmin
+    const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('*')
       .eq('id', user.id)
       .single();
     
-    if (profileError || !profile) {
+    if (!profile) {
       return unauthorized(res, 'User profile not found');
     }
     
-    // Check if user is suspended
     if (profile.is_suspended) {
       return forbidden(res, 'Your account has been suspended');
     }
     
-    // Check if soft deleted
     if (profile.deleted_at) {
       return forbidden(res, 'Your account has been deleted');
     }
     
-    // Attach user data to request
-    req.user = {
-      ...user,
-      profile
-    };
+    req.user = { ...user, profile };
     req.token = token;
     
     next();
@@ -58,14 +46,11 @@ export const authenticate = async (req, res, next) => {
   }
 };
 
-/**
- * Optional authentication - doesn't fail if no token
- */
 export const optionalAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
     
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    if (!authHeader?.startsWith('Bearer ')) {
       req.user = null;
       return next();
     }
@@ -73,9 +58,9 @@ export const optionalAuth = async (req, res, next) => {
     const token = authHeader.split(' ')[1];
     const supabaseAdmin = getSupabaseAdmin();
     
-    const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+    const { data: { user } } = await supabaseAdmin.auth.getUser(token);
     
-    if (error || !user) {
+    if (!user) {
       req.user = null;
       return next();
     }
@@ -90,7 +75,7 @@ export const optionalAuth = async (req, res, next) => {
     req.token = token;
     
     next();
-  } catch (error) {
+  } catch {
     req.user = null;
     next();
   }
