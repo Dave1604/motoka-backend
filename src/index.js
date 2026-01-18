@@ -32,23 +32,32 @@ app.use((req, res, next) => {
   next();
 });
 
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://localhost:5173',
-  process.env.FRONTEND_URL
-].filter(Boolean);
-
+// CORS - Allow all localhost ports for development
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
+    // Allow requests with no origin (Postman, mobile apps, curl)
+    if (!origin) return callback(null, true);
+    
+    // Allow all localhost ports
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
       return callback(null, true);
     }
+    
+    // Allow configured frontend URL
+    if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) {
+      return callback(null, true);
+    }
+    
+    // In development, allow all
+    if (process.env.NODE_ENV !== 'production') {
+      return callback(null, true);
+    }
+    
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -61,6 +70,7 @@ app.get('/', (req, res) => {
     message: 'Motoka API is running',
     version: '1.0.0',
     environment: process.env.NODE_ENV || 'development',
+    documentation: `${req.protocol}://${req.get('host')}/api/docs`,
     timestamp: new Date().toISOString()
   });
 });
@@ -76,33 +86,238 @@ app.get('/health', (req, res) => {
 
 app.use('/api', authRoutes);
 
+// Detailed API documentation with payloads
 app.get('/api/docs', (req, res) => {
+  const baseUrl = `${req.protocol}://${req.get('host')}/api`;
+  
   res.json({
     name: 'Motoka Authentication API',
     version: '1.0.0',
-    baseUrl: `${req.protocol}://${req.get('host')}/api`,
+    baseUrl,
+    
     endpoints: {
-      public: {
-        'POST /register': 'Register a new user',
-        'POST /login': 'Login with email/password',
-        'POST /send-login-otp': 'Send OTP for passwordless login',
-        'POST /verify-login-otp': 'Verify OTP and login',
-        'POST /send-otp': 'Send OTP for password reset',
-        'POST /verify-otp': 'Verify password reset OTP',
-        'POST /reset-password': 'Reset password with token',
-        'POST /verify/email-resend': 'Resend email verification',
-        'POST /refresh': 'Refresh access token',
-        'POST /2fa/verify-login': 'Verify 2FA during login'
+      
+      // REGISTER
+      register: {
+        method: 'POST',
+        url: `${baseUrl}/register`,
+        description: 'Register a new user account',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          first_name: { type: 'string', required: true, example: 'John' },
+          last_name: { type: 'string', required: true, example: 'Doe' },
+          email: { type: 'string', required: true, example: 'john@gmail.com' },
+          phone: { type: 'string', required: false, example: '+2341234567890' },
+          password: { type: 'string', required: true, example: 'SecurePass123!' },
+          password_confirmation: { type: 'string', required: true, example: 'SecurePass123!' }
+        },
+        response: {
+          success: { user: '{ id, email, user_id, first_name, last_name, ... }', session: '{ access_token, refresh_token, expires_in }' },
+          error: '{ success: false, message: "Email already registered" }'
+        }
       },
-      protected: {
-        'GET /me': 'Get current user profile',
-        'POST /logout': 'Logout user',
-        'GET /2fa/status': 'Check 2FA status',
-        'POST /2fa/enable-google': 'Enable Google Authenticator',
-        'POST /2fa/verify-google': 'Verify Google Authenticator setup',
-        'POST /2fa/enable-email': 'Enable email 2FA',
-        'POST /2fa/verify-email': 'Verify email 2FA code',
-        'POST /2fa/disable': 'Disable 2FA'
+      
+      // LOGIN
+      login: {
+        method: 'POST',
+        url: `${baseUrl}/login`,
+        description: 'Login with email and password',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' },
+          password: { type: 'string', required: true, example: 'SecurePass123!' }
+        },
+        response: {
+          success: { user: '{...}', session: '{ access_token, refresh_token, expires_in }' },
+          requires_2fa: '{ requires_2fa: true, two_factor_method: "google", temp_token: "...", user_id: "..." }'
+        }
+      },
+      
+      // SEND LOGIN OTP
+      send_login_otp: {
+        method: 'POST',
+        url: `${baseUrl}/send-login-otp`,
+        description: 'Send OTP to email for passwordless login',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' }
+        },
+        response: { success: '{ success: true, message: "OTP sent to your email" }' }
+      },
+      
+      // VERIFY LOGIN OTP
+      verify_login_otp: {
+        method: 'POST',
+        url: `${baseUrl}/verify-login-otp`,
+        description: 'Verify OTP and login (passwordless)',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' },
+          otp: { type: 'string', required: true, example: '123456' }
+        },
+        response: { success: { user: '{...}', session: '{ access_token, refresh_token }' } }
+      },
+      
+      // SEND PASSWORD RESET OTP
+      send_otp: {
+        method: 'POST',
+        url: `${baseUrl}/send-otp`,
+        description: 'Send OTP for password reset',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' }
+        },
+        response: { success: '{ success: true, message: "OTP sent to your email" }' }
+      },
+      
+      // VERIFY PASSWORD RESET OTP
+      verify_otp: {
+        method: 'POST',
+        url: `${baseUrl}/verify-otp`,
+        description: 'Verify OTP for password reset (returns reset_token)',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' },
+          otp: { type: 'string', required: true, example: '123456' }
+        },
+        response: { success: '{ success: true, data: { reset_token: "abc123..." } }' }
+      },
+      
+      // RESET PASSWORD
+      reset_password: {
+        method: 'POST',
+        url: `${baseUrl}/reset-password`,
+        description: 'Reset password using the reset_token from verify-otp',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' },
+          token: { type: 'string', required: true, example: 'reset_token_from_verify_otp' },
+          password: { type: 'string', required: true, example: 'NewSecurePass123!' },
+          password_confirmation: { type: 'string', required: true, example: 'NewSecurePass123!' }
+        },
+        response: { success: '{ success: true, message: "Password reset successfully" }' }
+      },
+      
+      // RESEND EMAIL VERIFICATION
+      resend_email_verification: {
+        method: 'POST',
+        url: `${baseUrl}/verify/email-resend`,
+        description: 'Resend email verification link',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' }
+        },
+        response: { success: '{ success: true, message: "Verification email sent" }' }
+      },
+      
+      // REFRESH TOKEN
+      refresh: {
+        method: 'POST',
+        url: `${baseUrl}/refresh`,
+        description: 'Refresh access token using refresh_token',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          refresh_token: { type: 'string', required: true, example: 'your_refresh_token' }
+        },
+        response: { success: '{ session: { access_token, refresh_token, expires_in } }' }
+      },
+      
+      // GET CURRENT USER (Protected)
+      me: {
+        method: 'GET',
+        url: `${baseUrl}/me`,
+        description: 'Get current logged-in user profile',
+        headers: {
+          'Authorization': 'Bearer <access_token>'
+        },
+        body: null,
+        response: { success: '{ user: { id, email, user_id, first_name, last_name, ... } }' }
+      },
+      
+      // LOGOUT (Protected)
+      logout: {
+        method: 'POST',
+        url: `${baseUrl}/logout`,
+        description: 'Logout current user',
+        headers: {
+          'Authorization': 'Bearer <access_token>'
+        },
+        body: null,
+        response: { success: '{ success: true, message: "Logged out successfully" }' }
+      },
+      
+      // 2FA VERIFY LOGIN (for completing login when 2FA is enabled)
+      '2fa_verify_login': {
+        method: 'POST',
+        url: `${baseUrl}/2fa/verify-login`,
+        description: 'Complete login by verifying 2FA code',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          user_id: { type: 'string', required: true, example: 'uuid-from-login-response' },
+          temp_token: { type: 'string', required: true, example: 'temp_token_from_login' },
+          code: { type: 'string', required: true, example: '123456' }
+        },
+        response: { success: '{ user: {...} }' }
+      },
+      
+      // 2FA STATUS (Protected)
+      '2fa_status': {
+        method: 'GET',
+        url: `${baseUrl}/2fa/status`,
+        description: 'Check if 2FA is enabled for current user',
+        headers: { 'Authorization': 'Bearer <access_token>' },
+        body: null,
+        response: { success: '{ enabled: true/false, method: "google"/"email" }' }
+      },
+      
+      // ENABLE GOOGLE 2FA (Protected)
+      '2fa_enable_google': {
+        method: 'POST',
+        url: `${baseUrl}/2fa/enable-google`,
+        description: 'Start Google Authenticator 2FA setup',
+        headers: { 'Authorization': 'Bearer <access_token>' },
+        body: null,
+        response: { success: '{ secret: "...", qr_code: "data:image/png;base64,..." }' }
+      },
+      
+      // VERIFY GOOGLE 2FA (Protected)
+      '2fa_verify_google': {
+        method: 'POST',
+        url: `${baseUrl}/2fa/verify-google`,
+        description: 'Confirm Google Authenticator setup with code',
+        headers: {
+          'Authorization': 'Bearer <access_token>',
+          'Content-Type': 'application/json'
+        },
+        body: {
+          code: { type: 'string', required: true, example: '123456' }
+        },
+        response: { success: '{ enabled: true, recovery_codes: ["ABC123", ...] }' }
+      },
+      
+      // DISABLE 2FA (Protected)
+      '2fa_disable': {
+        method: 'POST',
+        url: `${baseUrl}/2fa/disable`,
+        description: 'Disable 2FA (requires password)',
+        headers: {
+          'Authorization': 'Bearer <access_token>',
+          'Content-Type': 'application/json'
+        },
+        body: {
+          password: { type: 'string', required: true, example: 'YourCurrentPassword' }
+        },
+        response: { success: '{ enabled: false }' }
+      }
+    },
+    
+    notes: {
+      authentication: 'Protected endpoints require "Authorization: Bearer <access_token>" header',
+      token_expiry: 'Access tokens expire in 1 hour. Use /refresh with refresh_token to get new tokens.',
+      rate_limits: {
+        general: '100 requests per 15 minutes',
+        auth: '10 requests per 15 minutes',
+        otp: '5 requests per 15 minutes'
       }
     }
   });
