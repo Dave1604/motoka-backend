@@ -202,12 +202,25 @@ app.get('/api/docs', (req, res) => {
       resend_email_verification: {
         method: 'POST',
         url: `${baseUrl}/verify/email-resend`,
-        description: 'Resend email verification link',
+        description: 'Resend email verification OTP',
         headers: { 'Content-Type': 'application/json' },
         body: {
           email: { type: 'string', required: true, example: 'john@gmail.com' }
         },
         response: { success: '{ success: true, message: "Verification email sent" }' }
+      },
+      
+      // VERIFY EMAIL
+      verify_email: {
+        method: 'POST',
+        url: `${baseUrl}/verify-email`,
+        description: 'Verify email using OTP from signup email',
+        headers: { 'Content-Type': 'application/json' },
+        body: {
+          email: { type: 'string', required: true, example: 'john@gmail.com' },
+          otp: { type: 'string', required: true, example: '123456' }
+        },
+        response: { success: '{ user: {...}, session: { access_token, refresh_token, expires_in } }' }
       },
       
       // REFRESH TOKEN

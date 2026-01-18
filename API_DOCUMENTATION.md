@@ -259,14 +259,55 @@ Content-Type: application/json
 
 ---
 
-### 8. Resend Email Verification
+### 8. Email Verification
 
+**Step 1: Request Verification OTP (after registration)**
 ```http
 POST /api/verify/email-resend
 Content-Type: application/json
 
 {
   "email": "john@gmail.com"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Verification email sent"
+}
+```
+
+**Step 2: Verify Email with OTP**
+```http
+POST /api/verify-email
+Content-Type: application/json
+
+{
+  "email": "john@gmail.com",
+  "otp": "123456"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Email verified successfully",
+  "data": {
+    "user": {
+      "id": "uuid",
+      "email": "john@gmail.com",
+      "email_verified": true,
+      ...
+    },
+    "session": {
+      "access_token": "eyJ...",
+      "refresh_token": "...",
+      "expires_in": 3600
+    }
+  }
 }
 ```
 
