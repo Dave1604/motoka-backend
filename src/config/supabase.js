@@ -26,3 +26,27 @@ export function getSupabaseAdmin() {
   }
   return _supabaseAdmin;
 }
+
+/**
+ * Creates a user-scoped Supabase client that respects RLS policies
+ * @param {string} accessToken - User's access token
+ * @returns {Object} Supabase client instance
+ */
+export function getSupabaseUser(accessToken) {
+  const { SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY');
+  }
+  
+  return createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: {
+      headers: {
+        Authorization: `Bearer ${accessToken}`
+      }
+    },
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false
+    }
+  });
+}

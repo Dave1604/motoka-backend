@@ -51,6 +51,7 @@ export const resetPasswordValidation = [
 export const twoFactorCodeValidation = [
   body('code').trim().notEmpty().withMessage('Code is required').isLength({ min: 6, max: 6 }).withMessage('Code must be 6 digits').isNumeric().withMessage('Code must be numeric')
 ];
+];
 
 export const updateProfileValidation = [
   body('first_name').optional().trim().isLength({ min: 2, max: 50 }).withMessage('First name must be 2-50 characters'),

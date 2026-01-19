@@ -6,6 +6,9 @@ node_modules/
 .env.local
 .env.*.local
 
+.cursor/mcp.json
+
+
 # Logs
 logs/
 *.log
