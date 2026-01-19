@@ -74,6 +74,7 @@ const parseAllowedOrigins = () => {
 
 const allowedOrigins = parseAllowedOrigins();
 
+// CORS - Restrict to allowed origins
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (mobile apps, Postman, etc.)
@@ -87,9 +88,6 @@ app.use(cors({
     
     callback(new Error('Not allowed by CORS'));
   },
-// CORS - Allow all origins during development/testing phase
-app.use(cors({
-  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
@@ -160,6 +158,7 @@ app.get('/api/docs', (req, res) => {
         'GET /cars/:slug': 'Get a specific car by slug',
         'PUT /cars/:slug': 'Update a specific car by slug',
         'DELETE /cars/:slug': 'Delete a specific car by slug (soft delete)'
+      },
       
       // REGISTER
       register: {
