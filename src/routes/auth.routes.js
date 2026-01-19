@@ -17,6 +17,7 @@ router.post('/reset-password', resetPasswordValidation, validate, auth.resetPass
 router.post('/send-login-otp', otpLimiter, emailValidation, validate, auth.sendLoginOTP);
 router.post('/verify-login-otp', authLimiter, otpValidation, validate, auth.verifyLoginOTP);
 router.post('/verify/email-resend', otpLimiter, emailValidation, validate, auth.resendEmailVerification);
+router.post('/verify-email', authLimiter, otpValidation, validate, auth.verifyEmail);
 router.post('/refresh', auth.refresh);
 
 // 2FA public routes

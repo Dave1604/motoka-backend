@@ -316,6 +316,43 @@ export const resendEmailVerification = async (req, res) => {
   }
 };
 
+export const verifyEmail = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    const supabase = getSupabase();
+    const supabaseAdmin = getSupabaseAdmin();
+    
+    const { data, error } = await supabase.auth.verifyOtp({ 
+      email, 
+      token: otp, 
+      type: 'signup' 
+    });
+    
+    if (error) {
+      return response.error(res, 'Invalid or expired verification code');
+    }
+    
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', data.user.id)
+      .single();
+    
+    return response.success(res, {
+      user: { 
+        id: data.user.id, 
+        email: data.user.email, 
+        email_verified: true,
+        ...profile 
+      },
+      session: data.session
+    }, 'Email verified successfully');
+  } catch (error) {
+    console.error('Email verification error:', error);
+    return response.serverError(res, 'Email verification failed');
+  }
+};
+
 export const me = async (req, res) => {
   try {
     return response.success(res, {

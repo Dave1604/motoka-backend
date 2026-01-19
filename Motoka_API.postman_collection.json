@@ -1,0 +1,545 @@
+{
+  "info": {
+    "name": "Motoka API",
+    "description": "Motoka Authentication API Collection",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://motoka-backend.onrender.com/api",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"email\": \"john@gmail.com\",\n  \"phone\": \"+2341234567890\",\n  \"password\": \"SecurePass123!\",\n  \"password_confirmation\": \"SecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["register"]
+            },
+            "description": "Register a new user account"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.success && jsonData.data && jsonData.data.session) {",
+                  "    pm.collectionVariables.set('accessToken', jsonData.data.session.access_token);",
+                  "    pm.collectionVariables.set('refreshToken', jsonData.data.session.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\",\n  \"password\": \"SecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["login"]
+            },
+            "description": "Login with email and password. Tokens are auto-saved to variables."
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["me"]
+            },
+            "description": "Get the current logged-in user's profile"
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["logout"]
+            },
+            "description": "Logout the current user"
+          }
+        },
+        {
+          "name": "Refresh Token",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.success && jsonData.data && jsonData.data.session) {",
+                  "    pm.collectionVariables.set('accessToken', jsonData.data.session.access_token);",
+                  "    pm.collectionVariables.set('refreshToken', jsonData.data.session.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["refresh"]
+            },
+            "description": "Refresh access token using refresh_token"
+          }
+        }
+      ]
+    },
+    {
+      "name": "OTP Login (Passwordless)",
+      "item": [
+        {
+          "name": "1. Send Login OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/send-login-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["send-login-otp"]
+            },
+            "description": "Send OTP to email for passwordless login"
+          }
+        },
+        {
+          "name": "2. Verify Login OTP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.success && jsonData.data && jsonData.data.session) {",
+                  "    pm.collectionVariables.set('accessToken', jsonData.data.session.access_token);",
+                  "    pm.collectionVariables.set('refreshToken', jsonData.data.session.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/verify-login-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["verify-login-otp"]
+            },
+            "description": "Verify OTP and complete login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Password Reset",
+      "item": [
+        {
+          "name": "1. Send Reset OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/send-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["send-otp"]
+            },
+            "description": "Send OTP for password reset"
+          }
+        },
+        {
+          "name": "2. Verify Reset OTP",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/verify-otp",
+              "host": ["{{baseUrl}}"],
+              "path": ["verify-otp"]
+            },
+            "description": "Verify OTP - returns reset_token"
+          }
+        },
+        {
+          "name": "3. Reset Password",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\",\n  \"token\": \"PASTE_RESET_TOKEN_FROM_VERIFY_OTP\",\n  \"password\": \"NewSecurePass123!\",\n  \"password_confirmation\": \"NewSecurePass123!\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/reset-password",
+              "host": ["{{baseUrl}}"],
+              "path": ["reset-password"]
+            },
+            "description": "Reset password using the token from verify-otp"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Email Verification",
+      "item": [
+        {
+          "name": "1. Resend Verification Email",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/verify/email-resend",
+              "host": ["{{baseUrl}}"],
+              "path": ["verify", "email-resend"]
+            },
+            "description": "Resend email verification OTP"
+          }
+        },
+        {
+          "name": "2. Verify Email with OTP",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.success && jsonData.data && jsonData.data.session) {",
+                  "    pm.collectionVariables.set('accessToken', jsonData.data.session.access_token);",
+                  "    pm.collectionVariables.set('refreshToken', jsonData.data.session.refresh_token);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"john@gmail.com\",\n  \"otp\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/verify-email",
+              "host": ["{{baseUrl}}"],
+              "path": ["verify-email"]
+            },
+            "description": "Verify email address using OTP from signup email"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Two-Factor Authentication",
+      "item": [
+        {
+          "name": "Get 2FA Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/2fa/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["2fa", "status"]
+            },
+            "description": "Check if 2FA is enabled"
+          }
+        },
+        {
+          "name": "Enable Google 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/2fa/enable-google",
+              "host": ["{{baseUrl}}"],
+              "path": ["2fa", "enable-google"]
+            },
+            "description": "Get QR code for Google Authenticator"
+          }
+        },
+        {
+          "name": "Verify Google 2FA Setup",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/2fa/verify-google",
+              "host": ["{{baseUrl}}"],
+              "path": ["2fa", "verify-google"]
+            },
+            "description": "Confirm 2FA setup with code from authenticator app"
+          }
+        },
+        {
+          "name": "Disable 2FA",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"YourCurrentPassword\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/2fa/disable",
+              "host": ["{{baseUrl}}"],
+              "path": ["2fa", "disable"]
+            },
+            "description": "Disable 2FA (requires password)"
+          }
+        },
+        {
+          "name": "Verify 2FA Login",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"USER_ID_FROM_LOGIN\",\n  \"temp_token\": \"TEMP_TOKEN_FROM_LOGIN\",\n  \"code\": \"123456\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/2fa/verify-login",
+              "host": ["{{baseUrl}}"],
+              "path": ["2fa", "verify-login"]
+            },
+            "description": "Complete login when 2FA is required"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Profile Settings",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["settings", "profile"]
+            },
+            "description": "Get current user profile details"
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"phone_number\": \"+2348012345678\",\n  \"address\": \"123 Main Street, Lagos\",\n  \"gender\": \"male\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/settings/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["settings", "profile"]
+            },
+            "description": "Update profile details (all fields optional)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - User Management",
+      "item": [
+        {
+          "name": "List All Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "status", "value": "active", "disabled": true }
+              ]
+            },
+            "description": "List all users (admin only). Query params: page, limit, search, status"
+          }
+        },
+        {
+          "name": "Get Single User",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId"],
+              "variable": [
+                { "key": "userId", "value": "USER_UUID_HERE" }
+              ]
+            },
+            "description": "Get single user details (admin only)"
+          }
+        },
+        {
+          "name": "Suspend User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Violation of terms of service\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId/suspend",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId", "suspend"],
+              "variable": [
+                { "key": "userId", "value": "USER_UUID_HERE" }
+              ]
+            },
+            "description": "Suspend a user account (admin only)"
+          }
+        },
+        {
+          "name": "Activate User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId/activate",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId", "activate"],
+              "variable": [
+                { "key": "userId", "value": "USER_UUID_HERE" }
+              ]
+            },
+            "description": "Reactivate a suspended user (admin only)"
+          }
+        }
+      ]
+    }
+  ]
+}
