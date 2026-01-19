@@ -1,0 +1,680 @@
+{
+	"info": {
+		"name": "Motoka API - Car Endpoints",
+		"description": "Complete Postman collection for all car-related endpoints in the Motoka API.\n\n**Prerequisites:**\n- All endpoints require Bearer token authentication\n- Email verification is required for all endpoints\n- Car registration has rate limiting: 5 requests per 15 minutes\n\n**Setup Instructions:**\n1. Set the 'base_url' variable (default: http://localhost:3000)\n2. Set the 'auth_token' variable after logging in (get token from login endpoint)\n3. The 'car_slug' variable is automatically set when registering a car\n\n**File Upload Support:**\n- The API now supports direct file uploads using multipart/form-data\n- File fields: document_images (array), cac_document, letterhead, means_of_identification\n- Allowed types: jpg, jpeg, png, webp (images), pdf (documents)\n- Max sizes: 5MB (images), 10MB (documents)\n- URL-based submissions still work for backward compatibility\n\n**Endpoints:**\n1. POST /api/reg-car - Register a new car (supports file uploads)\n2. GET /api/get-cars - Get all cars with pagination\n3. GET /api/cars/:slug - Get a specific car by slug\n4. PUT /api/cars/:slug - Update a car (supports file uploads)\n5. DELETE /api/cars/:slug - Soft delete a car",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "motoka-car-api"
+	},
+	"item": [
+		{
+			"name": "1. Register Car",
+			"item": [
+				{
+					"name": "Register Car - With File Uploads",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.data && response.data.car && response.data.car.slug) {",
+									"        pm.collectionVariables.set('car_slug', response.data.car.slug);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "name_of_owner",
+									"value": "John Doe",
+									"type": "text"
+								},
+								{
+									"key": "phone_number",
+									"value": "+2348012345678",
+									"type": "text"
+								},
+								{
+									"key": "address",
+									"value": "123 Main Street, Victoria Island, Lagos, Nigeria",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_make",
+									"value": "Toyota",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_model",
+									"value": "Camry",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_year",
+									"value": "2022",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_color",
+									"value": "Black",
+									"type": "text"
+								},
+								{
+									"key": "car_type",
+									"value": "private",
+									"type": "text"
+								},
+								{
+									"key": "registration_status",
+									"value": "unregistered",
+									"type": "text"
+								},
+								{
+									"key": "chasis_no",
+									"value": "CH123456789",
+									"type": "text"
+								},
+								{
+									"key": "engine_no",
+									"value": "ENG987654321",
+									"type": "text"
+								},
+								{
+									"key": "document_images",
+									"type": "file",
+									"src": [],
+									"description": "Upload up to 10 image files (jpg, jpeg, png, webp) - 5MB max each"
+								},
+								{
+									"key": "document_images",
+									"type": "file",
+									"src": [],
+									"description": "Second document image (optional)"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/reg-car",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"reg-car"
+							]
+						},
+						"description": "Register a car with file uploads using multipart/form-data.\n\n**File Upload Fields:**\n- `document_images`: Upload multiple image files (max 10, 5MB each)\n- `cac_document`: Upload single document (max 10MB) - required for Dealership type\n- `letterhead`: Upload single document (max 10MB) - required for Dealership type\n- `means_of_identification`: Upload single document (max 10MB) - required for Dealership type\n\n**Allowed File Types:**\n- Images: jpg, jpeg, png, webp\n- Documents: pdf, jpg, jpeg, png\n\n**Note:** In Postman, click 'Select Files' to upload actual files. You can add multiple `document_images` fields by clicking 'Add' next to the field name."
+					},
+					"response": []
+				},
+				{
+					"name": "Register Car - Dealership with File Uploads",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.data && response.data.car && response.data.car.slug) {",
+									"        pm.collectionVariables.set('car_slug', response.data.car.slug);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "name_of_owner",
+									"value": "Dealership Owner",
+									"type": "text"
+								},
+								{
+									"key": "address",
+									"value": "100 Business District, Lagos, Nigeria",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_make",
+									"value": "Mercedes",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_model",
+									"value": "C-Class",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_year",
+									"value": "2024",
+									"type": "text"
+								},
+								{
+									"key": "vehicle_color",
+									"value": "Silver",
+									"type": "text"
+								},
+								{
+									"key": "car_type",
+									"value": "commercial",
+									"type": "text"
+								},
+								{
+									"key": "registration_status",
+									"value": "unregistered",
+									"type": "text"
+								},
+								{
+									"key": "plate_number",
+									"value": "DEAL001",
+									"type": "text"
+								},
+								{
+									"key": "type",
+									"value": "Dealership",
+									"type": "text"
+								},
+								{
+									"key": "company_name",
+									"value": "ABC Motors Ltd",
+									"type": "text"
+								},
+								{
+									"key": "company_address",
+									"value": "100 Business District, Lagos, Nigeria",
+									"type": "text"
+								},
+								{
+									"key": "company_phone",
+									"value": "+2348034567890",
+									"type": "text"
+								},
+								{
+									"key": "cac_number",
+									"value": "CAC123456",
+									"type": "text"
+								},
+								{
+									"key": "cac_document",
+									"type": "file",
+									"src": [],
+									"description": "Upload CAC document (pdf, jpg, jpeg, png) - 10MB max"
+								},
+								{
+									"key": "letterhead",
+									"type": "file",
+									"src": [],
+									"description": "Upload company letterhead (pdf, jpg, jpeg, png) - 10MB max"
+								},
+								{
+									"key": "means_of_identification",
+									"type": "file",
+									"src": [],
+									"description": "Upload means of identification (pdf, jpg, jpeg, png) - 10MB max"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/reg-car",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"reg-car"
+							]
+						},
+						"description": "Register a dealership car with all required company documents as file uploads."
+					},
+					"response": []
+				},
+				{
+					"name": "Register Car - Unregistered Private (JSON)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.data && response.data.car && response.data.car.slug) {",
+									"        pm.collectionVariables.set('car_slug', response.data.car.slug);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name_of_owner\": \"John Doe\",\n  \"phone_number\": \"+2348012345678\",\n  \"address\": \"123 Main Street, Victoria Island, Lagos, Nigeria\",\n  \"vehicle_make\": \"Toyota\",\n  \"vehicle_model\": \"Camry\",\n  \"vehicle_year\": 2022,\n  \"vehicle_color\": \"Black\",\n  \"car_type\": \"private\",\n  \"registration_status\": \"unregistered\",\n  \"chasis_no\": \"CH123456789\",\n  \"engine_no\": \"ENG987654321\",\n  \"document_images\": [\n    \"https://example.com/image1.jpg\",\n    \"https://example.com/image2.jpg\"\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/reg-car",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"reg-car"
+							]
+						},
+						"description": "Register an unregistered private car with URLs (backward compatible).\n\n**Expected Response (201 Created):**\n```json\n{\n  \"success\": true,\n  \"message\": \"Car registered successfully\",\n  \"data\": {\n    \"car\": {\n      \"slug\": \"uuid\",\n      \"name_of_owner\": \"John Doe\",\n      \"status\": \"unpaid\",\n      ...\n    }\n  }\n}\n```\n\nThe car_slug variable is automatically set for use in other requests."
+					},
+					"response": []
+				},
+				{
+					"name": "Register Car - Registered Commercial (JSON)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.data && response.data.car && response.data.car.slug) {",
+									"        pm.collectionVariables.set('car_slug', response.data.car.slug);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name_of_owner\": \"Jane Smith\",\n  \"phone_number\": \"+2348023456789\",\n  \"address\": \"456 Broad Street, Ikeja, Lagos, Nigeria\",\n  \"vehicle_make\": \"Honda\",\n  \"vehicle_model\": \"Accord\",\n  \"vehicle_year\": 2023,\n  \"vehicle_color\": \"White\",\n  \"car_type\": \"commercial\",\n  \"registration_status\": \"registered\",\n  \"registration_no\": \"LAG123ABC\",\n  \"chasis_no\": \"CH987654321\",\n  \"engine_no\": \"ENG123456789\",\n  \"date_issued\": \"2023-01-15T00:00:00Z\",\n  \"expiry_date\": \"2024-01-15T00:00:00Z\",\n  \"document_images\": [\n    \"https://example.com/registration.jpg\"\n  ],\n  \"plate_number\": \"LAG-123-ABC\",\n  \"type\": \"Normal\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/reg-car",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"reg-car"
+							]
+						},
+						"description": "Register a registered commercial car with registration details (URL-based)"
+					},
+					"response": []
+				},
+				{
+					"name": "Register Car - Dealership (JSON)",
+					"event": [
+						{
+							"listen": "test",
+							"script": {
+								"exec": [
+									"if (pm.response.code === 201) {",
+									"    const response = pm.response.json();",
+									"    if (response.data && response.data.car && response.data.car.slug) {",
+									"        pm.collectionVariables.set('car_slug', response.data.car.slug);",
+									"    }",
+									"}"
+								],
+								"type": "text/javascript"
+							}
+						}
+					],
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name_of_owner\": \"Dealership Owner\",\n  \"address\": \"100 Business District, Lagos, Nigeria\",\n  \"vehicle_make\": \"Mercedes\",\n  \"vehicle_model\": \"C-Class\",\n  \"vehicle_year\": 2024,\n  \"vehicle_color\": \"Silver\",\n  \"car_type\": \"commercial\",\n  \"registration_status\": \"unregistered\",\n  \"plate_number\": \"DEAL001\",\n  \"type\": \"Dealership\",\n  \"company_name\": \"ABC Motors Ltd\",\n  \"company_address\": \"100 Business District, Lagos, Nigeria\",\n  \"company_phone\": \"+2348034567890\",\n  \"cac_number\": \"CAC123456\",\n  \"cac_document\": \"https://example.com/cac.pdf\",\n  \"letterhead\": \"https://example.com/letterhead.pdf\",\n  \"means_of_identification\": \"https://example.com/id.pdf\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/reg-car",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"reg-car"
+							]
+						},
+						"description": "Register a car with dealership type and company information (URL-based)"
+					},
+					"response": []
+				},
+				{
+					"name": "Register Car - Validation Error (Missing Fields)",
+					"request": {
+						"method": "POST",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/reg-car",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"reg-car"
+							]
+						},
+						"description": "Test validation error when required fields are missing"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for registering new cars with various configurations.\n\n**File Upload Support:**\n- Use multipart/form-data for direct file uploads\n- Use application/json for URL-based submissions (backward compatible)\n- Rate limiting: 5 requests per 15 minutes\n- Requires email verification\n- All registration examples automatically set the 'car_slug' variable for use in other requests"
+		},
+		{
+			"name": "2. Get Cars",
+			"item": [
+				{
+					"name": "Get All Cars - Default Pagination",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/get-cars",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"get-cars"
+							]
+						},
+						"description": "Get all cars for authenticated user with default pagination (page=1, limit=10).\n\n**Expected Response (200 OK):**\n```json\n{\n  \"success\": true,\n  \"message\": \"Cars retrieved successfully\",\n  \"data\": {\n    \"cars\": [...],\n    \"pagination\": {\n      \"current_page\": 1,\n      \"limit\": 10,\n      \"total_cars\": 25,\n      \"total_pages\": 3,\n      \"has_next\": true,\n      \"has_prev\": false\n    }\n  }\n}\n```"
+					},
+					"response": []
+				},
+				{
+					"name": "Get All Cars - Custom Pagination",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/get-cars?page=1&limit=20",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"get-cars"
+							],
+							"query": [
+								{
+									"key": "page",
+									"value": "1",
+									"description": "Page number (starts from 1)"
+								},
+								{
+									"key": "limit",
+									"value": "20",
+									"description": "Number of items per page (1-100)"
+								}
+							]
+						},
+						"description": "Get all cars with custom pagination parameters"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for retrieving all cars with pagination support"
+		},
+		{
+			"name": "3. Get Car by Slug",
+			"item": [
+				{
+					"name": "Get Car by Slug - Valid",
+					"request": {
+						"method": "GET",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/cars/{{car_slug}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cars",
+								"{{car_slug}}"
+							],
+							"description": "Get a specific car by its slug (UUID). The car_slug variable is automatically set when you register a car.\n\n**Expected Response (200 OK):**\n```json\n{\n  \"success\": true,\n  \"message\": \"Car retrieved successfully\",\n  \"data\": {\n    \"car\": {\n      \"slug\": \"uuid\",\n      \"name_of_owner\": \"John Doe\",\n      \"vehicle_make\": \"Toyota\",\n      ...\n    }\n  }\n}\n```"
+						},
+						"description": "Get a specific car by slug. Use the car_slug variable set from registration."
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for retrieving a specific car by slug"
+		},
+		{
+			"name": "4. Update Car",
+			"item": [
+				{
+					"name": "Update Car - With File Uploads",
+					"request": {
+						"method": "PUT",
+						"header": [],
+						"body": {
+							"mode": "formdata",
+							"formdata": [
+								{
+									"key": "vehicle_color",
+									"value": "Blue",
+									"type": "text"
+								},
+								{
+									"key": "phone_number",
+									"value": "+2348012345679",
+									"type": "text"
+								},
+								{
+									"key": "document_images",
+									"type": "file",
+									"src": [],
+									"description": "Upload new document images (replaces existing) - max 10 files, 5MB each"
+								},
+								{
+									"key": "cac_document",
+									"type": "file",
+									"src": [],
+									"description": "Upload new CAC document (replaces existing) - 10MB max"
+								}
+							]
+						},
+						"url": {
+							"raw": "{{base_url}}/api/cars/{{car_slug}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cars",
+								"{{car_slug}}"
+							]
+						},
+						"description": "Update car with file uploads using multipart/form-data.\n\n**Note:** Uploading new files will replace existing files. Only include fields you want to update."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Car - Basic Fields (JSON)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"name_of_owner\": \"John Doe Updated\",\n  \"phone_number\": \"+2348012345679\",\n  \"address\": \"123 Main Street Updated, Victoria Island, Lagos, Nigeria\",\n  \"vehicle_color\": \"Blue\"\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/cars/{{car_slug}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cars",
+								"{{car_slug}}"
+							]
+						},
+						"description": "Update basic fields of a car (partial update). Only provided fields will be updated.\n\n**Expected Response (200 OK):**\n```json\n{\n  \"success\": true,\n  \"message\": \"Car updated successfully\",\n  \"data\": {\n    \"car\": {\n      \"slug\": \"uuid\",\n      \"name_of_owner\": \"John Doe Updated\",\n      \"updated_at\": \"2026-01-14T15:30:00Z\",\n      ...\n    }\n  }\n}\n```\n\n**Note:** Forbidden fields (user_id, status, slug, id, timestamps) are automatically ignored."
+					},
+					"response": []
+				},
+				{
+					"name": "Update Car - Document Images (JSON)",
+					"request": {
+						"method": "PUT",
+						"header": [
+							{
+								"key": "Content-Type",
+								"value": "application/json"
+							}
+						],
+						"body": {
+							"mode": "raw",
+							"raw": "{\n  \"document_images\": [\n    \"https://example.com/new-doc1.jpg\",\n    \"https://example.com/new-doc2.jpg\",\n    \"https://example.com/new-doc3.jpg\"\n  ]\n}"
+						},
+						"url": {
+							"raw": "{{base_url}}/api/cars/{{car_slug}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cars",
+								"{{car_slug}}"
+							]
+						},
+						"description": "Update document images array using URLs (backward compatible)"
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for updating car information.\n\n**File Upload Support:**\n- Use multipart/form-data for direct file uploads\n- Use application/json for URL-based updates (backward compatible)\n- Uploading new files replaces existing files"
+		},
+		{
+			"name": "5. Delete Car",
+			"item": [
+				{
+					"name": "Delete Car - Valid",
+					"request": {
+						"method": "DELETE",
+						"header": [],
+						"url": {
+							"raw": "{{base_url}}/api/cars/{{car_slug}}",
+							"host": [
+								"{{base_url}}"
+							],
+							"path": [
+								"api",
+								"cars",
+								"{{car_slug}}"
+							]
+						},
+						"description": "Soft delete a car by slug. The car will be marked as deleted (deleted_at set) but not permanently removed.\n\n**Expected Response (200 OK):**\n```json\n{\n  \"success\": true,\n  \"message\": \"Car deleted successfully\",\n  \"data\": null\n}\n```\n\n**Note:** After deletion, the car will no longer appear in GET requests."
+					},
+					"response": []
+				}
+			],
+			"description": "Endpoints for deleting cars (soft delete)"
+		}
+	],
+	"event": [
+		{
+			"listen": "prerequest",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		},
+		{
+			"listen": "test",
+			"script": {
+				"type": "text/javascript",
+				"exec": [
+					""
+				]
+			}
+		}
+	],
+	"variable": [
+		{
+			"key": "base_url",
+			"value": "http://localhost:3000",
+			"type": "string"
+		},
+		{
+			"key": "auth_token",
+			"value": "",
+			"type": "string",
+			"description": "Bearer token from login endpoint. Set this after logging in. Required for all car endpoints. Also ensure your email is verified."
+		},
+		{
+			"key": "car_slug",
+			"value": "",
+			"type": "string",
+			"description": "Car slug (UUID) - automatically set when registering a car"
+		}
+	],
+	"auth": {
+		"type": "bearer",
+		"bearer": [
+			{
+				"key": "token",
+				"value": "{{auth_token}}",
+				"type": "string"
+			}
+		]
+	}
+}
