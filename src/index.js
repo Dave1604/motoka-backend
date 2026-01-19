@@ -9,6 +9,8 @@ config({ path: join(__dirname, '..', '.env') });
 import express from 'express';
 import cors from 'cors';
 import authRoutes from './routes/auth.routes.js';
+import profileRoutes from './routes/profile.routes.js';
+import adminRoutes from './routes/admin.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
@@ -65,6 +67,8 @@ app.get('/health', (req, res) => {
 });
 
 app.use('/api', authRoutes);
+app.use('/api/settings/profile', profileRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Detailed API documentation with payloads
 app.get('/api/docs', (req, res) => {
@@ -301,6 +305,96 @@ app.get('/api/docs', (req, res) => {
           password: { type: 'string', required: true, example: 'YourCurrentPassword' }
         },
         response: { success: '{ enabled: false }' }
+      },
+      
+      // ====== PROFILE SETTINGS ======
+      
+      // GET PROFILE (Protected)
+      'settings_get_profile': {
+        method: 'GET',
+        url: `${baseUrl}/settings/profile`,
+        description: 'Get current user profile details',
+        headers: {
+          'Authorization': 'Bearer <access_token>'
+        },
+        response: { success: '{ profile: { id, user_id, email, first_name, last_name, phone_number, image, ... } }' }
+      },
+      
+      // UPDATE PROFILE (Protected)
+      'settings_update_profile': {
+        method: 'PUT',
+        url: `${baseUrl}/settings/profile`,
+        description: 'Update current user profile',
+        headers: {
+          'Authorization': 'Bearer <access_token>',
+          'Content-Type': 'application/json'
+        },
+        body: {
+          first_name: { type: 'string', required: false, example: 'John' },
+          last_name: { type: 'string', required: false, example: 'Doe' },
+          phone_number: { type: 'string', required: false, example: '+2348012345678' },
+          image: { type: 'string', required: false, example: 'https://example.com/avatar.jpg' },
+          nin: { type: 'string', required: false, example: 'AB123456789' },
+          address: { type: 'string', required: false, example: '123 Main Street, Lagos' },
+          gender: { type: 'string', required: false, example: 'male', enum: ['male', 'female', 'other'] }
+        },
+        response: { success: '{ profile: { ... } }' }
+      },
+      
+      // ====== ADMIN USER MANAGEMENT ======
+      
+      // LIST USERS (Admin)
+      'admin_list_users': {
+        method: 'GET',
+        url: `${baseUrl}/admin/users`,
+        description: 'List all users (admin only)',
+        headers: {
+          'Authorization': 'Bearer <admin_access_token>'
+        },
+        query: {
+          page: { type: 'number', required: false, default: 1, example: 1 },
+          limit: { type: 'number', required: false, default: 20, example: 20 },
+          search: { type: 'string', required: false, example: 'john' },
+          status: { type: 'string', required: false, example: 'active', enum: ['active', 'suspended'] }
+        },
+        response: { success: '{ users: [...], pagination: { total, page, limit, pages } }' }
+      },
+      
+      // GET SINGLE USER (Admin)
+      'admin_get_user': {
+        method: 'GET',
+        url: `${baseUrl}/admin/users/:userId`,
+        description: 'Get single user details (admin only)',
+        headers: {
+          'Authorization': 'Bearer <admin_access_token>'
+        },
+        response: { success: '{ user: { id, user_id, email, first_name, last_name, is_suspended, kyc_status, ... } }' }
+      },
+      
+      // SUSPEND USER (Admin)
+      'admin_suspend_user': {
+        method: 'PUT',
+        url: `${baseUrl}/admin/users/:userId/suspend`,
+        description: 'Suspend a user account (admin only)',
+        headers: {
+          'Authorization': 'Bearer <admin_access_token>',
+          'Content-Type': 'application/json'
+        },
+        body: {
+          reason: { type: 'string', required: false, example: 'Violation of terms of service' }
+        },
+        response: { success: '{ user_id, is_suspended: true }' }
+      },
+      
+      // ACTIVATE USER (Admin)
+      'admin_activate_user': {
+        method: 'PUT',
+        url: `${baseUrl}/admin/users/:userId/activate`,
+        description: 'Reactivate a suspended user account (admin only)',
+        headers: {
+          'Authorization': 'Bearer <admin_access_token>'
+        },
+        response: { success: '{ user_id, is_suspended: false }' }
       }
     },
     

@@ -51,3 +51,17 @@ export const resetPasswordValidation = [
 export const twoFactorCodeValidation = [
   body('code').trim().notEmpty().withMessage('Code is required').isLength({ min: 6, max: 6 }).withMessage('Code must be 6 digits').isNumeric().withMessage('Code must be numeric')
 ];
+
+export const updateProfileValidation = [
+  body('first_name').optional().trim().isLength({ min: 2, max: 50 }).withMessage('First name must be 2-50 characters'),
+  body('last_name').optional().trim().isLength({ min: 2, max: 50 }).withMessage('Last name must be 2-50 characters'),
+  body('phone_number').optional().trim().isMobilePhone('any').withMessage('Invalid phone number'),
+  body('image').optional().trim().isURL().withMessage('Invalid image URL'),
+  body('nin').optional().trim().isLength({ min: 5, max: 50 }).withMessage('NIN must be 5-50 characters'),
+  body('address').optional().trim().isLength({ max: 500 }).withMessage('Address must be under 500 characters'),
+  body('gender').optional().trim().isIn(['male', 'female', 'other']).withMessage('Gender must be male, female, or other')
+];
+
+export const suspendUserValidation = [
+  body('reason').optional().trim().isLength({ max: 500 }).withMessage('Reason must be under 500 characters')
+];

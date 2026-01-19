@@ -392,6 +392,215 @@ Content-Type: application/json
 
 ---
 
+## Profile Settings
+
+### 9. Get Profile (Protected)
+
+```http
+GET /api/settings/profile
+Authorization: Bearer <access_token>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "profile": {
+      "id": "uuid",
+      "user_id": "cED2iP",
+      "email": "john@gmail.com",
+      "first_name": "John",
+      "last_name": "Doe",
+      "phone_number": "+2341234567890",
+      "image": null,
+      "nin": null,
+      "address": null,
+      "gender": null,
+      "user_type": "user",
+      "two_factor_enabled": false,
+      "two_factor_type": null,
+      "created_at": "2026-01-14T10:00:00Z",
+      "updated_at": "2026-01-14T10:00:00Z"
+    }
+  }
+}
+```
+
+---
+
+### 10. Update Profile (Protected)
+
+```http
+PUT /api/settings/profile
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "first_name": "John",
+  "last_name": "Doe",
+  "phone_number": "+2348012345678",
+  "image": "https://example.com/avatar.jpg",
+  "nin": "AB123456789",
+  "address": "123 Main Street, Lagos",
+  "gender": "male"
+}
+```
+
+**Note:** All fields are optional. Only include fields you want to update.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Profile updated successfully",
+  "data": {
+    "profile": { ... }
+  }
+}
+```
+
+---
+
+## Admin Endpoints
+
+> **Note:** Admin endpoints require an admin user token. Regular users will receive a 403 Forbidden error.
+
+### 11. List Users (Admin)
+
+```http
+GET /api/admin/users?page=1&limit=20&search=john&status=active
+Authorization: Bearer <admin_access_token>
+```
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| page | number | No | Page number (default: 1) |
+| limit | number | No | Items per page (default: 20) |
+| search | string | No | Search by name or phone |
+| status | string | No | Filter: `active` or `suspended` |
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "users": [
+      {
+        "id": "uuid",
+        "user_id": "cED2iP",
+        "email": "john@gmail.com",
+        "first_name": "John",
+        "last_name": "Doe",
+        "phone_number": "+2341234567890",
+        "image": null,
+        "user_type": "user",
+        "is_admin": false,
+        "is_suspended": false,
+        "two_factor_enabled": false,
+        "created_at": "2026-01-14T10:00:00Z"
+      }
+    ],
+    "pagination": {
+      "total": 50,
+      "page": 1,
+      "limit": 20,
+      "pages": 3
+    }
+  }
+}
+```
+
+---
+
+### 12. Get Single User (Admin)
+
+```http
+GET /api/admin/users/:userId
+Authorization: Bearer <admin_access_token>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "user": {
+      "id": "uuid",
+      "user_id": "cED2iP",
+      "email": "john@gmail.com",
+      "email_verified": true,
+      "first_name": "John",
+      "last_name": "Doe",
+      "phone_number": "+2341234567890",
+      "image": null,
+      "nin": "AB123456789",
+      "address": "123 Main Street, Lagos",
+      "gender": "male",
+      "user_type": "user",
+      "user_type_id": 2,
+      "is_admin": false,
+      "is_suspended": false,
+      "two_factor_enabled": false,
+      "two_factor_type": null,
+      "kyc_status": "pending",
+      "created_at": "2026-01-14T10:00:00Z",
+      "updated_at": "2026-01-14T10:00:00Z"
+    }
+  }
+}
+```
+
+---
+
+### 13. Suspend User (Admin)
+
+```http
+PUT /api/admin/users/:userId/suspend
+Authorization: Bearer <admin_access_token>
+Content-Type: application/json
+
+{
+  "reason": "Violation of terms of service"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User suspended successfully",
+  "data": {
+    "user_id": "uuid",
+    "is_suspended": true
+  }
+}
+```
+
+---
+
+### 14. Activate User (Admin)
+
+```http
+PUT /api/admin/users/:userId/activate
+Authorization: Bearer <admin_access_token>
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "User activated successfully",
+  "data": {
+    "user_id": "uuid",
+    "is_suspended": false
+  }
+}
+```
+
+---
+
 ## Error Responses
 
 All errors follow this format:

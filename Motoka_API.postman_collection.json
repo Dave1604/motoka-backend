@@ -415,6 +415,131 @@
           }
         }
       ]
+    },
+    {
+      "name": "Profile Settings",
+      "item": [
+        {
+          "name": "Get Profile",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/settings/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["settings", "profile"]
+            },
+            "description": "Get current user profile details"
+          }
+        },
+        {
+          "name": "Update Profile",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"first_name\": \"John\",\n  \"last_name\": \"Doe\",\n  \"phone_number\": \"+2348012345678\",\n  \"address\": \"123 Main Street, Lagos\",\n  \"gender\": \"male\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/settings/profile",
+              "host": ["{{baseUrl}}"],
+              "path": ["settings", "profile"]
+            },
+            "description": "Update profile details (all fields optional)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - User Management",
+      "item": [
+        {
+          "name": "List All Users",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "search", "value": "", "disabled": true },
+                { "key": "status", "value": "active", "disabled": true }
+              ]
+            },
+            "description": "List all users (admin only). Query params: page, limit, search, status"
+          }
+        },
+        {
+          "name": "Get Single User",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId"],
+              "variable": [
+                { "key": "userId", "value": "USER_UUID_HERE" }
+              ]
+            },
+            "description": "Get single user details (admin only)"
+          }
+        },
+        {
+          "name": "Suspend User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Violation of terms of service\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId/suspend",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId", "suspend"],
+              "variable": [
+                { "key": "userId", "value": "USER_UUID_HERE" }
+              ]
+            },
+            "description": "Suspend a user account (admin only)"
+          }
+        },
+        {
+          "name": "Activate User",
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{accessToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/users/:userId/activate",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "users", ":userId", "activate"],
+              "variable": [
+                { "key": "userId", "value": "USER_UUID_HERE" }
+              ]
+            },
+            "description": "Reactivate a suspended user (admin only)"
+          }
+        }
+      ]
     }
   ]
 }
