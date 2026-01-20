@@ -235,16 +235,16 @@ export const sendLoginOTP = async (req, res) => {
     const { email } = req.body;
     const supabase = getSupabase();
     
-    const { error } = await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } });
+    const { data, error } = await supabase.auth.signInWithOtp({ 
+      email, 
+      options: { shouldCreateUser: true } 
+    });
     
     if (error) {
-      if (error.message.includes('User not found')) {
-        return response.success(res, null, 'If an account exists, an OTP has been sent to your email');
-      }
-      return response.error(res, error.message);
+      return response.error(res, error.message || 'Failed to send OTP');
     }
     
-    return response.success(res, null, 'OTP sent to your email');
+    return response.success(res, data, 'OTP sent to your email');
   } catch (error) {
     console.error('Send login OTP error:', error);
     return response.serverError(res, 'Failed to send OTP');

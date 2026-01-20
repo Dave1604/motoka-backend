@@ -16,6 +16,10 @@ router.post('/verify-otp', otpLimiter, otpValidation, validate, auth.verifyPassw
 router.post('/reset-password', resetPasswordValidation, validate, auth.resetPassword);
 router.post('/send-login-otp', otpLimiter, emailValidation, validate, auth.sendLoginOTP);
 router.post('/verify-login-otp', authLimiter, otpValidation, validate, auth.verifyLoginOTP);
+
+// OTP Signup/Login routes (as requested)
+router.post('/auth/send-otp', otpLimiter, emailValidation, validate, auth.sendLoginOTP);
+router.post('/auth/verify-otp', authLimiter, otpValidation, validate, auth.verifyLoginOTP);
 router.post('/verify/email-resend', otpLimiter, emailValidation, validate, auth.resendEmailVerification);
 router.post('/verify-email', authLimiter, otpValidation, validate, auth.verifyEmail);
 router.post('/refresh', auth.refresh);
