@@ -60,34 +60,10 @@ app.use(helmet({
   hidePoweredBy: true
 }));
 
-// Parse allowed origins from environment variable (comma-separated)
-const parseAllowedOrigins = () => {
-  const origins = [
-    'http://localhost:3000',
-    'http://localhost:3001',
-    'http://localhost:5173',
-    process.env.FRONTEND_URL,
-    ...(process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim()) : [])
-  ].filter(Boolean);
-  return origins;
-};
-
-const allowedOrigins = parseAllowedOrigins();
-
-// CORS - Restrict to allowed origins
+// CORS - Allow all origins during development/testing phase
+// TODO: Restrict to specific origins in production
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, Postman, etc.)
-    if (!origin) {
-      return callback(null, true);
-    }
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    callback(new Error('Not allowed by CORS'));
-  },
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
