@@ -14,23 +14,24 @@ import {
   verifyCarExists,
   CarError
 } from '../services/car.service.js';
-import { uploadFiles, uploadFile, deleteFiles, deleteFile } from '../services/fileUpload.service.js';
+import { deleteFiles } from '../services/fileUpload.service.js';
+import { handleFileUploads, getFilesToDelete, monitorFileCleanup } from '../utils/fileUploadHelper.js';
+import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
 const isValidUUID = (uuid) => {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  return uuidRegex.test(uuid);
+  return PATTERNS.UUID.test(uuid);
 };
 
 const handleCarError = (res, error) => {
   if (error instanceof CarError) {
-    if (error.statusCode === 404) {
+    if (error.statusCode === HTTP_STATUS.NOT_FOUND) {
       return response.notFound(res, error.message);
     }
-    if (error.statusCode === 409) {
-      return response.error(res, error.message, 409);
+    if (error.statusCode === HTTP_STATUS.CONFLICT) {
+      return response.error(res, error.message, HTTP_STATUS.CONFLICT);
     }
-    if (error.statusCode === 400) {
-      return response.error(res, error.message, 400);
+    if (error.statusCode === HTTP_STATUS.BAD_REQUEST) {
+      return response.error(res, error.message, HTTP_STATUS.BAD_REQUEST);
     }
   }
   
@@ -39,55 +40,16 @@ const handleCarError = (res, error) => {
 };
 
 export const addCar = async (req, res) => {
-  const uploadedFileUrls = {};
-  const tempFileUrls = [];
+  let tempFileUrls = [];
   
   try {
     const supabaseUser = getSupabaseUser(req.token);
     const userId = req.user.id;
     
-    if (req.uploadedFiles) {
-      if (req.uploadedFiles.document_images && req.uploadedFiles.document_images.length > 0) {
-        const urls = await uploadFiles(req.uploadedFiles.document_images, userId);
-        uploadedFileUrls.document_images = urls;
-        tempFileUrls.push(...urls);
-      }
-      
-      if (req.uploadedFiles.cac_document && req.uploadedFiles.cac_document.length > 0) {
-        const url = await uploadFile(
-          req.uploadedFiles.cac_document[0].buffer,
-          req.uploadedFiles.cac_document[0].originalname,
-          req.uploadedFiles.cac_document[0].mimetype,
-          userId
-        );
-        uploadedFileUrls.cac_document = url;
-        tempFileUrls.push(url);
-      }
-      
-      if (req.uploadedFiles.letterhead && req.uploadedFiles.letterhead.length > 0) {
-        const url = await uploadFile(
-          req.uploadedFiles.letterhead[0].buffer,
-          req.uploadedFiles.letterhead[0].originalname,
-          req.uploadedFiles.letterhead[0].mimetype,
-          userId
-        );
-        uploadedFileUrls.letterhead = url;
-        tempFileUrls.push(url);
-      }
-      
-      if (req.uploadedFiles.means_of_identification && req.uploadedFiles.means_of_identification.length > 0) {
-        const url = await uploadFile(
-          req.uploadedFiles.means_of_identification[0].buffer,
-          req.uploadedFiles.means_of_identification[0].originalname,
-          req.uploadedFiles.means_of_identification[0].mimetype,
-          userId
-        );
-        uploadedFileUrls.means_of_identification = url;
-        tempFileUrls.push(url);
-      }
-      
-      Object.assign(req.body, uploadedFileUrls);
-    }
+    // Handle file uploads using helper
+    const { uploadedFileUrls, tempFileUrls: uploadedTempUrls } = await handleFileUploads(req.uploadedFiles, userId);
+    tempFileUrls = uploadedTempUrls;
+    Object.assign(req.body, uploadedFileUrls);
 
     const sanitizedBody = sanitizeCarInput(req.body);
     const identifiers = extractNormalizedIdentifiers(sanitizedBody);
@@ -100,7 +62,7 @@ export const addCar = async (req, res) => {
     
     if (duplicateCheck.hasDuplicates) {
       await deleteFiles(tempFileUrls);
-      return response.error(res, duplicateCheck.message, 409);
+      return response.error(res, duplicateCheck.message, HTTP_STATUS.CONFLICT);
     }
     
     const carData = buildCarData(sanitizedBody, userId);
@@ -108,11 +70,8 @@ export const addCar = async (req, res) => {
     
     return response.created(res, { car }, 'Car registered successfully');
   } catch (error) {
-    if (tempFileUrls.length > 0) {
-      await deleteFiles(tempFileUrls).catch(err => {
-        logError('Failed to cleanup temp files', err);
-      });
-    }
+    // Monitor and cleanup temp files on error
+    await monitorFileCleanup(tempFileUrls, 'addCar');
     return handleCarError(res, error);
   }
 };
@@ -125,27 +84,27 @@ export const getCars = async (req, res) => {
     const limitParam = req.query.limit;
     
     if (pageParam !== undefined) {
-      if (!/^\d+$/.test(String(pageParam))) {
-        return response.error(res, 'Invalid page parameter. Must be a positive integer.', 400);
+      if (!PATTERNS.POSITIVE_INTEGER.test(String(pageParam))) {
+        return response.error(res, ERROR_MESSAGES.INVALID_PAGE, HTTP_STATUS.BAD_REQUEST);
       }
       const parsedPage = parseInt(pageParam, 10);
-      if (parsedPage < 1 || parsedPage > 100000) {
-        return response.error(res, 'Page parameter must be between 1 and 100000.', 400);
+      if (parsedPage < PAGINATION.MIN_PAGE || parsedPage > PAGINATION.MAX_PAGE) {
+        return response.error(res, ERROR_MESSAGES.PAGE_OUT_OF_RANGE, HTTP_STATUS.BAD_REQUEST);
       }
     }
     
     if (limitParam !== undefined) {
-      if (!/^\d+$/.test(String(limitParam))) {
-        return response.error(res, 'Invalid limit parameter. Must be a positive integer.', 400);
+      if (!PATTERNS.POSITIVE_INTEGER.test(String(limitParam))) {
+        return response.error(res, ERROR_MESSAGES.INVALID_LIMIT, HTTP_STATUS.BAD_REQUEST);
       }
       const parsedLimit = parseInt(limitParam, 10);
-      if (parsedLimit < 1 || parsedLimit > 100) {
-        return response.error(res, 'Limit parameter must be between 1 and 100.', 400);
+      if (parsedLimit < PAGINATION.MIN_LIMIT || parsedLimit > PAGINATION.MAX_LIMIT) {
+        return response.error(res, ERROR_MESSAGES.LIMIT_OUT_OF_RANGE, HTTP_STATUS.BAD_REQUEST);
       }
     }
     
-    const page = Math.max(1, parseInt(pageParam, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(limitParam, 10) || 10));
+    const page = Math.max(PAGINATION.MIN_PAGE, parseInt(pageParam, 10) || PAGINATION.DEFAULT_PAGE);
+    const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT));
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
     
@@ -161,7 +120,7 @@ export const getCarBySlug = async (req, res) => {
     const userId = req.user.id;
     
     if (!slug || !isValidUUID(slug)) {
-      return response.error(res, 'Invalid slug format', 400);
+      return response.error(res, ERROR_MESSAGES.INVALID_SLUG, HTTP_STATUS.BAD_REQUEST);
     }
     
     const supabaseUser = getSupabaseUser(req.token);
@@ -174,82 +133,27 @@ export const getCarBySlug = async (req, res) => {
 };
 
 export const updateCar = async (req, res) => {
-  const uploadedFileUrls = {};
-  const tempFileUrls = [];
-  const filesToDelete = [];
+  let tempFileUrls = [];
   
   try {
     const { slug } = req.params;
     const userId = req.user.id;
     
     if (!slug || !isValidUUID(slug)) {
-      return response.error(res, 'Invalid slug format', 400);
+      return response.error(res, ERROR_MESSAGES.INVALID_SLUG, HTTP_STATUS.BAD_REQUEST);
     }
     
     const supabaseUser = getSupabaseUser(req.token);
     const existingCar = await verifyCarExists(supabaseUser, slug, userId);
     
-    if (req.uploadedFiles) {
-      if (req.uploadedFiles.document_images && req.uploadedFiles.document_images.length > 0) {
-        const urls = await uploadFiles(req.uploadedFiles.document_images, userId, slug);
-        uploadedFileUrls.document_images = urls;
-        tempFileUrls.push(...urls);
-        
-        if (existingCar.document_images && Array.isArray(existingCar.document_images)) {
-          filesToDelete.push(...existingCar.document_images);
-        }
-      }
-      
-      if (req.uploadedFiles.cac_document && req.uploadedFiles.cac_document.length > 0) {
-        const url = await uploadFile(
-          req.uploadedFiles.cac_document[0].buffer,
-          req.uploadedFiles.cac_document[0].originalname,
-          req.uploadedFiles.cac_document[0].mimetype,
-          userId,
-          slug
-        );
-        uploadedFileUrls.cac_document = url;
-        tempFileUrls.push(url);
-        
-        if (existingCar.cac_document) {
-          filesToDelete.push(existingCar.cac_document);
-        }
-      }
-      
-      if (req.uploadedFiles.letterhead && req.uploadedFiles.letterhead.length > 0) {
-        const url = await uploadFile(
-          req.uploadedFiles.letterhead[0].buffer,
-          req.uploadedFiles.letterhead[0].originalname,
-          req.uploadedFiles.letterhead[0].mimetype,
-          userId,
-          slug
-        );
-        uploadedFileUrls.letterhead = url;
-        tempFileUrls.push(url);
-        
-        if (existingCar.letterhead) {
-          filesToDelete.push(existingCar.letterhead);
-        }
-      }
-      
-      if (req.uploadedFiles.means_of_identification && req.uploadedFiles.means_of_identification.length > 0) {
-        const url = await uploadFile(
-          req.uploadedFiles.means_of_identification[0].buffer,
-          req.uploadedFiles.means_of_identification[0].originalname,
-          req.uploadedFiles.means_of_identification[0].mimetype,
-          userId,
-          slug
-        );
-        uploadedFileUrls.means_of_identification = url;
-        tempFileUrls.push(url);
-        
-        if (existingCar.means_of_identification) {
-          filesToDelete.push(existingCar.means_of_identification);
-        }
-      }
-      
-      Object.assign(req.body, uploadedFileUrls);
-    }
+    // Handle file uploads using helper
+    const { uploadedFileUrls, tempFileUrls: uploadedTempUrls } = await handleFileUploads(req.uploadedFiles, userId, slug);
+    tempFileUrls = uploadedTempUrls;
+    
+    // Get files to delete (old files being replaced)
+    const filesToDelete = getFilesToDelete(existingCar, uploadedFileUrls);
+    
+    Object.assign(req.body, uploadedFileUrls);
     
     const sanitizedBody = sanitizeCarInput(req.body);
     
@@ -281,26 +185,22 @@ export const updateCar = async (req, res) => {
       
       if (duplicateCheck.hasDuplicates) {
         await deleteFiles(tempFileUrls);
-        return response.error(res, duplicateCheck.message, 409);
+        return response.error(res, duplicateCheck.message, HTTP_STATUS.CONFLICT);
       }
     }
     
     const updateData = buildUpdateData(sanitizedBody, existingCar);
     const updatedCar = await updateCarBySlug(supabaseUser, slug, userId, updateData, identifiers);
     
+    // Delete old files after successful update
     if (filesToDelete.length > 0) {
-      await deleteFiles(filesToDelete).catch(err => {
-        logError('Failed to delete old files', err);
-      });
+      await monitorFileCleanup(filesToDelete, 'updateCar-oldFiles');
     }
     
     return response.success(res, { car: updatedCar }, 'Car updated successfully');
   } catch (error) {
-    if (tempFileUrls.length > 0) {
-      await deleteFiles(tempFileUrls).catch(err => {
-        logError('Failed to cleanup temp files', err);
-      });
-    }
+    // Monitor and cleanup temp files on error
+    await monitorFileCleanup(tempFileUrls, 'updateCar');
     return handleCarError(res, error);
   }
 };
@@ -311,7 +211,7 @@ export const deleteCar = async (req, res) => {
     const userId = req.user.id;
     
     if (!slug || !isValidUUID(slug)) {
-      return response.error(res, 'Invalid slug format', 400);
+      return response.error(res, ERROR_MESSAGES.INVALID_SLUG, HTTP_STATUS.BAD_REQUEST);
     }
     
     const supabaseUser = getSupabaseUser(req.token);
