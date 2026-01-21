@@ -1,9 +1,10 @@
 import { buildCarData, buildUpdateData } from '../utils/carDataBuilder.js';
 import { extractDuplicateFields, buildDuplicateErrorMessage } from '../utils/carErrorHelpers.js';
 import { logError } from '../utils/logger.js';
+import { DB_ERROR_CODES, HTTP_STATUS, ERROR_MESSAGES } from '../constants/car.constants.js';
 
 export class CarError extends Error {
-  constructor(message, statusCode = 500, code = null) {
+  constructor(message, statusCode = HTTP_STATUS.SERVER_ERROR, code = null) {
     super(message);
     this.name = 'CarError';
     this.statusCode = statusCode;
@@ -21,7 +22,7 @@ export async function createCar(supabaseUser, carData) {
   if (insertError) {
     logError('Car insert error', insertError);
     
-    if (insertError.code === '23505') {
+    if (insertError.code === DB_ERROR_CODES.UNIQUE_VIOLATION) {
       const errorMessage = insertError.message || '';
       const duplicateFields = extractDuplicateFields(
         errorMessage,
@@ -30,18 +31,18 @@ export async function createCar(supabaseUser, carData) {
         carData.engine_no
       );
       
-      throw new CarError(buildDuplicateErrorMessage(duplicateFields), 409, '23505');
+      throw new CarError(buildDuplicateErrorMessage(duplicateFields), HTTP_STATUS.CONFLICT, DB_ERROR_CODES.UNIQUE_VIOLATION);
     }
     
-    if (insertError.code === '23503') {
-      throw new CarError('Invalid request data', 400, '23503');
+    if (insertError.code === DB_ERROR_CODES.FOREIGN_KEY_VIOLATION) {
+      throw new CarError(ERROR_MESSAGES.INVALID_REQUEST_DATA, HTTP_STATUS.BAD_REQUEST, DB_ERROR_CODES.FOREIGN_KEY_VIOLATION);
     }
     
-    if (insertError.code === '23514') {
-      throw new CarError('Invalid car registration data provided', 400, '23514');
+    if (insertError.code === DB_ERROR_CODES.CHECK_CONSTRAINT_VIOLATION) {
+      throw new CarError(ERROR_MESSAGES.INVALID_CAR_DATA, HTTP_STATUS.BAD_REQUEST, DB_ERROR_CODES.CHECK_CONSTRAINT_VIOLATION);
     }
     
-    throw new CarError('Failed to register car', 500);
+    throw new CarError(ERROR_MESSAGES.FAILED_TO_REGISTER, HTTP_STATUS.SERVER_ERROR);
   }
   
   return car;
@@ -60,7 +61,7 @@ export async function updateCarBySlug(supabaseUser, slug, userId, updateData, id
   if (updateError) {
     logError('Car update error', updateError);
     
-    if (updateError.code === '23505') {
+    if (updateError.code === DB_ERROR_CODES.UNIQUE_VIOLATION) {
       const errorMessage = updateError.message || '';
       const duplicateFields = extractDuplicateFields(
         errorMessage,
@@ -69,22 +70,22 @@ export async function updateCarBySlug(supabaseUser, slug, userId, updateData, id
         identifiers.engine_no
       );
       
-      throw new CarError(buildDuplicateErrorMessage(duplicateFields), 409, '23505');
+      throw new CarError(buildDuplicateErrorMessage(duplicateFields), HTTP_STATUS.CONFLICT, DB_ERROR_CODES.UNIQUE_VIOLATION);
     }
     
-    if (updateError.code === '23503') {
-      throw new CarError('Invalid request data', 400, '23503');
+    if (updateError.code === DB_ERROR_CODES.FOREIGN_KEY_VIOLATION) {
+      throw new CarError(ERROR_MESSAGES.INVALID_REQUEST_DATA, HTTP_STATUS.BAD_REQUEST, DB_ERROR_CODES.FOREIGN_KEY_VIOLATION);
     }
     
-    if (updateError.code === '23514') {
-      throw new CarError('Invalid car registration data provided', 400, '23514');
+    if (updateError.code === DB_ERROR_CODES.CHECK_CONSTRAINT_VIOLATION) {
+      throw new CarError(ERROR_MESSAGES.INVALID_CAR_DATA, HTTP_STATUS.BAD_REQUEST, DB_ERROR_CODES.CHECK_CONSTRAINT_VIOLATION);
     }
     
-    throw new CarError('Failed to update car', 500);
+    throw new CarError(ERROR_MESSAGES.FAILED_TO_UPDATE, HTTP_STATUS.SERVER_ERROR);
   }
   
   if (!updatedCar) {
-    throw new CarError('Car not found or access denied', 404);
+    throw new CarError(ERROR_MESSAGES.CAR_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
   }
   
   return updatedCar;
@@ -100,16 +101,16 @@ export async function getCarBySlug(supabaseUser, slug, userId) {
     .single();
   
   if (carError) {
-    if (carError.code === 'PGRST116') {
-      throw new CarError('Car not found or access denied', 404);
+    if (carError.code === DB_ERROR_CODES.NOT_FOUND) {
+      throw new CarError(ERROR_MESSAGES.CAR_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
     }
     
     logError('Get car by slug error', carError);
-    throw new CarError('Failed to retrieve car', 500);
+    throw new CarError(ERROR_MESSAGES.FAILED_TO_RETRIEVE, HTTP_STATUS.SERVER_ERROR);
   }
   
   if (!car) {
-    throw new CarError('Car not found or access denied', 404);
+    throw new CarError(ERROR_MESSAGES.CAR_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
   }
   
   return car;
@@ -128,7 +129,7 @@ export async function getCarsPaginated(supabaseUser, page, limit) {
   
   if (carsError) {
     logError('Get cars error', carsError);
-    throw new CarError('Failed to retrieve cars', 500);
+    throw new CarError(ERROR_MESSAGES.FAILED_TO_RETRIEVE_CARS, HTTP_STATUS.SERVER_ERROR);
   }
   
   const { count, error: countError } = await supabaseUser
@@ -138,7 +139,7 @@ export async function getCarsPaginated(supabaseUser, page, limit) {
   
   if (countError) {
     logError('Get cars count error', countError);
-    throw new CarError('Failed to retrieve cars count', 500);
+    throw new CarError(ERROR_MESSAGES.FAILED_TO_RETRIEVE_COUNT, HTTP_STATUS.SERVER_ERROR);
   }
   
   const totalCars = count || 0;
@@ -170,11 +171,11 @@ export async function deleteCarBySlug(supabaseUser, slug, userId) {
   
   if (deleteError) {
     logError('Car delete error', deleteError);
-    throw new CarError('Failed to delete car', 500);
+    throw new CarError(ERROR_MESSAGES.FAILED_TO_DELETE, HTTP_STATUS.SERVER_ERROR);
   }
   
   if (!data || data.length === 0) {
-    throw new CarError('Car not found or access denied', 404);
+    throw new CarError(ERROR_MESSAGES.CAR_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
   }
 }
 
@@ -188,16 +189,16 @@ export async function verifyCarExists(supabaseUser, slug, userId) {
     .single();
   
   if (fetchError) {
-    if (fetchError.code === 'PGRST116') {
-      throw new CarError('Car not found or access denied', 404);
+    if (fetchError.code === DB_ERROR_CODES.NOT_FOUND) {
+      throw new CarError(ERROR_MESSAGES.CAR_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
     }
     
     logError('Fetch car error', fetchError);
-    throw new CarError('Failed to retrieve car', 500);
+    throw new CarError(ERROR_MESSAGES.FAILED_TO_RETRIEVE, HTTP_STATUS.SERVER_ERROR);
   }
   
   if (!existingCar) {
-    throw new CarError('Car not found or access denied', 404);
+    throw new CarError(ERROR_MESSAGES.CAR_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
   }
   
   return existingCar;
