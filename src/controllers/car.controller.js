@@ -4,6 +4,7 @@ import { logError } from '../utils/logger.js';
 import { sanitizeCarInput } from '../utils/carSanitization.js';
 import { checkCarDuplicates } from '../services/carDuplicateChecker.js';
 import { buildCarData, buildUpdateData, extractNormalizedIdentifiers } from '../utils/carDataBuilder.js';
+import { validateConditionalFields } from '../utils/carUpdateValidator.js';
 import {
   createCar,
   updateCarBySlug,
@@ -45,16 +46,13 @@ export const addCar = async (req, res) => {
     const supabaseUser = getSupabaseUser(req.token);
     const userId = req.user.id;
     
-    // Process uploaded files if any
     if (req.uploadedFiles) {
-      // Upload document_images
       if (req.uploadedFiles.document_images && req.uploadedFiles.document_images.length > 0) {
         const urls = await uploadFiles(req.uploadedFiles.document_images, userId);
         uploadedFileUrls.document_images = urls;
         tempFileUrls.push(...urls);
       }
       
-      // Upload single file fields
       if (req.uploadedFiles.cac_document && req.uploadedFiles.cac_document.length > 0) {
         const url = await uploadFile(
           req.uploadedFiles.cac_document[0].buffer,
@@ -88,7 +86,6 @@ export const addCar = async (req, res) => {
         tempFileUrls.push(url);
       }
       
-      // Merge uploaded file URLs into req.body
       Object.assign(req.body, uploadedFileUrls);
     }
 
@@ -102,7 +99,6 @@ export const addCar = async (req, res) => {
     );
     
     if (duplicateCheck.hasDuplicates) {
-      // Clean up uploaded files on error
       await deleteFiles(tempFileUrls);
       return response.error(res, duplicateCheck.message, 409);
     }
@@ -110,12 +106,8 @@ export const addCar = async (req, res) => {
     const carData = buildCarData(sanitizedBody, userId);
     const car = await createCar(supabaseUser, carData);
     
-    // Move temporary files to car-specific folder (optional optimization)
-    // For now, files stay in temp folder - can be moved later if needed
-    
     return response.created(res, { car }, 'Car registered successfully');
   } catch (error) {
-    // Clean up uploaded files on error
     if (tempFileUrls.length > 0) {
       await deleteFiles(tempFileUrls).catch(err => {
         logError('Failed to cleanup temp files', err);
@@ -197,21 +189,17 @@ export const updateCar = async (req, res) => {
     const supabaseUser = getSupabaseUser(req.token);
     const existingCar = await verifyCarExists(supabaseUser, slug, userId);
     
-    // Process uploaded files if any
     if (req.uploadedFiles) {
-      // Upload document_images
       if (req.uploadedFiles.document_images && req.uploadedFiles.document_images.length > 0) {
         const urls = await uploadFiles(req.uploadedFiles.document_images, userId, slug);
         uploadedFileUrls.document_images = urls;
         tempFileUrls.push(...urls);
         
-        // Mark old files for deletion if they exist
         if (existingCar.document_images && Array.isArray(existingCar.document_images)) {
           filesToDelete.push(...existingCar.document_images);
         }
       }
       
-      // Upload single file fields
       if (req.uploadedFiles.cac_document && req.uploadedFiles.cac_document.length > 0) {
         const url = await uploadFile(
           req.uploadedFiles.cac_document[0].buffer,
@@ -223,7 +211,6 @@ export const updateCar = async (req, res) => {
         uploadedFileUrls.cac_document = url;
         tempFileUrls.push(url);
         
-        // Mark old file for deletion if it exists
         if (existingCar.cac_document) {
           filesToDelete.push(existingCar.cac_document);
         }
@@ -240,7 +227,6 @@ export const updateCar = async (req, res) => {
         uploadedFileUrls.letterhead = url;
         tempFileUrls.push(url);
         
-        // Mark old file for deletion if it exists
         if (existingCar.letterhead) {
           filesToDelete.push(existingCar.letterhead);
         }
@@ -257,17 +243,23 @@ export const updateCar = async (req, res) => {
         uploadedFileUrls.means_of_identification = url;
         tempFileUrls.push(url);
         
-        // Mark old file for deletion if it exists
         if (existingCar.means_of_identification) {
           filesToDelete.push(existingCar.means_of_identification);
         }
       }
       
-      // Merge uploaded file URLs into req.body
       Object.assign(req.body, uploadedFileUrls);
     }
     
     const sanitizedBody = sanitizeCarInput(req.body);
+    
+    // Validate conditional fields based on existing car state
+    const validationErrors = validateConditionalFields(sanitizedBody, existingCar);
+    if (validationErrors.length > 0) {
+      await deleteFiles(tempFileUrls);
+      return response.validationError(res, validationErrors);
+    }
+    
     const identifiers = extractNormalizedIdentifiers(sanitizedBody, existingCar);
     
     const hasIdentifierUpdate = 
@@ -288,7 +280,6 @@ export const updateCar = async (req, res) => {
       );
       
       if (duplicateCheck.hasDuplicates) {
-        // Clean up uploaded files on error
         await deleteFiles(tempFileUrls);
         return response.error(res, duplicateCheck.message, 409);
       }
@@ -297,17 +288,14 @@ export const updateCar = async (req, res) => {
     const updateData = buildUpdateData(sanitizedBody, existingCar);
     const updatedCar = await updateCarBySlug(supabaseUser, slug, userId, updateData, identifiers);
     
-    // Delete old files after successful update
     if (filesToDelete.length > 0) {
       await deleteFiles(filesToDelete).catch(err => {
         logError('Failed to delete old files', err);
-        // Don't fail the request if file deletion fails
       });
     }
     
     return response.success(res, { car: updatedCar }, 'Car updated successfully');
   } catch (error) {
-    // Clean up uploaded files on error
     if (tempFileUrls.length > 0) {
       await deleteFiles(tempFileUrls).catch(err => {
         logError('Failed to cleanup temp files', err);
