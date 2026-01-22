@@ -361,10 +361,15 @@ export const verifyEmail = async (req, res) => {
     const supabase = getSupabase();
     const supabaseAdmin = getSupabaseAdmin();
     
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:verifyEmail',message:'Verifying email OTP',data:{email,otpLength:otp?.length},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H5'})}).catch(()=>{});
+    // #endregion
+    
+    // Use type: 'email' since we send OTP via signInWithOtp (not signup confirmation)
     const { data, error } = await supabase.auth.verifyOtp({ 
       email, 
       token: otp, 
-      type: 'signup' 
+      type: 'email' 
     });
     
     if (error) {
