@@ -98,6 +98,11 @@ app.use('/api', carRoutes);
 app.use('/api/settings/profile', profileRoutes);
 app.use('/api/admin', adminRoutes);
 
+// Notifications stub endpoint (returns empty array until full implementation)
+app.get('/api/notifications', (req, res) => {
+  res.json({ success: true, message: 'Notifications retrieved', data: { notifications: [] } });
+});
+
 // Detailed API documentation with payloads
 app.get('/api/docs', (req, res) => {
   const baseUrl = `${req.protocol}://${req.get('host')}/api`;
