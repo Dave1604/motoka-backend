@@ -8,18 +8,42 @@ export const register = async (req, res) => {
     const supabase = getSupabase();
     const supabaseAdmin = getSupabaseAdmin();
     
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:register',message:'Registration started',data:{email},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+    // #endregion
+    
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { first_name, last_name, phone } }
+      options: { 
+        data: { first_name, last_name, phone },
+        emailRedirectTo: undefined // Disable default confirmation email
+      }
     });
     
     if (error) {
+      // #region agent log
+      fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:register:error',message:'SignUp error',data:{error:error.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H1'})}).catch(()=>{});
+      // #endregion
       if (error.message.includes('already registered')) {
         return response.error(res, 'Email already registered', 409);
       }
       return response.error(res, error.message);
     }
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:register:signUpSuccess',message:'SignUp succeeded, now sending OTP',data:{userId:data.user?.id},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
+    
+    // Send OTP for email verification (uses same path as login OTP which works with Brevo)
+    const { error: otpError } = await supabase.auth.signInWithOtp({ 
+      email,
+      options: { shouldCreateUser: false } // User already exists
+    });
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:register:otpSent',message:'OTP send result',data:{otpError:otpError?.message||null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H2'})}).catch(()=>{});
+    // #endregion
     
     const { data: profile } = await supabaseAdmin
       .from('profiles')
@@ -30,9 +54,12 @@ export const register = async (req, res) => {
     return response.created(res, {
       user: { id: data.user.id, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...profile },
       session: data.session
-    }, 'Registration successful. Please check your email to verify your account.');
+    }, 'Registration successful. Please check your email for verification code.');
   } catch (error) {
     console.error('Registration error:', error);
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:register:catch',message:'Registration exception',data:{error:error.message},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H3'})}).catch(()=>{});
+    // #endregion
     return response.serverError(res, 'Registration failed');
   }
 };
@@ -303,16 +330,28 @@ export const resendEmailVerification = async (req, res) => {
     const { email } = req.body;
     const supabase = getSupabase();
     
-    const { error } = await supabase.auth.resend({ type: 'signup', email });
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:resendEmailVerification',message:'Resending OTP',data:{email},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
+    
+    // Use signInWithOtp instead of resend({ type: 'signup' }) - OTP emails work with Brevo
+    const { error } = await supabase.auth.signInWithOtp({ 
+      email,
+      options: { shouldCreateUser: false }
+    });
+    
+    // #region agent log
+    fetch('http://127.0.0.1:7242/ingest/1e16ac8b-8456-4f99-b1a0-b5941e2116f7',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.controller.js:resendEmailVerification:result',message:'OTP resend result',data:{error:error?.message||null},timestamp:Date.now(),sessionId:'debug-session',hypothesisId:'H4'})}).catch(()=>{});
+    // #endregion
     
     if (error) {
       return response.error(res, error.message);
     }
     
-    return response.success(res, null, 'Verification email sent');
+    return response.success(res, null, 'Verification code sent to your email');
   } catch (error) {
     console.error('Resend verification error:', error);
-    return response.serverError(res, 'Failed to resend verification email');
+    return response.serverError(res, 'Failed to resend verification code');
   }
 };
 
