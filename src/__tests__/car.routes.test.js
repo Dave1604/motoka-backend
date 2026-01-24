@@ -1256,6 +1256,37 @@ describe('Car Endpoints', () => {
       expect(response.body.success).toBe(true);
     });
 
+    it('should successfully create registered car with only expiry_date (date_issued optional)', async () => {
+      const carData = createValidCarData({ 
+        registration_status: 'registered',
+        expiry_date: '2025-12-31'
+        // date_issued not provided
+      });
+      
+      const createdCar = createTestCar({
+        ...carData,
+        date_issued: null
+      });
+
+      const mockInsert = {
+        select: jest.fn().mockReturnValue({
+          single: jest.fn().mockResolvedValue({ data: createdCar, error: null }),
+        }),
+      };
+      mockSupabaseUser.from.mockReturnValue({
+        insert: jest.fn().mockReturnValue(mockInsert),
+      });
+
+      const response = await request(app)
+        .post('/api/reg-car')
+        .set('Authorization', 'Bearer valid-token')
+        .send(carData);
+
+      expect(response.status).toBe(201);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.car.expiry_date).toBe('2025-12-31');
+    });
+
     it('should return 422 when expiry_date is before date_issued', async () => {
       const response = await request(app)
         .post('/api/reg-car')
@@ -1467,29 +1498,60 @@ describe('Car Endpoints', () => {
       expect(response.body.errors.some(e => e.field === 'car_type')).toBe(true);
     });
 
-    it('should return 422 when changing to registered but date_issued missing', async () => {
+    it('should successfully update to registered with only expiry_date (date_issued optional)', async () => {
       const existingCar = createTestCar({ 
         registration_status: 'unregistered',
         date_issued: null,
         expiry_date: null
       });
 
-      const mockSingle = {
+      const updatedCar = {
+        ...existingCar,
+        registration_status: 'registered',
+        expiry_date: '2025-12-31',
+        date_issued: null
+      };
+
+      // Mock verifyCarExists
+      const mockSingle1 = {
         single: jest.fn().mockResolvedValue({ data: existingCar, error: null }),
       };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
+      const mockIs1 = {
+        is: jest.fn().mockReturnValue(mockSingle1),
       };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
+      const mockEq2_1 = {
+        eq: jest.fn().mockReturnValue(mockIs1),
       };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
+      const mockEq1_1 = {
+        eq: jest.fn().mockReturnValue(mockEq2_1),
       };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
+      const mockSelect1 = {
+        select: jest.fn().mockReturnValue(mockEq1_1),
       };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+
+      // Mock update
+      const mockSingle2 = {
+        single: jest.fn().mockResolvedValue({ data: updatedCar, error: null }),
+      };
+      const mockSelect2 = {
+        select: jest.fn().mockReturnValue(mockSingle2),
+      };
+      const mockIs2 = {
+        is: jest.fn().mockReturnValue(mockSelect2),
+      };
+      const mockEq2_2 = {
+        eq: jest.fn().mockReturnValue(mockIs2),
+      };
+      const mockEq1_2 = {
+        eq: jest.fn().mockReturnValue(mockEq2_2),
+      };
+      const mockUpdate = {
+        update: jest.fn().mockReturnValue(mockEq1_2),
+      };
+
+      mockSupabaseUser.from
+        .mockReturnValueOnce(mockSelect1)
+        .mockReturnValueOnce(mockUpdate);
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -1499,8 +1561,10 @@ describe('Car Endpoints', () => {
           expiry_date: '2025-12-31'
         });
 
-      expect(response.status).toBe(422);
-      expect(response.body.errors.some(e => e.field === 'date_issued')).toBe(true);
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.car.expiry_date).toBe('2025-12-31');
+      expect(response.body.data.car.date_issued).toBeNull();
     });
 
     it('should return 422 when changing to Dealership type but company info missing', async () => {

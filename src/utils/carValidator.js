@@ -38,16 +38,8 @@ const currentYear = new Date().getFullYear();
 // Shared validation functions
 const createDateIssuedValidator = () => {
   return body('date_issued')
-    .optional({ values: 'null' })
-    .custom((value, { req }) => {
-      if (req.body.registration_status === REGISTRATION_STATUS.REGISTERED) {
-        if (!value || value === 'null' || value === '') {
-          throw new Error('Date issued is required for registered cars');
-        }
-      }
-      return true;
-    })
-    .isISO8601().withMessage('Date issued must be a valid date');
+    .optional({ values: 'null', checkFalsy: true })
+    .isISO8601({ strict: true }).withMessage('Date issued must be a valid date');
 };
 
 const createExpiryDateValidator = () => {
@@ -58,7 +50,8 @@ const createExpiryDateValidator = () => {
         if (!value || value === 'null' || value === '') {
           throw new Error('Expiry date is required for registered cars');
         }
-        if (req.body.date_issued && new Date(value) <= new Date(req.body.date_issued)) {
+        // Only validate date_issued comparison if both dates are provided
+        if (req.body.date_issued && value && new Date(value) <= new Date(req.body.date_issued)) {
           throw new Error('Expiry date must be after date issued');
         }
       }

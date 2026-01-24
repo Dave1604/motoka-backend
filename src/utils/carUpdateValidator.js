@@ -17,14 +17,12 @@ export function validateConditionalFields(sanitizedBody, existingCar) {
     ? sanitizedBody.expiry_date 
     : existingCar.expiry_date;
   
-  // Business rule: registered cars require valid date range
+  // Business rule: registered cars require expiry date only
   if (finalRegistrationStatus === 'registered') {
-    if (!finalDateIssued || finalDateIssued === null) {
-      errors.push({ field: 'date_issued', message: 'Date issued is required for registered cars' });
-    }
     if (!finalExpiryDate || finalExpiryDate === null) {
       errors.push({ field: 'expiry_date', message: 'Expiry date is required for registered cars' });
     }
+    // Only validate date comparison if both dates are provided
     if (finalDateIssued && finalExpiryDate && new Date(finalExpiryDate) <= new Date(finalDateIssued)) {
       errors.push({ field: 'expiry_date', message: 'Expiry date must be after date issued' });
     }

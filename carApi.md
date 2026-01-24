@@ -59,7 +59,7 @@ All endpoints require the authenticated user to have a verified email address. U
 | `registration_no` | string (max 20) | Registration number | Optional |
 | `chasis_no` | string (max 30) | Chassis number | Optional |
 | `engine_no` | string (max 30) | Engine number | Optional |
-| `date_issued` | date (ISO 8601) | Registration issue date | Conditional* |
+| `date_issued` | date (ISO 8601) | Registration issue date | Optional |
 | `expiry_date` | date (ISO 8601) | Registration expiry date | Conditional* |
 | `document_images` | array (max 10 URLs) | Vehicle document images | Optional |
 | `plate_number` | string (max 20) | License plate number | Optional |
@@ -77,7 +77,7 @@ All endpoints require the authenticated user to have a verified email address. U
 | `updated_at` | timestamp (ISO 8601) | Last update timestamp | Server-controlled |
 | `deleted_at` | timestamp (ISO 8601) | Soft delete timestamp (null if active) | Server-controlled |
 
-**\*Conditional on `registration_status`:** Required when `registration_status` is `registered`, optional when `unregistered`.
+**\*Conditional on `registration_status`:** Required when `registration_status` is `registered`, optional when `unregistered`. Note: `date_issued` is always optional.
 
 **\*\*Conditional on `type`:** Required when `type` is `Dealership`, optional otherwise.
 
@@ -107,8 +107,8 @@ Users can only access their own cars. Attempting to access another user's car re
 ### Date Validation
 
 For registered cars (`registration_status: registered`):
-- `date_issued` must be provided
-- `expiry_date` must be provided and must be after `date_issued`
+- `expiry_date` must be provided
+- `date_issued` is optional, but if provided, `expiry_date` must be after `date_issued`
 
 ### Document Uploads
 
@@ -213,7 +213,8 @@ type: "Normal"
 - `registration_no`: 1-20 characters (optional)
 - `chasis_no`: 1-30 characters (optional)
 - `engine_no`: 1-30 characters (optional)
-- `date_issued`, `expiry_date`: required if `registration_status` is `registered`
+- `expiry_date`: required if `registration_status` is `registered`
+- `date_issued`: optional (if provided, `expiry_date` must be after `date_issued`)
 - `document_images`: 
   - File upload: array of up to 10 image files (5MB each, jpg/jpeg/png/webp)
   - URL: array of up to 10 valid HTTP/HTTPS URLs
@@ -623,7 +624,7 @@ Slugs are UUIDs (v4 format). Use the slug, not the numeric ID, for all API opera
 - Display dates formatted according to user locale
 
 ### Conditional Fields
-When `registration_status` changes from `unregistered` to `registered`, ensure the form validates and requires `date_issued` and `expiry_date`.
+When `registration_status` changes from `unregistered` to `registered`, ensure the form validates and requires `expiry_date`. The `date_issued` field is optional.
 
 When `type` is set to `Dealership`, ensure all company-related fields are required and validated.
 
