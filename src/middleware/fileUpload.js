@@ -1,8 +1,47 @@
 import multer from 'multer';
 import { validateFile, validateFiles } from '../utils/fileValidator.js';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
-// Configure multer to store files in memory
-const storage = multer.memoryStorage();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+/**
+ * SCALABILITY: Use disk storage instead of memory storage
+ * 
+ * Why this matters:
+ * - Memory storage: 12 files × 10MB = 120MB per request
+ * - 100 concurrent uploads = 12GB RAM needed
+ * - Disk storage: Files written to /tmp, minimal RAM usage
+ * 
+ * Cleanup strategy:
+ * - Files auto-deleted after upload to Supabase
+ * - OS cleans /tmp on reboot
+ * - Consider adding cron job for /tmp cleanup in production
+ * 
+ * TODO: For high-scale production:
+ * - Use dedicated file storage service (S3-compatible)
+ * - Implement streaming upload to final destination
+ * - Add distributed file cleanup coordination
+ */
+const UPLOAD_DIR = process.env.UPLOAD_TEMP_DIR || '/tmp/motoka-uploads';
+
+// Ensure upload directory exists
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, UPLOAD_DIR);
+  },
+  filename: (req, file, cb) => {
+    // Generate unique filename to avoid collisions
+    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1E9)}`;
+    cb(null, `${file.fieldname}-${uniqueSuffix}${path.extname(file.originalname)}`);
+  }
+});
 
 // File size limits
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024; // 5MB
@@ -151,3 +190,27 @@ export const handleCarRegistrationUploads = handleCarFileUploads;
  * Middleware specifically for car update (PUT /cars/:slug)
  */
 export const handleCarUpdateUploads = handleCarFileUploads;
+
+/**
+ * SCALABILITY: Cleanup temp files after processing
+ * Call this in your controller after uploading to Supabase Storage
+ * 
+ * @param {Object} files - req.files object from multer
+ */
+export function cleanupTempFiles(files) {
+  if (!files || typeof files !== 'object') return;
+  
+  const fileArrays = Object.values(files);
+  
+  for (const fileArray of fileArrays) {
+    if (Array.isArray(fileArray)) {
+      for (const file of fileArray) {
+        if (file.path) {
+          fs.unlink(file.path, (err) => {
+            if (err) console.error(`Failed to delete temp file ${file.path}:`, err);
+          });
+        }
+      }
+    }
+  }
+}

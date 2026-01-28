@@ -2,6 +2,7 @@ import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { generateOTP, generateToken } from '../utils/idGenerator.js';
+import { send2FACode as sendEmail2FACode } from './email/email.service.js';
 
 const TOTP_ISSUER = process.env.TOTP_ISSUER || 'Motoka';
 
@@ -63,12 +64,29 @@ export async function generateEmail2FACode(userId) {
   const code = generateOTP();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   
+  // Get user email for sending
+  const { data: profile } = await supabaseAdmin
+    .from('profiles')
+    .select('email')
+    .eq('id', userId)
+    .single();
+  
+  if (!profile?.email) {
+    throw new Error('User email not found');
+  }
+  
   await supabaseAdmin.from('profiles').update({
     two_factor_email_code: code,
     two_factor_email_expires_at: expiresAt.toISOString()
   }).eq('id', userId);
   
-  console.log(`[2FA] Email code for user ${userId}: ${code}`);
+  // SECURITY: Send code via email (Resend), never log code value
+  try {
+    await sendEmail2FACode({ to: profile.email, code });
+  } catch (emailError) {
+    console.error('[2FA] Email send failed for user:', userId, emailError.message);
+    throw new Error('Failed to send 2FA code');
+  }
   
   return code;
 }

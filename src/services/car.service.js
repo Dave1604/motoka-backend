@@ -120,9 +120,18 @@ export async function getCarsPaginated(supabaseUser, page, limit) {
   const from = (page - 1) * limit;
   const to = page * limit - 1;
   
-  const { data: cars, error: carsError } = await supabaseUser
+  /**
+   * SCALABILITY: Combine data fetch and count into single query
+   * 
+   * Before: 2 separate queries (data + count)
+   * After: 1 query with count option
+   * 
+   * Impact: 50% reduction in DB queries for car listings
+   * At 1000 list requests/day: saves 1000 DB queries
+   */
+  const { data: cars, count, error: carsError } = await supabaseUser
     .from('cars')
-    .select('*')
+    .select('*', { count: 'exact' })
     .is('deleted_at', null)
     .order('created_at', { ascending: false })
     .range(from, to);
@@ -130,16 +139,6 @@ export async function getCarsPaginated(supabaseUser, page, limit) {
   if (carsError) {
     logError('Get cars error', carsError);
     throw new CarError(ERROR_MESSAGES.FAILED_TO_RETRIEVE_CARS, HTTP_STATUS.SERVER_ERROR);
-  }
-  
-  const { count, error: countError } = await supabaseUser
-    .from('cars')
-    .select('*', { count: 'exact', head: true })
-    .is('deleted_at', null);
-  
-  if (countError) {
-    logError('Get cars count error', countError);
-    throw new CarError(ERROR_MESSAGES.FAILED_TO_RETRIEVE_COUNT, HTTP_STATUS.SERVER_ERROR);
   }
   
   const totalCars = count || 0;

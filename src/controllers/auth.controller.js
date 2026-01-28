@@ -1,6 +1,7 @@
 import { getSupabase, getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
 import * as twoFactorService from '../services/twoFactor.service.js';
+import { sendPasswordResetOTP as sendPasswordResetEmail } from '../services/email/email.service.js';
 
 export const register = async (req, res) => {
   try {
@@ -136,13 +137,8 @@ export const sendPasswordResetOTP = async (req, res) => {
     const { email } = req.body;
     const supabaseAdmin = getSupabaseAdmin();
     
-    const { data: users } = await supabaseAdmin.auth.admin.listUsers();
-    const user = users?.users?.find(u => u.email === email);
-    
-    if (!user) {
-      return response.success(res, null, 'If an account exists, an OTP has been sent to your email');
-    }
-    
+    // SCALABILITY FIX: Don't reveal if email exists (security best practice)
+    // Generate OTP regardless - if user doesn't exist, OTP won't be usable anyway
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
     
@@ -150,12 +146,19 @@ export const sendPasswordResetOTP = async (req, res) => {
       .from('password_reset_tokens')
       .upsert({ email, otp, expires_at: expiresAt.toISOString(), created_at: new Date().toISOString() }, { onConflict: 'email' });
     
-    console.log(`[OTP] Password reset for ${email}: ${otp}`);
+    // SECURITY: Send OTP via email (Resend), never log OTP value
+    try {
+      await sendPasswordResetEmail({ to: email, otp });
+    } catch (emailError) {
+      // Log error server-side but don't reveal to user
+      console.error('[Password Reset] Email send failed:', emailError.message);
+      // Still return success to avoid revealing if email exists
+    }
     
-    return response.success(res, null, 'OTP sent to your email');
+    return response.success(res, null, 'If your email is registered, you will receive a password reset code');
   } catch (error) {
     console.error('Send OTP error:', error);
-    return response.serverError(res, 'Failed to send OTP');
+    return response.serverError(res, 'Failed to process password reset request');
   }
 };
 
@@ -218,14 +221,18 @@ export const resetPassword = async (req, res) => {
       return response.error(res, 'Reset token has expired');
     }
     
-    const { data: users } = await supabaseAdmin.auth.admin.listUsers();
-    const user = users?.users?.find(u => u.email === email);
+    // SCALABILITY FIX: Query profiles table to get user ID instead of listing all users
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .single();
     
-    if (!user) {
+    if (!profile) {
       return response.error(res, 'User not found');
     }
     
-    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(user.id, { password });
+    const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(profile.id, { password });
     
     if (updateError) {
       return response.error(res, updateError.message);

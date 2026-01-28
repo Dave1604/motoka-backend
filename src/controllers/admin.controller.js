@@ -32,8 +32,22 @@ export const listUsers = async (req, res) => {
       return response.error(res, 'Failed to retrieve users');
     }
     
-    const { data: authUsers } = await supabaseAdmin.auth.admin.listUsers();
-    const emailMap = new Map(authUsers?.users?.map(u => [u.id, u.email]) || []);
+    // SCALABILITY FIX: Batch fetch only the auth users for paginated profiles
+    // instead of loading ALL users into memory
+    const emailMap = new Map();
+    
+    if (profiles && profiles.length > 0) {
+      const userFetches = profiles.map(profile => 
+        supabaseAdmin.auth.admin.getUserById(profile.id)
+          .then(({ data }) => ({ id: profile.id, email: data?.user?.email }))
+          .catch(() => ({ id: profile.id, email: null }))
+      );
+      
+      const userResults = await Promise.all(userFetches);
+      userResults.forEach(result => {
+        if (result.email) emailMap.set(result.id, result.email);
+      });
+    }
     
     const users = profiles.map(profile => ({
       id: profile.id,

@@ -13,7 +13,12 @@
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "npm test -- --watch"
   },
-  "keywords": ["authentication", "supabase", "2fa", "api"],
+  "keywords": [
+    "authentication",
+    "supabase",
+    "2fa",
+    "api"
+  ],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -26,6 +31,7 @@
     "helmet": "^7.1.0",
     "multer": "^1.4.5-lts.1",
     "qrcode": "^1.5.4",
+    "resend": "^6.9.1",
     "speakeasy": "^2.0.0"
   },
   "devDependencies": {
