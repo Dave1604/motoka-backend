@@ -1,6 +1,7 @@
 -- =============================================
 -- SUPABASE CRON JOB - EXPIRY NOTIFICATIONS (EDGE FUNCTION VERSION)
 -- Calls Edge Function to send vehicle expiry reminders
+-- Includes error handling and logging
 -- =============================================
 
 -- Enable pg_cron extension (requires superuser or Supabase dashboard)
@@ -11,8 +12,30 @@ GRANT USAGE ON SCHEMA cron TO postgres;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA cron TO postgres;
 
 -- =============================================
+-- Create a table to log cron job execution history
+-- =============================================
+
+CREATE TABLE IF NOT EXISTS public.cron_job_logs (
+  id BIGSERIAL PRIMARY KEY,
+  job_name TEXT NOT NULL,
+  executed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  status TEXT NOT NULL, -- 'success', 'failure', 'partial'
+  response TEXT,
+  error_message TEXT,
+  execution_time_ms INTEGER,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create index for querying logs
+CREATE INDEX IF NOT EXISTS idx_cron_job_logs_job_name 
+  ON public.cron_job_logs(job_name);
+
+CREATE INDEX IF NOT EXISTS idx_cron_job_logs_executed_at 
+  ON public.cron_job_logs(executed_at DESC);
+
+-- =============================================
 -- Create a PostgreSQL function to call the Edge Function
--- This function will be triggered by pg_cron
+-- This function will be triggered by pg_cron with retry logic
 -- =============================================
 
 CREATE OR REPLACE FUNCTION public.trigger_expiry_notifications()
@@ -23,21 +46,27 @@ AS $$
 DECLARE
   edge_function_url TEXT;
   api_response TEXT;
+  http_status INTEGER;
+  cron_secret TEXT;
+  start_time TIMESTAMP;
+  execution_time_ms INTEGER;
+  job_status TEXT;
+  error_msg TEXT;
 BEGIN
+  start_time := CURRENT_TIMESTAMP;
+  job_status := 'success';
+  error_msg := NULL;
+  
   -- Call the Supabase Edge Function
   -- Replace YOUR_PROJECT_ID with your actual Supabase project ID
   edge_function_url := 'https://sbogxkurbwiwkaacochb.supabase.co/functions/v1/expiry-notifications';
 
-  -- Make HTTP POST request to Edge Function
-  -- Note: This requires the pg_net extension
-  -- Include the CRON_SECRET_KEY for authentication
-  DECLARE
-    cron_secret TEXT;
+  -- Get the secret from environment
+  cron_secret := 'your-cron-secret-key'; -- REPLACE WITH YOUR ACTUAL SECRET
+  
   BEGIN
-    -- Get the secret from your configured environment
-    -- You must set CRON_SECRET_KEY in your Supabase Edge Function secrets
-    cron_secret := 'your-cron-secret-key'; -- REPLACE WITH YOUR ACTUAL SECRET
-    
+    -- Make HTTP POST request to Edge Function
+    -- The Edge Function now includes built-in retry logic (3 retries with exponential backoff)
     SELECT content INTO api_response
     FROM http((
       'POST',
@@ -50,10 +79,28 @@ BEGIN
       '{}'
     )::http_request);
     
-    RAISE NOTICE 'Expiry notification Edge Function triggered: %', api_response;
+    RAISE NOTICE '[Cron] Expiry notification Edge Function triggered successfully';
+    
   EXCEPTION WHEN OTHERS THEN
-    RAISE WARNING 'Failed to trigger expiry notification Edge Function: %', SQLERRM;
+    job_status := 'failure';
+    error_msg := SQLERRM;
+    RAISE WARNING '[Cron] Failed to trigger expiry notification Edge Function: %', SQLERRM;
   END;
+  
+  -- Calculate execution time
+  execution_time_ms := EXTRACT(MILLISECOND FROM (CURRENT_TIMESTAMP - start_time))::INTEGER;
+  
+  -- Log the job execution
+  INSERT INTO public.cron_job_logs (job_name, status, response, error_message, execution_time_ms)
+  VALUES (
+    'expiry-notifications-daily',
+    job_status,
+    api_response,
+    error_msg,
+    execution_time_ms
+  );
+  
+  RAISE NOTICE '[Cron] Job logged with status: %, execution time: %ms', job_status, execution_time_ms;
 END;
 $$;
 
@@ -88,6 +135,9 @@ SELECT cron.schedule(
 
 -- View job run history
 -- SELECT * FROM cron.job_run_details ORDER BY start_time DESC LIMIT 10;
+
+-- View cron logs created by this function
+-- SELECT * FROM public.cron_job_logs ORDER BY created_at DESC LIMIT 20;
 
 -- =============================================
 -- IMPORTANT SETUP INSTRUCTIONS

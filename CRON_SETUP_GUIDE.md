@@ -123,6 +123,80 @@ You should see `expiry-notifications-daily` in the results.
 
 ---
 
+## Retry Logic & Error Handling
+
+### Edge Function Retry (New!)
+The Edge Function now includes built-in retry logic:
+
+- **Max Retries:** 3 attempts
+- **Initial Delay:** 1 second
+- **Backoff Strategy:** Exponential (doubles each retry, capped at 10 seconds)
+- **Applies to:** Email sending, database operations
+
+This means if an email fails to send due to a network issue, it will automatically retry up to 3 times before giving up.
+
+### Rate Limiting & Batching (New!)
+To prevent overwhelming the Resend API and database, emails are now sent with controlled rate limiting:
+
+- **Delay Between Emails:** 100ms per email
+- **Batch Size:** 10 emails per batch
+- **Delay Between Batches:** 1 second
+
+**Example Timeline:**
+```
+Batch 1 (10 emails)
+  Email 1: 0ms
+  Email 2: 100ms
+  Email 3: 200ms
+  ...
+  Email 10: 900ms
+[Batch delay: 1000ms]
+Batch 2 (10 emails)
+  Email 11: 1900ms
+  ...
+```
+
+**Benefits:**
+- Prevents Resend API rate limit hits (100 emails/sec limit)
+- Spreads database load over time
+- More reliable delivery tracking
+- Allows other cron jobs to run without contention
+
+**Configuration in** [supabase/functions/expiry-notifications/index.ts](supabase/functions/expiry-notifications/index.ts):
+```typescript
+const RATE_LIMIT_CONFIG = {
+  delayBetweenEmailsMs: 100,      // Adjust as needed
+  batchSize: 10,                   // Emails per batch
+  delayBetweenBatchesMs: 1000      // Adjust for your API limits
+};
+```
+
+### Cron Job Logging (New!)
+All cron job executions are now logged to `public.cron_job_logs` table:
+
+```sql
+-- View recent cron job executions
+SELECT * FROM public.cron_job_logs 
+ORDER BY created_at DESC 
+LIMIT 20;
+
+-- Check for failures
+SELECT * FROM public.cron_job_logs 
+WHERE status = 'failure' 
+ORDER BY created_at DESC;
+
+-- View average execution time
+SELECT 
+  job_name,
+  COUNT(*) as execution_count,
+  AVG(execution_time_ms) as avg_time_ms,
+  MAX(execution_time_ms) as max_time_ms
+FROM public.cron_job_logs
+GROUP BY job_name;
+```
+
+---
+
 ## Cron Job Schedule
 
 **Runs:** Daily at **08:00 UTC** (09:00 WAT)
@@ -145,9 +219,14 @@ To change the schedule, modify this line in the migration:
 
 1. **Cron triggers** `public.trigger_expiry_notifications()` function
 2. **PostgreSQL function** makes HTTP POST request to Edge Function
-3. **Edge Function** (`index.ts`):
+3. **Edge Function** (`index.ts`) with retry logic:
    - Connects to Supabase using service role key
    - Queries `cars` table for vehicles expiring in: 30, 14, 7, 3, 2, 1 days
+   - **Retries email sending 3 times** if it fails (exponential backoff)
+   - **Retries database operations** if they fail
+4. **Resend API** sends emails
+5. **Notification history** is recorded in `expiry_notifications` table with retry protection
+6. **Execution results** are logged to `cron_job_logs` table for monitoring
    - Checks `expiry_notifications` table to avoid duplicate emails
    - Sends reminder emails via **Resend API** for new expiries
    - Records sent notifications in `expiry_notifications` table

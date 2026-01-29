@@ -10,9 +10,61 @@ const NOTIFICATION_INTERVALS = [
   { days: 1, type: '1_day' }
 ];
 
+const RETRY_CONFIG = {
+  maxRetries: 3,
+  initialDelayMs: 1000,
+  maxDelayMs: 10000,
+  backoffMultiplier: 2
+};
+
+const RATE_LIMIT_CONFIG = {
+  delayBetweenEmailsMs: 100,      // 100ms between each email
+  batchSize: 10,                   // Process 10 emails per batch
+  delayBetweenBatchesMs: 1000      // 1 second between batches
+};
+
 /**
- * Format date for email display
+ * Retry utility with exponential backoff
  */
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  fnName: string = 'operation',
+  maxRetries: number = RETRY_CONFIG.maxRetries
+): Promise<T> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      
+      if (attempt === maxRetries) {
+        break;
+      }
+      
+      const delay = Math.min(
+        RETRY_CONFIG.initialDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt),
+        RETRY_CONFIG.maxDelayMs
+      );
+      
+      console.warn(
+        `[Retry] ${fnName} attempt ${attempt + 1} failed, retrying in ${delay}ms. Error: ${error.message}`
+      );
+      
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError || new Error(`${fnName} failed after ${maxRetries} retries`);
+}
+
+/**
+ * Delay utility for rate limiting
+ */
+async function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 function formatDate(dateString: string): string {
   const date = new Date(dateString);
   return date.toLocaleDateString('en-US', { 
@@ -23,7 +75,7 @@ function formatDate(dateString: string): string {
 }
 
 /**
- * Send expiry reminder email via Resend
+ * Send expiry reminder email via Resend (with retry)
  */
 async function sendExpiryReminder(
   resend: InstanceType<typeof Resend>,
@@ -35,9 +87,11 @@ async function sendExpiryReminder(
   daysRemaining: number,
   expiryDate: string
 ) {
-  const urgencyLevel = daysRemaining <= 3 ? 'high' : daysRemaining <= 7 ? 'medium' : 'low';
-  const urgencyColor = urgencyLevel === 'high' ? '#dc3545' : urgencyLevel === 'medium' ? '#1B6DBD' : '#1B6DBD';
-  const brandPrimary = '#1B6DBD';
+  return retryWithBackoff(
+    async () => {
+      const urgencyLevel = daysRemaining <= 3 ? 'high' : daysRemaining <= 7 ? 'medium' : 'low';
+      const urgencyColor = urgencyLevel === 'high' ? '#dc3545' : urgencyLevel === 'medium' ? '#1B6DBD' : '#1B6DBD';
+      const brandPrimary = '#1B6DBD';
   
   const subject = daysRemaining === 1 
     ? `🚨 URGENT: Vehicle Registration Expires Tomorrow`
@@ -129,21 +183,25 @@ async function sendExpiryReminder(
   `;
 
   const { data, error } = await resend.emails.send({
-    from: emailFrom,
-    to,
-    subject,
-    html
-  });
+        from: emailFrom,
+        to,
+        subject,
+        html
+      });
 
-  if (error) {
-    throw new Error(`Email send failed: ${error.message}`);
-  }
+      if (error) {
+        throw new Error(`Email send failed: ${error.message}`);
+      }
 
-  return data?.id;
+      return data?.id;
+    },
+    `sendEmail(${to})`,
+    RETRY_CONFIG.maxRetries
+  );
 }
 
 /**
- * Check if notification has already been sent
+ * Check if notification has already been sent (with retry)
  */
 async function isNotificationSent(
   supabase: ReturnType<typeof createClient>,
@@ -151,19 +209,25 @@ async function isNotificationSent(
   notificationType: string,
   expiryDate: string
 ): Promise<boolean> {
-  const { data } = await supabase
-    .from('expiry_notifications')
-    .select('id')
-    .eq('car_id', carId)
-    .eq('notification_type', notificationType)
-    .eq('expiry_date', expiryDate)
-    .single();
+  return retryWithBackoff(
+    async () => {
+      const { data } = await supabase
+        .from('expiry_notifications')
+        .select('id')
+        .eq('car_id', carId)
+        .eq('notification_type', notificationType)
+        .eq('expiry_date', expiryDate)
+        .single();
 
-  return !!data;
+      return !!data;
+    },
+    `isNotificationSent(car_id=${carId}, type=${notificationType})`,
+    RETRY_CONFIG.maxRetries
+  );
 }
 
 /**
- * Record that a notification was sent
+ * Record that a notification was sent (with retry)
  */
 async function recordNotification(
   supabase: ReturnType<typeof createClient>,
@@ -173,17 +237,23 @@ async function recordNotification(
   expiryDate: string,
   emailId: string
 ) {
-  const { error } = await supabase
-    .from('expiry_notifications')
-    .insert({
-      car_id: carId,
-      user_id: userId,
-      notification_type: notificationType,
-      expiry_date: expiryDate,
-      email_id: emailId
-    });
+  return retryWithBackoff(
+    async () => {
+      const { error } = await supabase
+        .from('expiry_notifications')
+        .insert({
+          car_id: carId,
+          user_id: userId,
+          notification_type: notificationType,
+          expiry_date: expiryDate,
+          email_id: emailId
+        });
 
-  if (error) throw error;
+      if (error) throw error;
+    },
+    `recordNotification(car_id=${carId}, type=${notificationType})`,
+    RETRY_CONFIG.maxRetries
+  );
 }
 
 /**
@@ -309,60 +379,94 @@ Deno.serve(async (req: Request) => {
         failed: 0
       };
 
-      // Process each vehicle
-      for (const car of cars || []) {
-        try {
-          const alreadySent = await isNotificationSent(
-            supabase,
-            car.id,
-            interval.type,
-            car.expiry_date
-          );
+      // Process vehicles in batches with rate limiting
+      const batchSize = RATE_LIMIT_CONFIG.batchSize;
+      const carsArray = cars || [];
+      
+      for (let batchIndex = 0; batchIndex < carsArray.length; batchIndex += batchSize) {
+        const batch = carsArray.slice(batchIndex, batchIndex + batchSize);
+        console.log(`[Cron] Processing batch ${Math.ceil(batchIndex / batchSize) + 1} of ${Math.ceil(carsArray.length / batchSize)} for ${interval.type}`);
+        
+        // Process each car in the batch
+        for (let carIndex = 0; carIndex < batch.length; carIndex++) {
+          const car = batch[carIndex];
+          
+          try {
+            const alreadySent = await isNotificationSent(
+              supabase,
+              car.id,
+              interval.type,
+              car.expiry_date
+            );
 
-          if (alreadySent) {
-            console.log(`[Cron] Skipped ${car.registration_no} (${interval.type}) - already sent`);
-            intervalResult.skipped++;
-            continue;
+            if (alreadySent) {
+              console.log(`[Cron] Skipped ${car.registration_no} (${interval.type}) - already sent`);
+              intervalResult.skipped++;
+              // Still add delay to maintain rate limit consistency
+              if (carIndex < batch.length - 1) {
+                await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
+              }
+              continue;
+            }
+
+            const userProfile = profilesById.get(car.user_id);
+
+            if (!userProfile) {
+              console.warn(`[Cron] Skipped ${car.registration_no} - profile not found`);
+              intervalResult.skipped++;
+              if (carIndex < batch.length - 1) {
+                await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
+              }
+              continue;
+            }
+            
+            const userName = `${userProfile.first_name} ${userProfile.last_name}`;
+            const vehicleName = `${car.vehicle_make} ${car.vehicle_model}`;
+            const formattedDate = formatDate(car.expiry_date);
+
+            // Send email
+            const emailId = await sendExpiryReminder(
+              resend,
+              emailFrom,
+              userProfile.email,
+              userName,
+              vehicleName,
+              car.registration_no,
+              interval.days,
+              formattedDate
+            );
+
+            // Record notification
+            await recordNotification(
+              supabase,
+              car.id,
+              car.user_id,
+              interval.type,
+              car.expiry_date,
+              emailId
+            );
+
+            console.log(`[Cron] Sent ${car.registration_no} (${interval.type})`);
+            intervalResult.sent++;
+            
+            // Add delay between emails to prevent API overload
+            if (carIndex < batch.length - 1) {
+              await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
+            }
+          } catch (error) {
+            console.error(`[Cron] Error for ${car.registration_no}:`, error.message);
+            intervalResult.failed++;
+            // Still maintain delay on errors
+            if (carIndex < batch.length - 1) {
+              await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
+            }
           }
-
-          const userProfile = profilesById.get(car.user_id);
-
-          if (!userProfile) {
-            console.warn(`[Cron] Skipped ${car.registration_no} - profile not found`);
-            intervalResult.skipped++;
-            continue;
-          }
-          const userName = `${userProfile.first_name} ${userProfile.last_name}`;
-          const vehicleName = `${car.vehicle_make} ${car.vehicle_model}`;
-          const formattedDate = formatDate(car.expiry_date);
-
-          // Send email
-          const emailId = await sendExpiryReminder(
-            resend,
-            emailFrom,
-            userProfile.email,
-            userName,
-            vehicleName,
-            car.registration_no,
-            interval.days,
-            formattedDate
-          );
-
-          // Record notification
-          await recordNotification(
-            supabase,
-            car.id,
-            car.user_id,
-            interval.type,
-            car.expiry_date,
-            emailId
-          );
-
-          console.log(`[Cron] Sent ${car.registration_no} (${interval.type})`);
-          intervalResult.sent++;
-        } catch (error) {
-          console.error(`[Cron] Error for ${car.registration_no}:`, error.message);
-          intervalResult.failed++;
+        }
+        
+        // Add delay between batches (except after the last batch)
+        if (batchIndex + batchSize < carsArray.length) {
+          console.log(`[Cron] Batch complete, waiting ${RATE_LIMIT_CONFIG.delayBetweenBatchesMs}ms before next batch...`);
+          await delay(RATE_LIMIT_CONFIG.delayBetweenBatchesMs);
         }
       }
 
