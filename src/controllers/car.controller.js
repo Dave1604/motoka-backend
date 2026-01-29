@@ -5,6 +5,7 @@ import { sanitizeCarInput } from '../utils/carSanitization.js';
 import { checkCarDuplicates } from '../services/carDuplicateChecker.js';
 import { buildCarData, buildUpdateData, extractNormalizedIdentifiers } from '../utils/carDataBuilder.js';
 import { validateConditionalFields } from '../utils/carUpdateValidator.js';
+import { buildExpiryStatus } from '../utils/expiryStatus.js';
 import {
   createCar,
   updateCarBySlug,
@@ -107,8 +108,12 @@ export const getCars = async (req, res) => {
     const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT));
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
+    const carsWithExpiry = (result.cars || []).map((car) => ({
+      ...car,
+      expiry_status: buildExpiryStatus(car.expiry_date)
+    }));
     
-    return response.success(res, result, 'Cars retrieved successfully');
+    return response.success(res, { ...result, cars: carsWithExpiry }, 'Cars retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
   }
@@ -125,8 +130,12 @@ export const getCarBySlug = async (req, res) => {
     
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
+    const carWithExpiry = {
+      ...car,
+      expiry_status: buildExpiryStatus(car.expiry_date)
+    };
     
-    return response.success(res, { car }, 'Car retrieved successfully');
+    return response.success(res, { car: carWithExpiry }, 'Car retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
   }
