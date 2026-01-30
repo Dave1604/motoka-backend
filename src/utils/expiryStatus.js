@@ -64,7 +64,7 @@ export const buildExpiryStatus = (expiryDate, now = new Date()) => {
   // Condition 3: Today >= expiry_date - 30 days AND Today <= expiry_date
   // (0 to 30 days remaining, inclusive)
   return {
-    message: expiresToday ? 'Expires today' : `${diffDays} day${diffDays === 1 ? '' : 's'} remaining`,
+    message: expiresToday ? 'Expires today' : `${diffDays} day${diffDays === 1 ? '' : 's'} to expire`,
     days_left: diffDays,
     status: 'reminder',
     is_urgent: isUrgent,
