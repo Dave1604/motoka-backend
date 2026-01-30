@@ -18,7 +18,7 @@ import {
 import { deleteFiles } from '../services/fileUpload.service.js';
 import { handleFileUploads, getFilesToDelete, monitorFileCleanup } from '../utils/fileUploadHelper.js';
 import { createInAppNotification } from '../services/notification.service.js';
-import { sendWelcomeEmail } from '../services/email/email.service.js';
+import { sendWelcomeEmail } from '../services/email/carEmail.service.js';
 import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
 const isValidUUID = (uuid) => {
