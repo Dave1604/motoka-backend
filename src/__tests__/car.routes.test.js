@@ -19,6 +19,14 @@ const mockSupabaseUser = {
 const mockSupabaseAdmin = {
   from: jest.fn().mockReturnThis(),
   select: jest.fn().mockReturnThis(),
+  insert: jest.fn().mockReturnThis(),
+  update: jest.fn().mockReturnThis(),
+  eq: jest.fn().mockReturnThis(),
+  is: jest.fn().mockReturnThis(),
+  order: jest.fn().mockReturnThis(),
+  range: jest.fn().mockReturnThis(),
+  single: jest.fn().mockResolvedValue({ data: { user_id: 'ABC123', email: 'test@example.com', first_name: 'Test' }, error: null }),
+  delete: jest.fn().mockReturnThis(),
 };
 
 const mockUploadFile = jest.fn();
@@ -31,25 +39,6 @@ jest.unstable_mockModule('../config/supabase.js', () => ({
   getSupabaseUser: jest.fn(() => mockSupabaseUser),
   getSupabaseAdmin: jest.fn(() => mockSupabaseAdmin),
   getSupabase: jest.fn(() => mockSupabaseUser),
-}));
-
-// Mock file upload service
-jest.unstable_mockModule('../services/fileUpload.service.js', () => ({
-  uploadFile: mockUploadFile,
-  uploadFiles: mockUploadFiles,
-  deleteFile: jest.fn(),
-  deleteFiles: mockDeleteFiles,
-}));
-
-// Mock car duplicate checker
-jest.unstable_mockModule('../services/carDuplicateChecker.js', () => ({
-  checkCarDuplicates: mockCheckCarDuplicates,
-}));
-
-// Mock rate limiter
-jest.unstable_mockModule('../middleware/rateLimiter.js', () => ({
-  apiLimiter: (req, res, next) => next(),
-  carRegistrationLimiter: (req, res, next) => next(),
 }));
 
 // Mock file upload middleware

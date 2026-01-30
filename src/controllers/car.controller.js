@@ -1,4 +1,4 @@
-import { getSupabaseUser } from '../config/supabase.js';
+import { getSupabaseUser, getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
 import { logError } from '../utils/logger.js';
 import { sanitizeCarInput } from '../utils/carSanitization.js';
@@ -17,6 +17,8 @@ import {
 } from '../services/car.service.js';
 import { deleteFiles } from '../services/fileUpload.service.js';
 import { handleFileUploads, getFilesToDelete, monitorFileCleanup } from '../utils/fileUploadHelper.js';
+import { createInAppNotification } from '../services/notification.service.js';
+import { sendWelcomeEmail } from '../services/email/email.service.js';
 import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
 const isValidUUID = (uuid) => {
@@ -68,6 +70,65 @@ export const addCar = async (req, res) => {
     
     const carData = buildCarData(sanitizedBody, userId);
     const car = await createCar(supabaseUser, carData);
+    
+    // Check if this is the user's first car (all non-deleted cars)
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      const { count } = await supabaseAdmin
+        .from('cars')
+        .select('id', { count: 'exact' })
+        .eq('user_id', userId)
+        .is('deleted_at', null);
+      
+      const isFirstCar = count === 1;
+      
+      if (isFirstCar) {
+        // Fetch user profile for email and name
+        const { data: userProfile } = await supabaseAdmin
+          .from('profiles')
+          .select('email, first_name')
+          .eq('id', userId)
+          .single();
+        
+        const userEmail = userProfile?.email || supabaseUser.user?.email;
+        const firstName = userProfile?.first_name || null;
+        
+        // Create in-app notification (always succeeds independently)
+        try {
+          await createInAppNotification(
+            userId,
+            'welcome',
+            'first_car_registered',
+            'Welcome to Motoka 🎉 Thanks for registering your first car with us!'
+          );
+          console.log('[Car Controller] Welcome in-app notification created for user:', userId);
+        } catch (notifError) {
+          logError('Failed to create welcome in-app notification', notifError);
+          // Continue - in-app notification failure doesn't block the response
+        }
+        
+        // Send welcome email with retry logic (independent process)
+        try {
+          await sendWelcomeEmail({
+            to: userEmail,
+            firstName,
+            carDetails: {
+              make: car.vehicle_make,
+              model: car.vehicle_model,
+              registration_no: car.registration_no
+            }
+          });
+          console.log('[Car Controller] Welcome email sent to user:', userId);
+        } catch (emailError) {
+          logError('Failed to send welcome email', emailError);
+          // Log error but don't block response - this is a best-effort operation
+          // In production, this might trigger a retry queue or alerting system
+        }
+      }
+    } catch (notificationError) {
+      logError('Error processing welcome notifications', notificationError);
+      // Non-blocking error for notifications - don't interrupt car creation response
+    }
     
     return response.created(res, { car }, 'Car registered successfully');
   } catch (error) {
