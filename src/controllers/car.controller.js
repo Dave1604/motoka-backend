@@ -169,12 +169,12 @@ export const getCars = async (req, res) => {
     const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT));
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
-    const carsWithReminder = (result.cars || []).map((car) => ({
+    const carsWithExpiry = (result.cars || []).map((car) => ({
       ...car,
-      reminder: buildExpiryStatus(car.expiry_date)
+      expiry_status: buildExpiryStatus(car.expiry_date)
     }));
     
-    return response.success(res, { ...result, cars: carsWithReminder }, 'Cars retrieved successfully');
+    return response.success(res, { ...result, cars: carsWithExpiry }, 'Cars retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
   }
@@ -191,12 +191,12 @@ export const getCarBySlug = async (req, res) => {
     
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
-    const carWithReminder = {
+    const carWithExpiry = {
       ...car,
-      reminder: buildExpiryStatus(car.expiry_date)
+      expiry_status: buildExpiryStatus(car.expiry_date)
     };
     
-    return response.success(res, { car: carWithReminder }, 'Car retrieved successfully');
+    return response.success(res, { car: carWithExpiry }, 'Car retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
   }
