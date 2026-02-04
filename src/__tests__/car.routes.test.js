@@ -34,11 +34,44 @@ const mockUploadFiles = jest.fn();
 const mockDeleteFiles = jest.fn();
 const mockCheckCarDuplicates = jest.fn();
 
+// Service layer mocks (used by controllers)
+const mockCreateCar = jest.fn();
+const mockUpdateCarBySlug = jest.fn();
+const mockGetCarBySlugService = jest.fn();
+const mockGetCarsPaginated = jest.fn();
+const mockDeleteCarBySlugService = jest.fn();
+const mockVerifyCarExists = jest.fn();
+
+class MockCarError extends Error {
+  constructor(message, statusCode = 500, code = null) {
+    super(message);
+    this.name = 'CarError';
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
+const mockHandleFileUploads = jest.fn();
+const mockGetFilesToDelete = jest.fn();
+const mockMonitorFileCleanup = jest.fn();
+
+const mockCreateInAppNotification = jest.fn();
+const mockSendWelcomeEmail = jest.fn();
+
 // Mock Supabase config
 jest.unstable_mockModule('../config/supabase.js', () => ({
   getSupabaseUser: jest.fn(() => mockSupabaseUser),
   getSupabaseAdmin: jest.fn(() => mockSupabaseAdmin),
   getSupabase: jest.fn(() => mockSupabaseUser),
+}));
+
+// Mock rate limiters to avoid 429s in tests
+jest.unstable_mockModule('../middleware/rateLimiter.js', () => ({
+  apiLimiter: (req, res, next) => next(),
+  authLimiter: (req, res, next) => next(),
+  otpLimiter: (req, res, next) => next(),
+  passwordResetLimiter: (req, res, next) => next(),
+  carRegistrationLimiter: (req, res, next) => next(),
 }));
 
 // Mock file upload middleware
@@ -51,6 +84,43 @@ jest.unstable_mockModule('../middleware/fileUpload.js', () => ({
     req.uploadedFiles = req.uploadedFiles || {};
     next();
   },
+}));
+
+// Mock low-level file upload helpers used by controller
+jest.unstable_mockModule('../utils/fileUploadHelper.js', () => ({
+  handleFileUploads: (...args) => mockHandleFileUploads(...args),
+  getFilesToDelete: (...args) => mockGetFilesToDelete(...args),
+  monitorFileCleanup: (...args) => mockMonitorFileCleanup(...args),
+}));
+
+// Mock duplicate checker service
+jest.unstable_mockModule('../services/carDuplicateChecker.js', () => ({
+  checkCarDuplicates: (...args) => mockCheckCarDuplicates(...args),
+}));
+
+// Mock car service layer used by controller
+jest.unstable_mockModule('../services/car.service.js', () => ({
+  createCar: (...args) => mockCreateCar(...args),
+  updateCarBySlug: (...args) => mockUpdateCarBySlug(...args),
+  getCarBySlug: (...args) => mockGetCarBySlugService(...args),
+  getCarsPaginated: (...args) => mockGetCarsPaginated(...args),
+  deleteCarBySlug: (...args) => mockDeleteCarBySlugService(...args),
+  verifyCarExists: (...args) => mockVerifyCarExists(...args),
+  CarError: MockCarError,
+}));
+
+// Mock file storage service
+jest.unstable_mockModule('../services/fileUpload.service.js', () => ({
+  deleteFiles: (...args) => mockDeleteFiles(...args),
+}));
+
+// Mock notification + email services (side effects not needed in tests)
+jest.unstable_mockModule('../services/notification.service.js', () => ({
+  createInAppNotification: (...args) => mockCreateInAppNotification(...args),
+}));
+
+jest.unstable_mockModule('../services/email/carEmail.service.js', () => ({
+  sendWelcomeEmail: (...args) => mockSendWelcomeEmail(...args),
 }));
 
 // Mock authentication middleware
@@ -172,7 +242,7 @@ describe('Car Endpoints', () => {
     app = createTestApp();
     jest.clearAllMocks();
     
-    // Reset Supabase mocks
+    // Reset Supabase user mocks (kept for backwards compatibility)
     mockSupabaseUser.from.mockReturnThis();
     mockSupabaseUser.select.mockReturnThis();
     mockSupabaseUser.insert.mockReturnThis();
@@ -181,12 +251,57 @@ describe('Car Endpoints', () => {
     mockSupabaseUser.is.mockReturnThis();
     mockSupabaseUser.order.mockReturnThis();
     mockSupabaseUser.range.mockReturnThis();
+
+    // Reset Supabase admin mocks used in welcome flow
+    mockSupabaseAdmin.from.mockReturnThis();
+    mockSupabaseAdmin.select.mockReturnThis();
+    mockSupabaseAdmin.insert.mockReturnThis();
+    mockSupabaseAdmin.update.mockReturnThis();
+    mockSupabaseAdmin.eq.mockReturnThis();
+    // For the first-car count query
+    mockSupabaseAdmin.is.mockResolvedValue({ count: 1, error: null });
+    // For profile lookup
+    mockSupabaseAdmin.single.mockResolvedValue({
+      data: { user_id: 'ABC123', email: 'test@example.com', first_name: 'Test' },
+      error: null,
+    });
+    mockSupabaseAdmin.order.mockReturnThis();
+    mockSupabaseAdmin.range.mockReturnThis();
+    mockSupabaseAdmin.delete.mockReturnThis();
     
-    // Reset service mocks
+    // Default service-layer behaviour
     mockCheckCarDuplicates.mockResolvedValue({ hasDuplicates: false });
+    mockCreateCar.mockResolvedValue(createTestCar());
+    mockGetCarsPaginated.mockResolvedValue({
+      cars: [],
+      pagination: {
+        current_page: 1,
+        limit: 10,
+        total_cars: 0,
+        total_pages: 0,
+        has_next: false,
+        has_prev: false,
+      },
+    });
+    mockGetCarBySlugService.mockResolvedValue(createTestCar());
+    mockVerifyCarExists.mockResolvedValue(createTestCar());
+    mockUpdateCarBySlug.mockResolvedValue(createTestCar());
+    mockDeleteCarBySlugService.mockResolvedValue();
+
+    // File upload helpers
+    mockHandleFileUploads.mockResolvedValue({
+      uploadedFileUrls: {},
+      tempFileUrls: [],
+    });
+    mockGetFilesToDelete.mockReturnValue([]);
+    mockMonitorFileCleanup.mockResolvedValue();
+
+    // File storage + side-effects
     mockUploadFile.mockResolvedValue('https://example.com/file.jpg');
     mockUploadFiles.mockResolvedValue(['https://example.com/file1.jpg']);
     mockDeleteFiles.mockResolvedValue();
+    mockCreateInAppNotification.mockResolvedValue();
+    mockSendWelcomeEmail.mockResolvedValue();
   });
 
   describe('Authentication Tests', () => {
@@ -444,31 +559,17 @@ describe('Car Endpoints', () => {
     });
 
     it('should return empty array when user has no cars', async () => {
-      // Mock for the cars query
-      const mockRange = {
-        range: jest.fn().mockResolvedValue({ data: [], error: null }),
-      };
-      const mockOrder = {
-        order: jest.fn().mockReturnValue(mockRange),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockOrder),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockIs1),
-      };
-
-      // Mock for the count query
-      const mockIs2 = {
-        is: jest.fn().mockResolvedValue({ count: 0, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockIs2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockSelect2);
+      mockGetCarsPaginated.mockResolvedValue({
+        cars: [],
+        pagination: {
+          current_page: 1,
+          limit: 10,
+          total_cars: 0,
+          total_pages: 0,
+          has_next: false,
+          has_prev: false,
+        },
+      });
 
       const response = await request(app)
         .get('/api/get-cars')
@@ -484,22 +585,7 @@ describe('Car Endpoints', () => {
     it('should return car successfully with valid slug', async () => {
       const car = createTestCar();
       
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ data: car, error: null }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockGetCarBySlugService.mockResolvedValue(car);
 
       const response = await request(app)
         .get('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -522,25 +608,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 404 when car does not exist', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockGetCarBySlugService.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .get('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -553,25 +623,9 @@ describe('Car Endpoints', () => {
     it('should return 404 when accessing another user\'s car', async () => {
       // When user tries to access another user's car, the query filters by user_id
       // So it will return no results (PGRST116 error)
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockGetCarBySlugService.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .get('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -650,25 +704,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 404 when car does not exist', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockVerifyCarExists.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -680,25 +718,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 404 when updating another user\'s car', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockVerifyCarExists.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -806,25 +828,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 404 when car does not exist', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockVerifyCarExists.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .delete('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -835,25 +841,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 404 when deleting another user\'s car', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockVerifyCarExists.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .delete('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -864,25 +854,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 404 when car is already deleted', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockVerifyCarExists.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .delete('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -896,32 +870,18 @@ describe('Car Endpoints', () => {
   describe('Ownership Enforcement', () => {
     it('should only return cars belonging to authenticated user in GET /api/get-cars', async () => {
       const userCars = [createTestCar({ user_id: 'user-123' })];
-      
-      // Mock for the cars query
-      const mockRange = {
-        range: jest.fn().mockResolvedValue({ data: userCars, error: null }),
-      };
-      const mockOrder = {
-        order: jest.fn().mockReturnValue(mockRange),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockOrder),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockIs1),
-      };
 
-      // Mock for the count query
-      const mockIs2 = {
-        is: jest.fn().mockResolvedValue({ count: 1, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockIs2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockSelect2);
+      mockGetCarsPaginated.mockResolvedValue({
+        cars: userCars,
+        pagination: {
+          current_page: 1,
+          limit: 10,
+          total_cars: 1,
+          total_pages: 1,
+          has_next: false,
+          has_prev: false,
+        },
+      });
 
       const response = await request(app)
         .get('/api/get-cars')
@@ -933,25 +893,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should prevent access to another user\'s car via GET /api/cars/:slug', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockGetCarBySlugService.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .get('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -962,25 +906,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should prevent update of another user\'s car via PUT /api/cars/:slug', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockVerifyCarExists.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -991,25 +919,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should prevent deletion of another user\'s car via DELETE /api/cars/:slug', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { code: 'PGRST116' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockVerifyCarExists.mockRejectedValue(
+        new MockCarError('Car not found', 404)
+      );
 
       const response = await request(app)
         .delete('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -1227,14 +1139,7 @@ describe('Car Endpoints', () => {
       
       const createdCar = createTestCar(carData);
 
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ data: createdCar, error: null }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
-      });
+      mockCreateCar.mockResolvedValue(createdCar);
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -1257,14 +1162,7 @@ describe('Car Endpoints', () => {
         date_issued: null
       });
 
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ data: createdCar, error: null }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
-      });
+      mockCreateCar.mockResolvedValue(createdCar);
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -1501,46 +1399,8 @@ describe('Car Endpoints', () => {
         date_issued: null
       };
 
-      // Mock verifyCarExists
-      const mockSingle1 = {
-        single: jest.fn().mockResolvedValue({ data: existingCar, error: null }),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockSingle1),
-      };
-      const mockEq2_1 = {
-        eq: jest.fn().mockReturnValue(mockIs1),
-      };
-      const mockEq1_1 = {
-        eq: jest.fn().mockReturnValue(mockEq2_1),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockEq1_1),
-      };
-
-      // Mock update
-      const mockSingle2 = {
-        single: jest.fn().mockResolvedValue({ data: updatedCar, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockSingle2),
-      };
-      const mockIs2 = {
-        is: jest.fn().mockReturnValue(mockSelect2),
-      };
-      const mockEq2_2 = {
-        eq: jest.fn().mockReturnValue(mockIs2),
-      };
-      const mockEq1_2 = {
-        eq: jest.fn().mockReturnValue(mockEq2_2),
-      };
-      const mockUpdate = {
-        update: jest.fn().mockReturnValue(mockEq1_2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockUpdate);
+      mockVerifyCarExists.mockResolvedValue(existingCar);
+      mockUpdateCarBySlug.mockResolvedValue(updatedCar);
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -1594,17 +1454,7 @@ describe('Car Endpoints', () => {
 
   describe('Server Error Scenarios', () => {
     it('should return 500 when database insert fails in POST /api/reg-car', async () => {
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ 
-            data: null, 
-            error: { message: 'Database error', code: 'UNKNOWN' } 
-          }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
-      });
+      mockCreateCar.mockRejectedValue(new Error('Database error'));
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -1616,22 +1466,7 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 500 when database query fails in GET /api/get-cars', async () => {
-      const mockRange = {
-        range: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { message: 'Database error' } 
-        }),
-      };
-      const mockOrder = {
-        order: jest.fn().mockReturnValue(mockRange),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockOrder),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockIs),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockGetCarsPaginated.mockRejectedValue(new Error('Database error'));
 
       const response = await request(app)
         .get('/api/get-cars')
@@ -1642,25 +1477,7 @@ describe('Car Endpoints', () => {
     });
 
     it('should return 500 when database query fails in GET /api/cars/:slug', async () => {
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { message: 'Database error', code: 'UNKNOWN' } 
-        }),
-      };
-      const mockIs = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2 = {
-        eq: jest.fn().mockReturnValue(mockIs),
-      };
-      const mockEq1 = {
-        eq: jest.fn().mockReturnValue(mockEq2),
-      };
-      const mockSelect = {
-        select: jest.fn().mockReturnValue(mockEq1),
-      };
-      mockSupabaseUser.from.mockReturnValue(mockSelect);
+      mockGetCarBySlugService.mockRejectedValue(new Error('Database error'));
 
       const response = await request(app)
         .get('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -1673,47 +1490,8 @@ describe('Car Endpoints', () => {
     it('should return 500 when database update fails in PUT /api/cars/:slug', async () => {
       const existingCar = createTestCar();
 
-      const mockSingle1 = {
-        single: jest.fn().mockResolvedValue({ data: existingCar, error: null }),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockSingle1),
-      };
-      const mockEq2_1 = {
-        eq: jest.fn().mockReturnValue(mockIs1),
-      };
-      const mockEq1_1 = {
-        eq: jest.fn().mockReturnValue(mockEq2_1),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockEq1_1),
-      };
-
-      const mockSingle2 = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { message: 'Database error', code: 'UNKNOWN' } 
-        }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockSingle2),
-      };
-      const mockIs2 = {
-        is: jest.fn().mockReturnValue(mockSelect2),
-      };
-      const mockEq2_2 = {
-        eq: jest.fn().mockReturnValue(mockIs2),
-      };
-      const mockEq1_2 = {
-        eq: jest.fn().mockReturnValue(mockEq2_2),
-      };
-      const mockUpdate = {
-        update: jest.fn().mockReturnValue(mockEq1_2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockUpdate);
+      mockVerifyCarExists.mockResolvedValue(existingCar);
+      mockUpdateCarBySlug.mockRejectedValue(new Error('Database error'));
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -1727,44 +1505,8 @@ describe('Car Endpoints', () => {
     it('should return 500 when database delete fails in DELETE /api/cars/:slug', async () => {
       const existingCar = createTestCar();
 
-      const mockSingle = {
-        single: jest.fn().mockResolvedValue({ data: existingCar, error: null }),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockSingle),
-      };
-      const mockEq2_1 = {
-        eq: jest.fn().mockReturnValue(mockIs1),
-      };
-      const mockEq1_1 = {
-        eq: jest.fn().mockReturnValue(mockEq2_1),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockEq1_1),
-      };
-
-      const mockSelect2 = {
-        select: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { message: 'Database error' } 
-        }),
-      };
-      const mockIs2 = {
-        is: jest.fn().mockReturnValue(mockSelect2),
-      };
-      const mockEq2_2 = {
-        eq: jest.fn().mockReturnValue(mockIs2),
-      };
-      const mockEq1_2 = {
-        eq: jest.fn().mockReturnValue(mockEq2_2),
-      };
-      const mockUpdate = {
-        update: jest.fn().mockReturnValue(mockEq1_2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockUpdate);
+      mockVerifyCarExists.mockResolvedValue(existingCar);
+      mockDeleteCarBySlugService.mockRejectedValue(new Error('Database error'));
 
       const response = await request(app)
         .delete('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -1780,17 +1522,14 @@ describe('Car Endpoints', () => {
       const carData = createValidCarData();
       const createdCar = createTestCar();
 
-      mockUploadFiles.mockResolvedValue(['https://example.com/doc1.jpg', 'https://example.com/doc2.jpg']);
-      mockUploadFile.mockResolvedValue('https://example.com/cac.pdf');
-
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ data: createdCar, error: null }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
+      mockHandleFileUploads.mockResolvedValue({
+        uploadedFileUrls: {
+          document_urls: ['https://example.com/doc1.jpg', 'https://example.com/doc2.jpg'],
+          cac_document_url: 'https://example.com/cac.pdf',
+        },
+        tempFileUrls: [],
       });
+      mockCreateCar.mockResolvedValue(createdCar);
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -1802,8 +1541,8 @@ describe('Car Endpoints', () => {
     });
 
     it('should handle file upload failure and cleanup in POST /api/reg-car', async () => {
-      mockUploadFiles.mockRejectedValue(new Error('Upload failed'));
-      mockDeleteFiles.mockResolvedValue();
+      mockHandleFileUploads.mockRejectedValue(new Error('Upload failed'));
+      mockMonitorFileCleanup.mockResolvedValue();
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -1873,29 +1612,17 @@ describe('Car Endpoints', () => {
     it('should handle pagination at boundary - page 1', async () => {
       const cars = [createTestCar()];
       
-      const mockRange = {
-        range: jest.fn().mockResolvedValue({ data: cars, error: null }),
-      };
-      const mockOrder = {
-        order: jest.fn().mockReturnValue(mockRange),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockOrder),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockIs1),
-      };
-
-      const mockIs2 = {
-        is: jest.fn().mockResolvedValue({ count: 1, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockIs2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockSelect2);
+      mockGetCarsPaginated.mockResolvedValue({
+        cars,
+        pagination: {
+          current_page: 1,
+          limit: 1,
+          total_cars: 1,
+          total_pages: 1,
+          has_next: false,
+          has_prev: false,
+        },
+      });
 
       const response = await request(app)
         .get('/api/get-cars')
@@ -1910,29 +1637,17 @@ describe('Car Endpoints', () => {
     it('should handle pagination with limit=1', async () => {
       const cars = [createTestCar()];
       
-      const mockRange = {
-        range: jest.fn().mockResolvedValue({ data: cars, error: null }),
-      };
-      const mockOrder = {
-        order: jest.fn().mockReturnValue(mockRange),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockOrder),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockIs1),
-      };
-
-      const mockIs2 = {
-        is: jest.fn().mockResolvedValue({ count: 10, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockIs2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockSelect2);
+      mockGetCarsPaginated.mockResolvedValue({
+        cars,
+        pagination: {
+          current_page: 1,
+          limit: 1,
+          total_cars: 10,
+          total_pages: 10,
+          has_next: true,
+          has_prev: false,
+        },
+      });
 
       const response = await request(app)
         .get('/api/get-cars')
@@ -1947,29 +1662,17 @@ describe('Car Endpoints', () => {
     it('should handle pagination with limit=100 (max)', async () => {
       const cars = Array(100).fill(null).map((_, i) => createTestCar({ id: i + 1 }));
       
-      const mockRange = {
-        range: jest.fn().mockResolvedValue({ data: cars, error: null }),
-      };
-      const mockOrder = {
-        order: jest.fn().mockReturnValue(mockRange),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockOrder),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockIs1),
-      };
-
-      const mockIs2 = {
-        is: jest.fn().mockResolvedValue({ count: 100, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockIs2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockSelect2);
+      mockGetCarsPaginated.mockResolvedValue({
+        cars,
+        pagination: {
+          current_page: 1,
+          limit: 100,
+          total_cars: 100,
+          total_pages: 1,
+          has_next: false,
+          has_prev: false,
+        },
+      });
 
       const response = await request(app)
         .get('/api/get-cars')
@@ -1983,29 +1686,17 @@ describe('Car Endpoints', () => {
     it('should default to page 1 and limit 10 when no query params', async () => {
       const cars = [createTestCar()];
       
-      const mockRange = {
-        range: jest.fn().mockResolvedValue({ data: cars, error: null }),
-      };
-      const mockOrder = {
-        order: jest.fn().mockReturnValue(mockRange),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockOrder),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockIs1),
-      };
-
-      const mockIs2 = {
-        is: jest.fn().mockResolvedValue({ count: 1, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockIs2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockSelect2);
+      mockGetCarsPaginated.mockResolvedValue({
+        cars,
+        pagination: {
+          current_page: 1,
+          limit: 10,
+          total_cars: 1,
+          total_pages: 1,
+          has_next: false,
+          has_prev: false,
+        },
+      });
 
       const response = await request(app)
         .get('/api/get-cars')
@@ -2051,14 +1742,7 @@ describe('Car Endpoints', () => {
       
       const createdCar = createTestCar(carData);
 
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ data: createdCar, error: null }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
-      });
+      mockCreateCar.mockResolvedValue(createdCar);
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -2082,14 +1766,7 @@ describe('Car Endpoints', () => {
       
       const createdCar = createTestCar(carData);
 
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ data: createdCar, error: null }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
-      });
+      mockCreateCar.mockResolvedValue(createdCar);
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -2109,44 +1786,8 @@ describe('Car Endpoints', () => {
         vehicle_model: 'Accord'
       };
 
-      const mockSingle1 = {
-        single: jest.fn().mockResolvedValue({ data: existingCar, error: null }),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockSingle1),
-      };
-      const mockEq2_1 = {
-        eq: jest.fn().mockReturnValue(mockIs1),
-      };
-      const mockEq1_1 = {
-        eq: jest.fn().mockReturnValue(mockEq2_1),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockEq1_1),
-      };
-
-      const mockSingle2 = {
-        single: jest.fn().mockResolvedValue({ data: updatedCar, error: null }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockSingle2),
-      };
-      const mockIs2 = {
-        is: jest.fn().mockReturnValue(mockSelect2),
-      };
-      const mockEq2_2 = {
-        eq: jest.fn().mockReturnValue(mockIs2),
-      };
-      const mockEq1_2 = {
-        eq: jest.fn().mockReturnValue(mockEq2_2),
-      };
-      const mockUpdate = {
-        update: jest.fn().mockReturnValue(mockEq1_2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockUpdate);
+      mockVerifyCarExists.mockResolvedValue(existingCar);
+      mockUpdateCarBySlug.mockResolvedValue(updatedCar);
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
@@ -2164,17 +1805,9 @@ describe('Car Endpoints', () => {
 
   describe('Database Constraint Error Handling', () => {
     it('should handle 23503 foreign key constraint error in POST /api/reg-car', async () => {
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ 
-            data: null, 
-            error: { message: 'Foreign key violation', code: '23503' } 
-          }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
-      });
+      mockCreateCar.mockRejectedValue(
+        new MockCarError('Invalid request data', 400, '23503')
+      );
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -2187,17 +1820,9 @@ describe('Car Endpoints', () => {
     });
 
     it('should handle 23514 check constraint error in POST /api/reg-car', async () => {
-      const mockInsert = {
-        select: jest.fn().mockReturnValue({
-          single: jest.fn().mockResolvedValue({ 
-            data: null, 
-            error: { message: 'Check constraint violation', code: '23514' } 
-          }),
-        }),
-      };
-      mockSupabaseUser.from.mockReturnValue({
-        insert: jest.fn().mockReturnValue(mockInsert),
-      });
+      mockCreateCar.mockRejectedValue(
+        new MockCarError('Invalid car data', 400, '23514')
+      );
 
       const response = await request(app)
         .post('/api/reg-car')
@@ -2212,50 +1837,14 @@ describe('Car Endpoints', () => {
     it('should handle 23505 unique constraint error in PUT /api/cars/:slug', async () => {
       const existingCar = createTestCar();
 
-      const mockSingle1 = {
-        single: jest.fn().mockResolvedValue({ data: existingCar, error: null }),
-      };
-      const mockIs1 = {
-        is: jest.fn().mockReturnValue(mockSingle1),
-      };
-      const mockEq2_1 = {
-        eq: jest.fn().mockReturnValue(mockIs1),
-      };
-      const mockEq1_1 = {
-        eq: jest.fn().mockReturnValue(mockEq2_1),
-      };
-      const mockSelect1 = {
-        select: jest.fn().mockReturnValue(mockEq1_1),
-      };
-
-      const mockSingle2 = {
-        single: jest.fn().mockResolvedValue({ 
-          data: null, 
-          error: { 
-            message: 'duplicate key value violates unique constraint "cars_registration_no_key"',
-            code: '23505' 
-          } 
-        }),
-      };
-      const mockSelect2 = {
-        select: jest.fn().mockReturnValue(mockSingle2),
-      };
-      const mockIs2 = {
-        is: jest.fn().mockReturnValue(mockSelect2),
-      };
-      const mockEq2_2 = {
-        eq: jest.fn().mockReturnValue(mockIs2),
-      };
-      const mockEq1_2 = {
-        eq: jest.fn().mockReturnValue(mockEq2_2),
-      };
-      const mockUpdate = {
-        update: jest.fn().mockReturnValue(mockEq1_2),
-      };
-
-      mockSupabaseUser.from
-        .mockReturnValueOnce(mockSelect1)
-        .mockReturnValueOnce(mockUpdate);
+      mockVerifyCarExists.mockResolvedValue(existingCar);
+      mockUpdateCarBySlug.mockRejectedValue(
+        new MockCarError(
+          'duplicate key value violates unique constraint "cars_registration_no_key"',
+          409,
+          '23505'
+        )
+      );
 
       const response = await request(app)
         .put('/api/cars/550e8400-e29b-41d4-a716-446655440000')
