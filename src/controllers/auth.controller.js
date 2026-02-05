@@ -57,6 +57,12 @@ export const login = async (req, res) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     
     if (error) {
+      console.error('[LOGIN ERROR]', {
+        email,
+        errorMessage: error.message,
+        errorStatus: error.status,
+        errorCode: error.code
+      });
       return response.unauthorized(res, 'Invalid email or password');
     }
     
