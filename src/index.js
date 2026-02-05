@@ -13,6 +13,7 @@ import authRoutes from './routes/auth.routes.js';
 import carRoutes from './routes/car.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import newAdminRoutes from './routes/newAdminRoutes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
@@ -97,6 +98,7 @@ app.use('/api', authRoutes);
 app.use('/api', carRoutes);
 app.use('/api/settings/profile', profileRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/newAdmin', newAdminRoutes);
 
 // Notifications stub endpoint (returns empty array until full implementation)
 app.get('/api/notifications', (req, res) => {

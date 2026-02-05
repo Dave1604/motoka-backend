@@ -1,5 +1,6 @@
 import { Resend } from 'resend';
-
+import 'dotenv/config';
+import {config} from 'dotenv'
 /**
  * EMAIL SERVICE - Resend Integration
  * 
