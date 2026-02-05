@@ -70,6 +70,12 @@ export const addCar = async (req, res) => {
     
     const carData = buildCarData(sanitizedBody, userId);
     const car = await createCar(supabaseUser, carData);
+    const expiryStatus = buildExpiryStatus(car.expiry_date);
+    const carWithExpiry = {
+      ...car,
+      reminder: expiryStatus,
+      expiry_status: expiryStatus
+    };
     
     // Check if this is the user's first car (all non-deleted cars)
     try {
@@ -169,12 +175,16 @@ export const getCars = async (req, res) => {
     const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT));
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
-    const carsWithReminder = (result.cars || []).map((car) => ({
-      ...car,
-      reminder: buildExpiryStatus(car.expiry_date)
-    }));
+    const carsWithExpiryStatus = (result.cars || []).map((car) => {
+      const expiryStatus = buildExpiryStatus(car.expiry_date);
+      return {
+        ...car,
+        reminder: expiryStatus,
+        expiry_status: expiryStatus
+      };
+    });
     
-    return response.success(res, { ...result, cars: carsWithReminder }, 'Cars retrieved successfully');
+    return response.success(res, { ...result, cars: carsWithExpiryStatus }, 'Cars retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
   }
@@ -191,12 +201,14 @@ export const getCarBySlug = async (req, res) => {
     
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
-    const carWithReminder = {
+    const expiryStatus = buildExpiryStatus(car.expiry_date);
+    const carWithExpiry = {
       ...car,
-      reminder: buildExpiryStatus(car.expiry_date)
+      reminder: expiryStatus,
+      expiry_status: expiryStatus
     };
     
-    return response.success(res, { car: carWithReminder }, 'Car retrieved successfully');
+    return response.success(res, { car: carWithExpiry }, 'Car retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
   }
@@ -261,13 +273,19 @@ export const updateCar = async (req, res) => {
     
     const updateData = buildUpdateData(sanitizedBody, existingCar);
     const updatedCar = await updateCarBySlug(supabaseUser, slug, userId, updateData, identifiers);
+    const updatedExpiryStatus = buildExpiryStatus(updatedCar.expiry_date);
+    const updatedCarWithExpiry = {
+      ...updatedCar,
+      reminder: updatedExpiryStatus,
+      expiry_status: updatedExpiryStatus
+    };
     
     // Delete old files after successful update
     if (filesToDelete.length > 0) {
       await monitorFileCleanup(filesToDelete, 'updateCar-oldFiles');
     }
     
-    return response.success(res, { car: updatedCar }, 'Car updated successfully');
+    return response.success(res, { car: updatedCarWithExpiry }, 'Car updated successfully');
   } catch (error) {
     // Monitor and cleanup temp files on error
     await monitorFileCleanup(tempFileUrls, 'updateCar');
