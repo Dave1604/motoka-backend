@@ -254,7 +254,7 @@ export const sendLoginOTP = async (req, res) => {
     
     const { data, error } = await supabase.auth.signInWithOtp({ 
       email, 
-      options: { shouldCreateUser: true } 
+      options: { shouldCreateUser: false } // Don't create new users via OTP login
     });
     
     if (error) {
