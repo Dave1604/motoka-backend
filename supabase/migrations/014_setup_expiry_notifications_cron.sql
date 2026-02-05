@@ -12,6 +12,7 @@ BEGIN
   edge_function_url := 'https://YOUR_PROJECT_ID.supabase.co/functions/v1/expiry-notifications';
   
   -- TODO: Update with your service role key (Dashboard → Settings → API → service_role key)
+  -- WARNING: Never commit actual keys to version control!
   service_role_key := 'YOUR_SERVICE_ROLE_KEY_HERE';
 
   -- Make HTTP POST request to Edge Function
