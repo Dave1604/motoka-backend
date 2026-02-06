@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as auth from '../controllers/auth.controller.js';
+import * as oauth from '../controllers/oauth.controller.js';
 import * as twoFactor from '../controllers/twoFactor.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
@@ -7,6 +8,10 @@ import { authLimiter, otpLimiter, passwordResetLimiter } from '../middleware/rat
 import { registerValidation, loginValidation, emailValidation, otpValidation, resetPasswordValidation, twoFactorCodeValidation, validate } from '../utils/validators.js';
 
 const router = Router();
+
+// OAuth routes
+router.post('/auth/google', authLimiter, oauth.googleLogin);
+router.get('/auth/callback', oauth.handleCallback);
 
 // Public routes
 router.post('/register', authLimiter, registerValidation, validate, auth.register);

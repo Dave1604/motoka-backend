@@ -6,6 +6,10 @@ node_modules/
 .env.local
 .env.*.local
 
+# Supabase temp files
+.temp/
+supabase/.temp/
+
 .cursor/mcp.json
 
 

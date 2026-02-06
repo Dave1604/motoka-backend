@@ -1,15 +1,25 @@
+import { config } from 'dotenv';
 import { Resend } from 'resend';
+<<<<<<< HEAD
 import 'dotenv/config';
 import {config} from 'dotenv'
+=======
+
+// Ensure environment variables are loaded before using RESEND_API_KEY.
+// This is needed because ESM import order can run this module before
+// dotenv is configured in src/index.js.
+config();
+
+>>>>>>> 38327d41e37a2f6e7125ef89b6db033e37750882
 /**
  * EMAIL SERVICE - Resend Integration
- * 
+ *
  * Centralized email sending using Resend API.
  * Replaces Brevo for backend-generated emails (password reset, 2FA).
- * 
+ *
  * Supabase Auth emails (login OTP, signup verification) remain unchanged
  * and continue using SMTP configured in Supabase dashboard.
- * 
+ *
  * Environment Variables Required:
  * - RESEND_API_KEY: Your Resend API key (starts with re_)
  * - EMAIL_FROM: Sender email (e.g., "Motoka <no-reply@motokaapp.ng>")
@@ -20,7 +30,7 @@ const EMAIL_FROM = process.env.EMAIL_FROM || 'Motoka <onboarding@resend.dev>';
 
 /**
  * Generic email sender
- * 
+ *
  * @param {Object} options - Email options
  * @param {string} options.to - Recipient email
  * @param {string} options.subject - Email subject

@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { sendEmail } from "../services/email/email.service.js"; // your email from services
 
-// 1. Admin Login Request (send OTP)
+// Admin Login Request (send OTP)
 export const adminLoginRequest = async (req, res) => {
   try {
     const { email } = req.body;
@@ -69,7 +69,7 @@ export const adminLoginRequest = async (req, res) => {
   }
 };
 
-// 2. Admin Verify OTP (returns JWT)
+// Admin Verify OTP (returns JWT)
 export const adminVerifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -144,6 +144,67 @@ export const adminVerifyOtp = async (req, res) => {
     return response.success(res, { token }, "Admin login successful");
   } catch (err) {
     console.error("Admin verify OTP error:", err);
+    return response.serverError(res);
+  }
+};
+
+export const getAllUsers = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const search = req.query.search || "";
+
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+
+    let query = supabaseAdmin
+      .from("profiles")
+      .select(
+        `
+        id,
+        email,
+        first_name,
+        last_name,
+        phone,
+        is_admin,
+        is_suspended,
+        created_at
+        `,
+        { count: "exact" }
+      )
+      .range(from, to)
+      .order("created_at", { ascending: false });
+
+    if (search) {
+      query = query.or(
+        `email.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%`
+      );
+    }
+
+    const { data, count, error } = await query;
+
+    if (error) {
+      console.error("Get users error:", error);
+      return response.serverError(res, "Failed to fetch users");
+    }
+
+    return response.success(
+      res,
+      {
+        users: data,
+        pagination: {
+          total: count,
+          page,
+          limit,
+          total_pages: Math.ceil(count / limit),
+        },
+      },
+      "Users fetched successfully"
+    );
+  } catch (error) {
+    console.error("Get all users error:", error);
     return response.serverError(res);
   }
 };
