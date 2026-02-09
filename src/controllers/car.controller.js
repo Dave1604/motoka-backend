@@ -18,6 +18,72 @@ import { deleteFiles } from '../services/fileUpload.service.js';
 import { handleFileUploads, getFilesToDelete, monitorFileCleanup } from '../utils/fileUploadHelper.js';
 import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
+/**
+ * Compute expiry status metadata for a car based on its expiry_date.
+ *
+ * Shape expected by the frontend:
+ * {
+ *   status: "reminder" | "overdue" | "no_reminder",
+ *   days_remaining: number | null,
+ *   label: string
+ * }
+ */
+const computeExpiryStatus = (expiryDate) => {
+  if (!expiryDate) {
+    return {
+      status: 'no_reminder',
+      days_remaining: null,
+      label: 'No expiry date set'
+    };
+  }
+
+  const today = new Date();
+  const expiry = new Date(expiryDate);
+
+  if (Number.isNaN(expiry.getTime())) {
+    return {
+      status: 'no_reminder',
+      days_remaining: null,
+      label: 'Invalid expiry date'
+    };
+  }
+
+  // Normalize both dates to midnight to avoid partial-day off‑by‑one issues
+  const startOfToday = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  );
+  const startOfExpiry = new Date(
+    expiry.getFullYear(),
+    expiry.getMonth(),
+    expiry.getDate()
+  );
+
+  const diffMs = startOfExpiry.getTime() - startOfToday.getTime();
+  const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+  let status = 'no_reminder';
+  let label;
+
+  if (daysRemaining < 0) {
+    status = 'overdue';
+    label = `Expired ${Math.abs(daysRemaining)} day(s) ago`;
+  } else if (daysRemaining <= 30) {
+    // Within 30 days: show reminder
+    status = 'reminder';
+    label = `Expires in ${daysRemaining} day(s)`;
+  } else {
+    label = `Expires in ${daysRemaining} day(s)`;
+  }
+
+  return {
+    status,
+    days_remaining: daysRemaining,
+    label
+  };
+};
+
 const isValidUUID = (uuid) => {
   return PATTERNS.UUID.test(uuid);
 };
@@ -104,11 +170,26 @@ export const getCars = async (req, res) => {
     }
     
     const page = Math.max(PAGINATION.MIN_PAGE, parseInt(pageParam, 10) || PAGINATION.DEFAULT_PAGE);
-    const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT));
+    const limit = Math.min(
+      PAGINATION.MAX_LIMIT,
+      Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT)
+    );
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
-    
-    return response.success(res, result, 'Cars retrieved successfully');
+
+    const carsWithExpiryStatus = (result.cars || []).map((car) => ({
+      ...car,
+      expiry_status: computeExpiryStatus(car.expiry_date)
+    }));
+
+    return response.success(
+      res,
+      {
+        ...result,
+        cars: carsWithExpiryStatus
+      },
+      'Cars retrieved successfully'
+    );
   } catch (error) {
     return handleCarError(res, error);
   }
@@ -125,8 +206,13 @@ export const getCarBySlug = async (req, res) => {
     
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
+
+    const carWithExpiryStatus = {
+      ...car,
+      expiry_status: computeExpiryStatus(car.expiry_date)
+    };
     
-    return response.success(res, { car }, 'Car retrieved successfully');
+    return response.success(res, { car: carWithExpiryStatus }, 'Car retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
   }
