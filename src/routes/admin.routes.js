@@ -22,10 +22,19 @@ router.get('/users', authenticate, checkAdmin, admin.listUsers);
 // Get single user details
 router.get('/users/:userId', authenticate, checkAdmin, admin.getUser);
 
+// Get all cars (admin view)
+router.get('/cars', authenticate, checkAdmin, admin.listCars);
+
+// Get single car details
+router.get('/cars/:slug', authenticate, checkAdmin, admin.getCarDetails);
+
 // Suspend user account
 router.put('/users/:userId/suspend', authenticate, checkAdmin, suspendUserValidation, validate, admin.suspendUser);
 
 // Activate user account
 router.put('/users/:userId/activate', authenticate, checkAdmin, admin.activateUser);
+
+// Delete user account (soft delete)
+router.delete('/users/:userId', authenticate, checkAdmin, admin.deleteUser);
 
 export default router;

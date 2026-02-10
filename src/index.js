@@ -13,11 +13,10 @@ import authRoutes from './routes/auth.routes.js';
 import carRoutes from './routes/car.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminRoutes from './routes/admin.routes.js';
-import adminAuthRoutes from './routes/adminAuth.routes.js';
 import notificationRoutes from './routes/notifications.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 
-const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'JWT_SECRET'];
+const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
 const missingEnvVars = requiredEnvVars.filter(key => !process.env[key]);
 
 // Always check required environment variables regardless of environment
@@ -98,8 +97,6 @@ app.get('/health', (req, res) => {
 app.use('/api', authRoutes);
 app.use('/api', carRoutes);
 app.use('/api/settings/profile', profileRoutes);
-// Mount admin auth routes BEFORE admin routes to avoid middleware interference
-app.use('/api/admin', adminAuthRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', notificationRoutes);
 
