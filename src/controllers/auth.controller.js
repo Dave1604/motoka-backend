@@ -57,6 +57,12 @@ export const login = async (req, res) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     
     if (error) {
+      console.error('[LOGIN ERROR]', {
+        email,
+        errorMessage: error.message,
+        errorStatus: error.status,
+        errorCode: error.code
+      });
       return response.unauthorized(res, 'Invalid email or password');
     }
     
@@ -254,7 +260,7 @@ export const sendLoginOTP = async (req, res) => {
     
     const { data, error } = await supabase.auth.signInWithOtp({ 
       email, 
-      options: { shouldCreateUser: true } 
+      options: { shouldCreateUser: false } // Don't create new users via OTP login
     });
     
     if (error) {

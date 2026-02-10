@@ -67,7 +67,7 @@ app.use(cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'cache-control']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'cache-control', 'Pragma']
 }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -100,11 +100,7 @@ app.use('/api/settings/profile', profileRoutes);
 // Mount admin auth routes BEFORE admin routes to avoid middleware interference
 app.use('/api/admin', adminAuthRoutes);
 app.use('/api/admin', adminRoutes);
-
-// Notifications stub endpoint (returns empty array until full implementation)
-app.get('/api/notifications', (req, res) => {
-  res.json({ success: true, message: 'Notifications retrieved', data: { notifications: [] } });
-});
+app.use('/api', notificationRoutes);
 
 // Detailed API documentation with payloads
 app.get('/api/docs', (req, res) => {
