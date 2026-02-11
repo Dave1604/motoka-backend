@@ -80,6 +80,13 @@ const RATE_LIMITS = {
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 5,
     message: 'Too many car registration attempts, please try again later'
+  },
+  
+  // Payment operations - moderate limits to prevent abuse
+  PAYMENT: {
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 10,
+    message: 'Too many payment attempts, please try again later'
   }
 };
 
@@ -114,3 +121,4 @@ export const authLimiter = createLimiter(RATE_LIMITS.AUTH);
 export const otpLimiter = createLimiter(RATE_LIMITS.OTP);
 export const passwordResetLimiter = createLimiter(RATE_LIMITS.PASSWORD_RESET);
 export const carRegistrationLimiter = createLimiter(RATE_LIMITS.CAR_REGISTRATION);
+export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);

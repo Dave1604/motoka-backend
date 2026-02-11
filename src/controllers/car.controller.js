@@ -136,12 +136,6 @@ export const addCar = async (req, res) => {
     
     const carData = buildCarData(sanitizedBody, userId);
     const car = await createCar(supabaseUser, carData);
-    const expiryStatus = buildExpiryStatus(car.expiry_date);
-    const carWithExpiry = {
-      ...car,
-      reminder: expiryStatus,
-      expiry_status: expiryStatus
-    };
     
     // Check if this is the user's first car (all non-deleted cars)
     try {
@@ -202,7 +196,15 @@ export const addCar = async (req, res) => {
       // Non-blocking error for notifications - don't interrupt car creation response
     }
     
-    return response.created(res, { car }, 'Car registered successfully');
+    // Build expiry status for the created car
+    const expiryStatus = buildExpiryStatus(car.expiry_date);
+    const carWithExpiry = {
+      ...car,
+      reminder: expiryStatus,
+      expiry_status: expiryStatus
+    };
+    
+    return response.created(res, { car: carWithExpiry }, 'Car registered successfully');
   } catch (error) {
     // Monitor and cleanup temp files on error
     await monitorFileCleanup(tempFileUrls, 'addCar');
@@ -345,7 +347,12 @@ export const updateCar = async (req, res) => {
     
     const updateData = buildUpdateData(sanitizedBody, existingCar);
     const updatedCar = await updateCarBySlug(supabaseUser, slug, userId, updateData, identifiers);
-    const updatedExpiryStatus = buildExpiryStatus(updatedCar.expiry_date);
+    
+    // Check for pending order for the updated car
+    const pendingOrdersMap = await getPendingOrdersForCars([updatedCar.id]);
+    const pendingOrder = pendingOrdersMap.get(updatedCar.id) || null;
+    
+    const updatedExpiryStatus = buildExpiryStatus(updatedCar.expiry_date, new Date(), pendingOrder);
     const updatedCarWithExpiry = {
       ...updatedCar,
       reminder: updatedExpiryStatus,

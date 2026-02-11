@@ -14,6 +14,7 @@ import carRoutes from './routes/car.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import notificationRoutes from './routes/notifications.routes.js';
+import paymentRoutes from './routes/payment.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY'];
@@ -70,6 +71,9 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'cache-control', 'Pragma']
 }));
 
+// Preserve raw body for Paystack webhook signature verification
+app.use('/api/webhooks/paystack', express.raw({ type: 'application/json', limit: '2mb' }));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(apiLimiter);
@@ -99,6 +103,7 @@ app.use('/api', carRoutes);
 app.use('/api/settings/profile', profileRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', notificationRoutes);
+app.use('/api', paymentRoutes);
 
 // Detailed API documentation with payloads
 app.get('/api/docs', (req, res) => {

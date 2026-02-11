@@ -37,4 +37,12 @@ router.put('/users/:userId/activate', authenticate, checkAdmin, admin.activateUs
 // Delete user account (soft delete)
 router.delete('/users/:userId', authenticate, checkAdmin, admin.deleteUser);
 
+// Order management - TODO: Implement in Phase 3
+// router.get('/orders/stats', admin.getOrderStats);
+// router.get('/orders', admin.listOrders);
+// router.get('/orders/:orderId', admin.getOrderDetails);
+// router.put('/orders/:orderId/assign', admin.assignOrderHandler);
+// router.put('/orders/:orderId/status', admin.updateOrderStatusHandler);
+// router.put('/orders/:orderId/complete', admin.completeOrderHandler);
+
 export default router;
