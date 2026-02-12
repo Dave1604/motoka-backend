@@ -132,8 +132,8 @@ export const getStates = async (req, res) => {
   try {
     const states = await getAllStates();
     
-    const transformedStates = states.map((state, index) => ({
-      id: index,
+    const transformedStates = states.map((state) => ({
+      id: state.id,  // Use actual database ID, not array index
       state_name: state.name,
       name: state.name,
       code: state.code,
@@ -157,7 +157,13 @@ export const getLGAs = async (req, res) => {
       return paymentResponse.notFound(res, 'Invalid state code or state not found');
     }
     
-    return paymentResponse.success(res, lgas, 'Local governments retrieved');
+    // Transform to match frontend expectations
+    const formattedLgas = lgas.map((lgaName) => ({
+      lga_name: lgaName,
+      name: lgaName
+    }));
+    
+    return paymentResponse.success(res, formattedLgas, 'Local governments retrieved');
   } catch (error) {
     logError('Get LGAs error', error);
     return paymentResponse.serverError(res, 'Failed to retrieve local governments');
