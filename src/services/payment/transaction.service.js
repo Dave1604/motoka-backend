@@ -452,14 +452,15 @@ export async function getUserTransactions(userId, options = {}) {
   // Fetch orders and items for each transaction
   const enrichedTransactions = await Promise.all(
     (transactions || []).map(async (tx) => {
-      const { data: order } = await supabaseAdmin
+      // Use maybeSingle() instead of single() to handle missing orders gracefully
+      const { data: order, error: orderError } = await supabaseAdmin
         .from('renewal_orders')
         .select('id, order_number, status')
         .eq('transaction_id', tx.id)
-        .single();
+        .maybeSingle();
       
       let items = [];
-      if (order) {
+      if (order && !orderError) {
         const { data: orderItems } = await supabaseAdmin
           .from('renewal_items')
           .select('name, price, quantity')
