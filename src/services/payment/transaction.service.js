@@ -449,11 +449,37 @@ export async function getUserTransactions(userId, options = {}) {
     throw new TransactionError('Failed to retrieve transactions', HTTP_STATUS.SERVER_ERROR);
   }
   
+  // Fetch orders and items for each transaction
+  const enrichedTransactions = await Promise.all(
+    (transactions || []).map(async (tx) => {
+      const { data: order } = await supabaseAdmin
+        .from('renewal_orders')
+        .select('id, order_number, status')
+        .eq('transaction_id', tx.id)
+        .single();
+      
+      let items = [];
+      if (order) {
+        const { data: orderItems } = await supabaseAdmin
+          .from('renewal_items')
+          .select('name, price, quantity')
+          .eq('order_id', order.id);
+        items = orderItems || [];
+      }
+      
+      return {
+        ...tx,
+        order: order || null,
+        items: items
+      };
+    })
+  );
+  
   const totalTransactions = count || 0;
   const totalPages = Math.ceil(totalTransactions / limit);
   
   return {
-    transactions: transactions || [],
+    transactions: enrichedTransactions,
     pagination: {
       current_page: page,
       limit,
