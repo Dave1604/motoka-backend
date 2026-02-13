@@ -1,26 +1,25 @@
 -- ============================================
--- ORIGINAL PRODUCTION PRICES - DO NOT DELETE!
+-- BACKUP CURRENT PRICES - CORRECT VERSION
 -- ============================================
--- Run this SQL to get current prices before changing them
+-- SAVE THESE RESULTS TO A TEXT FILE!
 
+-- 1. Backup all renewal item prices
 SELECT 
     id,
-    schedule_name,
+    item_key,
+    name,
     price as price_kobo,
     ROUND(price/100.0, 2) as price_naira,
-    payment_head_id
-FROM payment_schedules
+    required
+FROM renewal_items
 ORDER BY id;
 
--- Current prices (run above query to see them)
--- These will be restored after testing
-
+-- 2. Backup all state delivery fees
 SELECT 
     id,
     code,
-    state_name,
+    name as state_name,
     delivery_fee as fee_kobo,
     ROUND(delivery_fee/100.0, 2) as fee_naira
 FROM states
-ORDER BY id
-LIMIT 10;
+ORDER BY name;
