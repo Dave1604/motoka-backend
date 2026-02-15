@@ -455,17 +455,28 @@ export async function getUserTransactions(userId, options = {}) {
       // Use maybeSingle() instead of single() to handle missing orders gracefully
       const { data: order, error: orderError } = await supabaseAdmin
         .from('renewal_orders')
-        .select('id, order_number, status')
+        .select('id, order_number, status, selected_items')
         .eq('transaction_id', tx.id)
         .maybeSingle();
       
       let items = [];
-      if (order && !orderError) {
-        const { data: orderItems } = await supabaseAdmin
-          .from('renewal_items')
-          .select('name, price, quantity')
-          .eq('order_id', order.id);
-        items = orderItems || [];
+      if (order && !orderError && order.selected_items) {
+        // selected_items is a JSONB array like ["vehicle_licence", "insurance"]
+        // We need to fetch the names and prices from renewal_items table
+        const itemKeys = order.selected_items;
+        
+        if (itemKeys.length > 0) {
+          const { data: renewalItems } = await supabaseAdmin
+            .from('renewal_items')
+            .select('item_key, name, price')
+            .in('item_key', itemKeys);
+          
+          items = (renewalItems || []).map(item => ({
+            name: item.name,
+            price: item.price,
+            quantity: 1
+          }));
+        }
       }
       
       return {
