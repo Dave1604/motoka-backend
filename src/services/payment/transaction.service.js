@@ -449,11 +449,49 @@ export async function getUserTransactions(userId, options = {}) {
     throw new TransactionError('Failed to retrieve transactions', HTTP_STATUS.SERVER_ERROR);
   }
   
+  // Fetch orders and items for each transaction
+  const enrichedTransactions = await Promise.all(
+    (transactions || []).map(async (tx) => {
+      // Use maybeSingle() instead of single() to handle missing orders gracefully
+      const { data: order, error: orderError } = await supabaseAdmin
+        .from('renewal_orders')
+        .select('id, order_number, status, selected_items')
+        .eq('transaction_id', tx.id)
+        .maybeSingle();
+      
+      let items = [];
+      if (order && !orderError && order.selected_items) {
+        // selected_items is a JSONB array like ["vehicle_licence", "insurance"]
+        // We need to fetch the names and prices from renewal_items table
+        const itemKeys = order.selected_items;
+        
+        if (itemKeys.length > 0) {
+          const { data: renewalItems } = await supabaseAdmin
+            .from('renewal_items')
+            .select('item_key, name, price')
+            .in('item_key', itemKeys);
+          
+          items = (renewalItems || []).map(item => ({
+            name: item.name,
+            price: item.price,
+            quantity: 1
+          }));
+        }
+      }
+      
+      return {
+        ...tx,
+        order: order || null,
+        items: items
+      };
+    })
+  );
+  
   const totalTransactions = count || 0;
   const totalPages = Math.ceil(totalTransactions / limit);
   
   return {
-    transactions: transactions || [],
+    transactions: enrichedTransactions,
     pagination: {
       current_page: page,
       limit,

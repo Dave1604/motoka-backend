@@ -146,6 +146,69 @@ export async function getUserNotifications(userId, page = 1, limit = 10, unreadO
 }
 
 /**
+ * Get user's notifications filtered by type/category
+ * Maps UI categories (Payments, Licenses Added, etc.) to DB type/action filters
+ *
+ * @param {string} userId - User UUID from auth.users
+ * @param {string} category - UI category: 'All' | 'Payments' | 'Licenses Added' | 'Warning' | 'Successful'
+ * @param {number} [page=1] - Page number
+ * @param {number} [limit=20] - Items per page
+ * @returns {Promise<Object>} Same shape as getUserNotifications
+ */
+export async function getUserNotificationsByType(userId, category, page = 1, limit = 20) {
+  try {
+    const customUserId = await getUserCustomId(userId);
+    const supabaseAdmin = getSupabaseAdmin();
+    const offset = (page - 1) * limit;
+
+    let query = supabaseAdmin
+      .from('notifications')
+      .select('*', { count: 'exact' })
+      .eq('user_id', customUserId)
+      .order('created_at', { ascending: false });
+
+    // Map UI category to DB filters
+    switch (category) {
+      case 'Payments':
+        query = query.eq('type', 'payment');
+        break;
+      case 'Licenses Added':
+        query = query.eq('type', 'car');
+        break;
+      case 'Warning':
+        query = query.or('type.eq.warning,action.eq.warning');
+        break;
+      case 'Successful':
+        query = query.in('action', ['completed', 'success', 'created', 'payment_success']);
+        break;
+      default:
+        // 'All' or unknown - no extra filter
+        break;
+    }
+
+    const { data: notifications, count, error } = await query.range(offset, offset + limit - 1);
+
+    if (error) {
+      logError('Failed to fetch notifications by type', { userId, category, error: error.message });
+      throw new Error(`Failed to fetch notifications: ${error.message}`);
+    }
+
+    return {
+      notifications: notifications || [],
+      pagination: {
+        total: count || 0,
+        page,
+        limit,
+        pages: Math.ceil((count || 0) / limit)
+      }
+    };
+  } catch (error) {
+    logError('Notification Service Error', error);
+    throw error;
+  }
+}
+
+/**
  * Mark a notification as read
  * 
  * @param {string} notificationId - Notification ID
