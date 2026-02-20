@@ -1,65 +1,70 @@
-/**
- * Safe error logging utility that sanitizes error messages in production
- */
+import { logger } from '../config/logger.config.js';
 
-const isDevelopment = process.env.NODE_ENV === 'development';
-
-/**
- * Sanitizes error object to remove sensitive information
- * @param {Error|Object} error - Error object to sanitize
- * @returns {Object} Sanitized error information
- */
 const sanitizeError = (error) => {
   if (!error) {
     return { message: 'Unknown error' };
   }
 
-  // In development, show full error details
-  if (isDevelopment) {
-    return {
-      message: error.message || 'Unknown error',
-      stack: error.stack,
-      code: error.code,
-      details: error
-    };
-  }
-
-  // In production, only show safe error information
   const sanitized = {
-    message: error.message || 'An error occurred',
-    code: error.code || undefined
+    message: error.message || 'An error occurred'
   };
 
-  // Only include code if it's a known safe error code
-  const safeErrorCodes = ['23505', '23503', '23514']; // PostgreSQL error codes
+  const safeErrorCodes = ['23505', '23503', '23514'];
   if (error.code && safeErrorCodes.includes(error.code)) {
     sanitized.code = error.code;
+  }
+
+  if (error.statusCode) {
+    sanitized.statusCode = error.statusCode;
+  }
+
+  if (error.name) {
+    sanitized.type = error.name;
+  }
+
+  if (process.env.NODE_ENV === 'development' && error.stack) {
+    sanitized.stack = error.stack;
+  }
+
+  if (error.data) {
+    sanitized.data = error.data;
   }
 
   return sanitized;
 };
 
-/**
- * Logs an error safely
- * @param {string} context - Context where the error occurred (e.g., 'Car insert error')
- * @param {Error|Object} error - Error object to log
- */
 export const logError = (context, error) => {
   const sanitized = sanitizeError(error);
-  
-  if (isDevelopment) {
-    // In development, log full error details
-    console.error(`${context}:`, sanitized);
-    if (sanitized.stack) {
-      console.error('Stack trace:', sanitized.stack);
-    }
+  logger.error({ context, ...sanitized }, `${context}: ${sanitized.message}`);
+};
+
+export const logInfo = (message, data = {}) => {
+  logger.info(data, message);
+};
+
+export const logWarn = (message, data = {}) => {
+  logger.warn(data, message);
+};
+
+export const logDebug = (message, data = {}) => {
+  logger.debug(data, message);
+};
+
+export const logErrorStructured = (message, error) => {
+  if (error instanceof Error) {
+    logger.error({ err: error }, message);
   } else {
-    // In production, log only sanitized information
-    console.error(`${context}:`, {
-      message: sanitized.message,
-      code: sanitized.code || 'N/A'
-    });
+    logger.error(error, message);
   }
 };
 
-export default { logError };
+export { logger };
+
+export default { 
+  logError, 
+  logInfo, 
+  logWarn, 
+  logDebug, 
+  logErrorStructured,
+  logger 
+};

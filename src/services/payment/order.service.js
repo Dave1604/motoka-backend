@@ -6,7 +6,7 @@
  */
 
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import { logError } from '../../utils/logger.js';
+import { logError, logInfo } from '../../utils/logger.js';
 import {
   ORDER_STATUS,
   ORDER_TYPE,
@@ -128,7 +128,7 @@ export async function createOrder({
     throw new OrderError('Failed to create order', HTTP_STATUS.SERVER_ERROR, 'DB_ERROR');
   }
   
-  console.log('[Order Service] Order created:', {
+  logInfo('[Order Service] Order created', {
     orderNumber: order.order_number,
     carId,
     amount: amountPaid
@@ -437,7 +437,7 @@ export async function assignOrder(orderId, adminId) {
     throw new OrderError('Failed to assign order', HTTP_STATUS.SERVER_ERROR);
   }
   
-  console.log('[Order Service] Order assigned:', { orderId, adminId });
+  logInfo('[Order Service] Order assigned', { orderId, adminId });
   
   return updated;
 }
@@ -494,7 +494,7 @@ export async function startProcessingOrder(orderId, adminId, notes = null) {
     throw new OrderError('Failed to update order', HTTP_STATUS.SERVER_ERROR);
   }
   
-  console.log('[Order Service] Order processing started:', { orderId });
+  logInfo('[Order Service] Order processing started', { orderId });
   
   return updated;
 }
@@ -574,7 +574,7 @@ export async function completeOrder(orderId, adminId, options = {}) {
     throw new OrderError('Failed to complete order', HTTP_STATUS.SERVER_ERROR);
   }
   
-  console.log('[Order Service] Order completed:', {
+  logInfo('[Order Service] Order completed', {
     orderId,
     carId: order.car_id,
     newExpiryDate
@@ -772,7 +772,7 @@ export async function updateOrderStatus(orderId, status, adminId, notes = null) 
     throw new OrderError('Failed to update order status', HTTP_STATUS.SERVER_ERROR);
   }
   
-  console.log('[Order Service] Order status updated:', { orderId, status });
+  logInfo('[Order Service] Order status updated', { orderId, status });
   
   return updated;
 }

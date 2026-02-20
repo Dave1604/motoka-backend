@@ -87,6 +87,13 @@ const RATE_LIMITS = {
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 10,
     message: 'Too many payment attempts, please try again later'
+  },
+  
+  // Webhook endpoints - higher limits for gateway webhooks
+  WEBHOOK: {
+    windowMs: 60 * 1000, // 1 minute
+    max: 60,
+    message: 'Too many webhook requests'
   }
 };
 
@@ -122,3 +129,4 @@ export const otpLimiter = createLimiter(RATE_LIMITS.OTP);
 export const passwordResetLimiter = createLimiter(RATE_LIMITS.PASSWORD_RESET);
 export const carRegistrationLimiter = createLimiter(RATE_LIMITS.CAR_REGISTRATION);
 export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);
+export const webhookLimiter = createLimiter(RATE_LIMITS.WEBHOOK);

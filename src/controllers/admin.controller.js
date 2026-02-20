@@ -1,5 +1,9 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
+import paymentMetrics from '../services/payment/metrics.service.js';
+import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
+import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
+import { invalidateProfileCache } from '../middleware/authenticate.js';
 
 export const listUsers = async (req, res) => {
   try {
@@ -34,7 +38,6 @@ export const listUsers = async (req, res) => {
       return res.status(400).json({ status: false, message: 'Failed to retrieve users' });
     }
     
-    // SCALABILITY FIX: Batch fetch only the auth users for paginated profiles
     const emailMap = new Map();
     
     if (profiles && profiles.length > 0) {
@@ -50,7 +53,6 @@ export const listUsers = async (req, res) => {
       });
     }
 
-    // Get car counts for each user
     const userIds = profiles.map(p => p.id);
     
     const { data: carCounts } = await supabaseAdmin
@@ -78,7 +80,7 @@ export const listUsers = async (req, res) => {
       is_suspended: profile.is_suspended,
       deleted_at: profile.deleted_at,
       cars_count: carsCountMap.get(profile.id) || 0,
-      orders_count: 0, // TODO: Add orders count when orders table is ready
+      orders_count: 0,
       created_at: profile.created_at
     }));
     
@@ -206,6 +208,9 @@ export const suspendUser = async (req, res) => {
       return response.error(res, 'Failed to suspend user');
     }
     
+    // Invalidate profile cache to ensure suspension takes effect immediately
+    invalidateProfileCache(userId);
+    
     await supabaseAdmin.from('notifications').insert({
       user_id: userId,
       title: 'Account Suspended',
@@ -250,6 +255,9 @@ export const activateUser = async (req, res) => {
       return response.error(res, 'Failed to activate user');
     }
     
+    // Invalidate profile cache to ensure activation takes effect immediately
+    invalidateProfileCache(userId);
+    
     await supabaseAdmin.from('notifications').insert({
       user_id: userId,
       title: 'Account Activated',
@@ -284,7 +292,6 @@ export const deleteUser = async (req, res) => {
       return res.status(403).json({ status: false, message: 'Cannot delete an admin user' });
     }
     
-    // Soft delete
     const { error } = await supabaseAdmin
       .from('profiles')
       .update({ deleted_at: new Date().toISOString() })
@@ -332,13 +339,11 @@ export const listCars = async (req, res) => {
       return res.status(400).json({ status: false, message: 'Failed to retrieve cars' });
     }
     
-    // Fetch owner details for each car
     const userIds = [...new Set(cars.map(car => car.user_id))];
     const profilesMap = new Map();
     const emailMap = new Map();
     
     if (userIds.length > 0) {
-      // Fetch profiles
       const { data: profiles } = await supabaseAdmin
         .from('profiles')
         .select('id, first_name, last_name, user_id')
@@ -350,7 +355,6 @@ export const listCars = async (req, res) => {
         });
       }
       
-      // Fetch emails
       const userFetches = userIds.map(userId => 
         supabaseAdmin.auth.admin.getUserById(userId)
           .then(({ data }) => ({ id: userId, email: data?.user?.email }))
@@ -422,14 +426,12 @@ export const getCarDetails = async (req, res) => {
       return res.status(404).json({ status: false, message: 'Car not found' });
     }
     
-    // Get owner profile
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('id, first_name, last_name, phone_number, user_id')
       .eq('id', car.user_id)
       .single();
     
-    // Get user email
     let userEmail = null;
     try {
       const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(car.user_id);
@@ -455,5 +457,64 @@ export const getCarDetails = async (req, res) => {
   } catch (error) {
     console.error('Get car details error:', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve car' });
+  }
+};
+
+export const getPaymentMetrics = async (req, res) => {
+  try {
+    const snapshot = paymentMetrics.getSnapshot();
+    
+    return res.status(200).json({
+      status: true,
+      message: 'Payment metrics retrieved successfully',
+      data: snapshot
+    });
+  } catch (error) {
+    console.error('Get payment metrics error:', error);
+    return res.status(500).json({ 
+      status: false, 
+      message: 'Failed to retrieve payment metrics' 
+    });
+  }
+};
+
+export const getGatewayHealth = async (req, res) => {
+  try {
+    const healthData = healthMonitor.getAllGatewayHealth();
+    const circuitBreakerStatus = gatewayManager.getCircuitBreakerStatus();
+    const statistics = gatewayManager.getStatistics();
+
+    const gatewayStatus = {};
+    Object.keys(healthData).forEach(gatewayName => {
+      gatewayStatus[gatewayName] = {
+        ...healthData[gatewayName],
+        circuitBreaker: circuitBreakerStatus[gatewayName] || null,
+        available: gatewayManager.isGatewayAvailable(gatewayName)
+      };
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: 'Gateway health status retrieved successfully',
+      data: {
+        gateways: gatewayStatus,
+        primary: gatewayManager.getPrimaryGateway(),
+        fallback: gatewayManager.getFallbackGateway(),
+        statistics: {
+          circuitBreakers: circuitBreakerStatus,
+          healthMonitor: {
+            isRunning: healthMonitor.isRunning,
+            checkIntervalMs: healthMonitor.checkIntervalMs
+          }
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get gateway health error:', error);
+    return res.status(500).json({ 
+      status: false, 
+      message: 'Failed to retrieve gateway health status',
+      error: error.message 
+    });
   }
 };

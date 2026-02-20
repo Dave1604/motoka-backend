@@ -14,11 +14,11 @@ import { unauthorized, forbidden } from '../utils/responses.js';
  * 
  * Current implementation: Simple Map with TTL
  * - Cache key: userId
- * - TTL: 10 minutes (600000ms)
+ * - TTL: 1 minute (60000ms) - reduced for faster suspension propagation
  * - Auto-cleanup on access
  */
 const profileCache = new Map();
-const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+const CACHE_TTL = 1 * 60 * 1000; // 1 minute
 
 function getCachedProfile(userId) {
   const cached = profileCache.get(userId);
@@ -147,5 +147,14 @@ export const optionalAuth = async (req, res, next) => {
     next();
   }
 };
+
+/**
+ * Invalidate profile cache for a specific user
+ * Call this when user suspension status changes to ensure immediate effect
+ * @param {string} userId - User ID to invalidate
+ */
+export function invalidateProfileCache(userId) {
+  profileCache.delete(userId);
+}
 
 export default authenticate;
