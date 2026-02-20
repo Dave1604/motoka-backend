@@ -15,6 +15,8 @@ router.put('/users/:userId/activate', authenticate, checkAdmin, admin.activateUs
 router.delete('/users/:userId', authenticate, checkAdmin, admin.deleteUser);
 router.get('/metrics/payments', authenticate, checkAdmin, admin.getPaymentMetrics);
 router.get('/gateways/health', authenticate, checkAdmin, admin.getGatewayHealth);
+
+// Order management - TODO: Implement in Phase 3
 // router.get('/orders/stats', admin.getOrderStats);
 // router.get('/orders', admin.listOrders);
 // router.get('/orders/:orderId', admin.getOrderDetails);
