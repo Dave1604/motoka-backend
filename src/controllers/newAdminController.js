@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { sendEmail } from "../services/email/email.service.js"; // your email from services
 
-// Admin Login Request (send OTP)
+//  Admin Login Request (send OTP)
 export const adminLoginRequest = async (req, res) => {
   try {
     const { email } = req.body;
@@ -69,7 +69,7 @@ export const adminLoginRequest = async (req, res) => {
   }
 };
 
-// Admin Verify OTP (returns JWT)
+//  Admin Verify OTP (returns JWT)
 export const adminVerifyOtp = async (req, res) => {
   try {
     const { email, otp } = req.body;
@@ -150,44 +150,93 @@ export const adminVerifyOtp = async (req, res) => {
 
 export const getAllUsers = async (req, res) => {
   try {
-    const supabaseAdmin = getSupabaseAdmin();
+    const supabase = getSupabaseAdmin();
 
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-    const search = req.query.search || "";
+    const page = Number(req.query.page) || 1;
+    const limit = Number(req.query.limit) || 20;
+    const search = req.query.search?.trim() || "";
+    const status = req.query.status || "active";
 
     const from = (page - 1) * limit;
     const to = from + limit - 1;
 
-    let query = supabaseAdmin
+    /**
+      Email search → map auth.users → profile IDs
+     */
+    let userIdsFromEmail = [];
+
+    if (search) {
+      const { data: authUsers, error } =
+        await supabase.auth.admin.listUsers({ perPage: 1000 });
+
+      if (!error) {
+        userIdsFromEmail = authUsers.users
+          .filter(u =>
+            u.email?.toLowerCase().includes(search.toLowerCase())
+          )
+          .map(u => u.id);
+      }
+    }
+
+    /**
+      Base query
+     */
+    let query = supabase
       .from("profiles")
       .select(
         `
         id,
-        email,
+        user_id,
         first_name,
         last_name,
-        phone,
+        phone_number,
         is_admin,
         is_suspended,
+        deleted_at,
         created_at
         `,
         { count: "exact" }
       )
-      .range(from, to)
-      .order("created_at", { ascending: false });
+      .order("created_at", { ascending: false })
+      .range(from, to);
 
-    if (search) {
-      query = query.or(
-        `email.ilike.%${search}%,first_name.ilike.%${search}%,last_name.ilike.%${search}%`
-      );
+    /**
+      Status filter
+     */
+    if (status === "active") {
+      query = query.eq("is_suspended", false).is("deleted_at", null);
     }
 
-    const { data, count, error } = await query;
+    if (status === "suspended") {
+      query = query.eq("is_suspended", true).is("deleted_at", null);
+    }
+
+    if (status === "deleted") {
+      query = query.not("deleted_at", "is", null);
+    }
+
+    /**
+     Search filter (safe OR builder)
+     */
+    if (search) {
+      const orFilters = [
+        `first_name.ilike.%${search}%`,
+        `last_name.ilike.%${search}%`,
+        `phone_number.ilike.%${search}%`,
+      ];
+
+      if (userIdsFromEmail.length > 0) {
+        orFilters.push(`id.in.(${userIdsFromEmail.join(",")})`);
+      }
+
+      query = query.or(orFilters.join(","));
+    }
+
+    const { data, error, count } = await query;
 
     if (error) {
       console.error("Get users error:", error);
-      return response.serverError(res, "Failed to fetch users");
+      return response.serverError(res, error.message);
     }
 
     return response.success(
@@ -203,8 +252,8 @@ export const getAllUsers = async (req, res) => {
       },
       "Users fetched successfully"
     );
-  } catch (error) {
-    console.error("Get all users error:", error);
+  } catch (err) {
+    console.error("Get all users crash:", err);
     return response.serverError(res);
   }
 };

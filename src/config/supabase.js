@@ -11,17 +11,17 @@ let _supabaseAdmin = null;
 /**
  * Returns singleton Supabase client with anon key (RLS enabled)
  * Safe for concurrent requests - created once, reused forever
- */
-export function getSupabase() {
-  if (!_supabase) {
-    const { SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
-    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-      throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY');
+  */
+  export function getSupabase() {
+    if (!_supabase) {
+      const { SUPABASE_URL, SUPABASE_ANON_KEY } = process.env;
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+        throw new Error('Missing SUPABASE_URL or SUPABASE_ANON_KEY');
+      }
+      _supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
     }
-    _supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    return _supabase;
   }
-  return _supabase;
-}
 
 /**
  * Returns singleton Supabase admin client with service role key

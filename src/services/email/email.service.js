@@ -1,16 +1,12 @@
 import { config } from 'dotenv';
 import { Resend } from 'resend';
-<<<<<<< HEAD
 import 'dotenv/config';
-import {config} from 'dotenv'
-=======
 
 // Ensure environment variables are loaded before using RESEND_API_KEY.
 // This is needed because ESM import order can run this module before
 // dotenv is configured in src/index.js.
 config();
 
->>>>>>> 38327d41e37a2f6e7125ef89b6db033e37750882
 /**
  * EMAIL SERVICE - Resend Integration
  *
