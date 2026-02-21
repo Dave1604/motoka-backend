@@ -23,3 +23,14 @@ services:
         sync: false
       - key: TOTP_ISSUER
         value: Motoka
+      # Paystack payment gateway configuration (set actual values in Render dashboard)
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: PAYMENT_CALLBACK_URL
+        sync: false
+      - key: PAYMENT_SUCCESS_URL
+        sync: false
+      - key: PAYMENT_CANCEL_URL
+        sync: false
