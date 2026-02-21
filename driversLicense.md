@@ -1,193 +1,114 @@
-Driver License API Documentation
-Overview
+# Driver License API
 
-The Driver License API manages driver’s license applications for users. It supports applying for a new license, renewing an expired license, and replacing a lost or damaged license. All operations are strictly scoped to the authenticated user.
+## Overview
+The Driver License API manages driver’s license applications for authenticated users. It supports three operations: applying for a new license, renewing an expired license, and replacing a lost or damaged license. All operations are scoped to the authenticated user.
 
-Key Behaviors:
+Base path: `/api`
+Module prefix: `/driver-license`
 
-User-scoped access: users can only access their own license records
+## Authentication
 
-License-type–based validation (new, renew, lost_damaged)
+All endpoints require a Bearer token (Supabase JWT) in the `Authorization` header.
 
-Server-controlled fields (status, license number, user association)
-
-Automatic license number generation for new licenses
-
-Latest-first ordering when listing licenses
-
-Scope:
-
-Create driver license applications
-
-Retrieve all licenses belonging to a user
-
-Retrieve a single license by slug
-
-Base URL
-
-Base Path: /api
-
-All Driver License API endpoints are prefixed with /api.
-
-Module Prefix:
-
-/driver-license
-Authentication
-
-All endpoints require authentication via Bearer token.
-
-Header:
+Example:
 
 Authorization: Bearer <supabase_jwt_token>
 
-Unauthenticated Requests:
+Unauthenticated requests return 401.
 
-Status: 401 Unauthorized
+The authenticated user object is available on `req.user` and `req.user.id` is used as `user_id`.
 
-Response: Standard error object
+## License types
 
-User Context:
+- `new` — Apply for a brand-new driver’s license
+- `renew` — Renew an expired driver’s license
+- `lost_damaged` — Replace a lost or damaged driver’s license
 
-The authenticated Supabase user is attached to req.user
+## Data model
 
-req.user.id (UUID) is used internally as user_id
+Driver License object (returned fields):
 
-License Types
-Type	Description
-new	Apply for a brand-new driver’s license
-renew	Renew an expired driver’s license
-lost_damaged	Replace a lost or damaged driver’s license
-Data Model
-Driver License Object
-Field	Type	Description	Category
-id	UUID	Primary key	Server-controlled
-slug	string	Unique identifier for URL access	Server-controlled
-user_id	UUID	Owner of the license	Server-controlled
-license_type	enum	new, renew, lost_damaged	Required
-license_number	string	Generated license number	Server-controlled / Conditional
-status	enum	unpaid, paid, processing, approved, rejected	Server-controlled
-full_name	string	Applicant full name	Conditional*
-phone_number	string	Applicant phone number	Conditional*
-address	string	Residential address	Conditional*
-date_of_birth	date	Date of birth	Conditional*
-place_of_birth	string	Place of birth	Optional
-state_of_origin	string	State of origin	Optional
-local_government	string	Local government area	Optional
-blood_group	string	Blood group	Optional
-height	string	Height	Optional
-occupation	string	Occupation	Optional
-next_of_kin	string	Next of kin name	Optional
-next_of_kin_phone	string	Next of kin phone number	Optional
-mother_maiden_name	string	Mother’s maiden name	Optional
-license_year	number	License duration in years	Conditional*
-expired_license_upload	string (URL)	Upload of expired license	Conditional**
-created_at	timestamp	Creation timestamp	Server-controlled
-Conditional Fields
+- `id` (UUID) — Primary key (server-controlled)
+- `slug` (string) — Unique identifier used in URLs (server-controlled)
+- `user_id` (UUID) — Owner (server-controlled)
+- `license_type` (enum) — `new` | `renew` | `lost_damaged` (required)
+- `license_number` (string) — Generated for new applications; present for others when known (server-controlled)
+- `status` (enum) — `unpaid` | `paid` | `processing` | `approved` | `rejected` (server-controlled)
+- `full_name`, `phone_number`, `address`, `date_of_birth`, `place_of_birth`, `state_of_origin`, `local_government`, `blood_group`, `height`, `occupation`, `next_of_kin`, `next_of_kin_phone`, `mother_maiden_name` — applicant fields (see conditional rules below)
+- `license_year` (number) — Duration in years (required for `new`)
+- `expired_license_upload` (string URL) — Required for `renew`
+- `created_at` (timestamp)
 
-*Required when license_type = new
+Conditional rules:
 
-**Required when license_type = renew
+- When `license_type` = `new`: `full_name`, `phone_number`, `address`, `date_of_birth`, and `license_year` are required.
+- When `license_type` = `renew`: `expired_license_upload` is required.
+- When `license_type` = `lost_damaged`: `license_number` and `date_of_birth` are required.
 
-For lost_damaged:
+Ownership and access:
 
-license_number is required
+- Users may only access license records belonging to themselves. Attempts to access others’ records return 404.
 
-date_of_birth is required
+License number generation:
 
-Constraints & Business Rules
-Ownership Rules
+- `license_number` is generated by the server for `new` applications (example format: `DL-1700000000000-321`).
 
-Users can only access licenses that belong to them
+Status values and meaning:
 
-Attempting to access another user’s license returns 404 Not Found
+- `unpaid` — application created, payment pending
+- `paid` — payment completed
+- `processing` — under review
+- `approved` — license approved
+- `rejected` — license rejected
 
-License Number Generation
+## Endpoints
 
-License numbers are automatically generated for new licenses
+### POST /api/driver-license/apply
 
-Format example:
-
-DL-1700000000000-321
-Status Control
-
-The status field is server-controlled and cannot be set by the client.
-
-Status	Meaning
-unpaid	Application created, payment pending
-paid	Payment completed
-processing	Under review
-approved	License approved
-rejected	License rejected
-Endpoints
-POST /api/driver-license/apply
-
-Create a driver license application (new, renew, or lost/damaged).
+Create a driver license application. The body shape depends on `license_type`.
 
 Headers:
 
-Authorization: Bearer <token>
-Content-Type: application/json
-Request Body – New License
+- `Authorization: Bearer <token>`
+- `Content-Type: application/json`
+
+Body examples:
+
+New application (`license_type: new`):
+
+```
 {
   "license_type": "new",
   "full_name": "John Doe",
   "phone_number": "+2348012345678",
   "address": "12 Allen Avenue, Ikeja, Lagos",
   "date_of_birth": "1998-05-12",
-  "place_of_birth": "Lagos",
-  "state_of_origin": "Lagos",
-  "local_government": "Ikeja",
-  "blood_group": "O+",
-  "height": "5ft 9in",
-  "occupation": "Software Engineer",
-  "next_of_kin": "Jane Doe",
-  "next_of_kin_phone": "+2348098765432",
-  "mother_maiden_name": "Smith",
   "license_year": 3
 }
+```
 
-Required Fields (new):
+Renew (`license_type: renew`):
 
-license_type
-
-full_name
-
-phone_number
-
-address
-
-date_of_birth
-
-license_year
-
-Request Body – Renew License
+```
 {
   "license_type": "renew",
   "expired_license_upload": "https://example.com/expired-license.jpg"
 }
+```
 
-Required Fields (renew):
+Lost or damaged (`license_type: lost_damaged`):
 
-license_type
-
-expired_license_upload
-
-Request Body – Lost or Damaged License
+```
 {
   "license_type": "lost_damaged",
   "license_number": "DL-1700000000000-321",
   "date_of_birth": "1998-05-12"
 }
+```
 
-Required Fields (lost_damaged):
+Success (201):
 
-license_type
-
-license_number
-
-date_of_birth
-
-Success Response (201)
+```
 {
   "status": true,
   "message": "Driver license request created",
@@ -201,125 +122,81 @@ Success Response (201)
     "created_at": "2026-02-20T10:45:00Z"
   }
 }
-Error Responses
+```
 
-400 Bad Request – Invalid License Type
+Errors:
 
-{
-  "status": false,
-  "message": "Invalid license type"
-}
+- 400 — Invalid license type or missing required fields
+- 401 — Unauthorized
+- 500 — Internal server error
 
-400 Bad Request – Missing Required Fields
+### GET /api/driver-license/license
 
-{
-  "status": false,
-  "message": "Missing required fields for new license"
-}
+Retrieve all licenses for the authenticated user (latest first).
 
-500 Internal Server Error
+Headers: `Authorization: Bearer <token>`
 
-{
-  "status": false,
-  "message": "Failed to create driver license"
-}
-GET /api/driver-license/license
+Success (200):
 
-Retrieve all driver licenses belonging to the authenticated user.
-
-Headers:
-
-Authorization: Bearer <token>
-Success Response (200)
+```
 {
   "status": true,
-  "data": [
-    {
-      "id": "uuid",
-      "slug": "dl-renew-1700001111",
-      "license_type": "renew",
-      "license_number": "DL-1700000000000-321",
-      "status": "unpaid",
-      "created_at": "2026-02-19T09:00:00Z"
-    },
-    {
-      "id": "uuid",
-      "slug": "dl-new-1699999999",
-      "license_type": "new",
-      "license_number": "DL-1699999999999-876",
-      "status": "paid",
-      "created_at": "2026-01-10T14:30:00Z"
-    }
-  ]
+  "data": [ /* array of license objects ordered by created_at desc */ ]
 }
+```
 
-Behavior:
+Errors:
 
-Results are ordered by created_at (latest first)
+- 401 — Unauthorized
+- 500 — Failed to fetch licenses
 
-Only licenses belonging to the authenticated user are returned
+### GET /api/driver-license/:slug
 
-Error Response (500)
-{
-  "status": false,
-  "message": "Failed to fetch licenses"
-}
-GET /api/driver-license/:slug
+Retrieve a single license by `slug`.
 
-Retrieve a single driver license by slug.
+Path parameter:
 
-Path Parameters:
+- `slug` (string) — license slug
 
-Parameter	Type	Description
-slug	string	Unique license identifier
+Headers: `Authorization: Bearer <token>`
 
-Headers:
+Success (200):
 
-Authorization: Bearer <token>
-Success Response (200)
+```
 {
   "status": true,
-  "data": {
-    "id": "uuid",
-    "slug": "dl-new-1700000000",
-    "license_type": "new",
-    "license_number": "DL-1700000000000-321",
-    "status": "unpaid",
-    "full_name": "John Doe",
-    "phone_number": "+2348012345678",
-    "created_at": "2026-02-20T10:45:00Z"
-  }
+  "data": { /* license object */ }
 }
-Error Responses
+```
 
-404 Not Found
+Errors:
 
+- 401 — Unauthorized
+- 404 — License not found (or not owned by user)
+- 500 — Failed to fetch license
+
+## HTTP status and error formats
+
+Standard error response:
+
+```
 {
   "status": false,
-  "message": "License not found"
+  "message": "Descriptive error message"
 }
+```
 
-500 Internal Server Error
+Examples:
 
-{
-  "status": false,
-  "message": "Failed to fetch license"
-}
-Summary of Routes
-Method	Endpoint	Description
-POST	/api/driver-license/apply	Apply for driver license
-GET	/api/driver-license/license	Get all user licenses
-GET	/api/driver-license/:slug	Get single license
-Notes for Frontend & Mobile Teams
+- Missing fields (400): `{ "status": false, "message": "Missing required fields for new license" }`
+- Invalid type (400): `{ "status": false, "message": "Invalid license type" }`
 
-All fields use snake_case
+## Frontend / Mobile integration notes
 
-Always store and reuse the slug for navigation
+- Use snake_case for field names.
+- Always store and reuse the `slug` for navigation to a specific application.
+- Do not set `status`, `user_id`, or `license_number` from the client.
+- Send dates in `YYYY-MM-DD` format.
+- Treat 404 responses as "not found or not owned" to avoid leaking resource existence.
 
-Do not attempt to set status, user_id, or license_number
-
-Handle 404 as “not found or not owned”
-
-Dates must be sent in YYYY-MM-DD format
-
-Status changes occur outside this API (admin/payment workflows)
+If you want, I can also add an OpenAPI (Swagger) YAML fragment for this module or generate example curl requests — which would you prefer next?
