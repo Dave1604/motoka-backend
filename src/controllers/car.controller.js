@@ -22,6 +22,7 @@ import { sendWelcomeEmail } from '../services/email/carEmail.service.js';
 import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
 /**
+<<<<<<< HEAD
  * Get pending orders for multiple cars
  * @param {Array<number>} carIds - Array of car IDs
  * @returns {Promise<Map>} Map of car_id -> pending order
@@ -58,6 +59,8 @@ async function getPendingOrdersForCars(carIds) {
 }
 
 /**
+=======
+>>>>>>> 72f1150ea89d58254a08437e86ddf9ffbeacf414
  * Compute expiry status metadata for a car based on its expiry_date.
  *
  * Shape expected by the frontend:
@@ -283,6 +286,7 @@ export const getCars = async (req, res) => {
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
 
+<<<<<<< HEAD
     // Check for pending orders
     const carIds = (result.cars || []).map(car => car.id);
     const pendingOrdersMap = await getPendingOrdersForCars(carIds);
@@ -294,6 +298,12 @@ export const getCars = async (req, res) => {
         expiry_status: buildExpiryStatus(car.expiry_date, new Date(), pendingOrder)
       };
     });
+=======
+    const carsWithExpiryStatus = (result.cars || []).map((car) => ({
+      ...car,
+      expiry_status: computeExpiryStatus(car.expiry_date)
+    }));
+>>>>>>> 72f1150ea89d58254a08437e86ddf9ffbeacf414
 
     return response.success(
       res,
@@ -320,6 +330,7 @@ export const getCarBySlug = async (req, res) => {
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
 
+<<<<<<< HEAD
     // Check for pending order
     const pendingOrdersMap = await getPendingOrdersForCars([car.id]);
     const pendingOrder = pendingOrdersMap.get(car.id) || null;
@@ -327,6 +338,11 @@ export const getCarBySlug = async (req, res) => {
     const carWithExpiryStatus = {
       ...car,
       expiry_status: buildExpiryStatus(car.expiry_date, new Date(), pendingOrder)
+=======
+    const carWithExpiryStatus = {
+      ...car,
+      expiry_status: computeExpiryStatus(car.expiry_date)
+>>>>>>> 72f1150ea89d58254a08437e86ddf9ffbeacf414
     };
     
     return response.success(res, { car: carWithExpiryStatus }, 'Car retrieved successfully');

@@ -1,6 +1,9 @@
 import { config } from 'dotenv';
 import { Resend } from 'resend';
+<<<<<<< HEAD
 import 'dotenv/config';
+=======
+>>>>>>> 72f1150ea89d58254a08437e86ddf9ffbeacf414
 
 // Ensure environment variables are loaded before using RESEND_API_KEY.
 // This is needed because ESM import order can run this module before
