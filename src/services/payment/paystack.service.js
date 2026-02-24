@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { logError } from '../../utils/logger.js';
+import { logError, logInfo, logWarn } from '../../utils/logger.js';
 import {
   PAYSTACK_ENDPOINTS,
   ERROR_MESSAGES,
@@ -118,7 +118,7 @@ export async function initializeTransaction({
     body: JSON.stringify(payload)
   });
   
-  console.log('[Paystack] Transaction initialized:', {
+  logInfo('[Paystack] Transaction initialized', {
     reference
   });
   
@@ -149,7 +149,7 @@ export async function verifyTransaction(reference) {
   
   const data = response.data;
   
-  console.log('[Paystack] Transaction verified:', {
+  logInfo('[Paystack] Transaction verified', {
     reference,
     status: data.status,
     amount: data.amount
@@ -225,7 +225,7 @@ export async function chargeAuthorization({
   
   const data = response.data;
   
-  console.log('[Paystack] Authorization charged:', {
+  logInfo('[Paystack] Authorization charged', {
     reference,
     status: data.status,
     amount: data.amount
@@ -301,7 +301,7 @@ export async function createRefund({ transaction, amount, reason }) {
     body: JSON.stringify(payload)
   });
   
-  console.log('[Paystack] Refund created:', {
+  logInfo('[Paystack] Refund created', {
     transaction,
     amount: amount || 'full'
   });
@@ -320,7 +320,7 @@ export async function createRefund({ transaction, amount, reason }) {
  */
 export function verifyWebhookSignature(payload, signature) {
   if (!signature) {
-    console.warn('[Paystack] Missing webhook signature');
+    logWarn('[Paystack] Missing webhook signature');
     return false;
   }
   
@@ -339,14 +339,14 @@ export function verifyWebhookSignature(payload, signature) {
   const expected = Buffer.from(hash, 'hex');
   const received = Buffer.from(signature, 'hex');
   if (expected.length !== received.length) {
-    console.warn('[Paystack] Invalid webhook signature length');
+    logWarn('[Paystack] Invalid webhook signature length');
     return false;
   }
 
   const isValid = crypto.timingSafeEqual(expected, received);
   
   if (!isValid) {
-    console.warn('[Paystack] Invalid webhook signature');
+    logWarn('[Paystack] Invalid webhook signature');
   }
   
   return isValid;
