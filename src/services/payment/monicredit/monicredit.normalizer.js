@@ -1,3 +1,5 @@
+import { logInfo, logWarn } from '../../../utils/logger.js';
+
 /**
  * Normalises raw Monicredit API responses into a stable internal shape.
  *
@@ -72,17 +74,17 @@ export class MonicreditNormalizer {
       raw_response: response
     };
 
-    console.log('[Monicredit] Transaction initialized:', {
+    logInfo('[Monicredit] Transaction initialized', {
       order_id: normalized.order_id,
       transaction_id: normalized.transaction_id,
       total_amount_naira: totalAmountInNaira,
       total_amount_kobo: totalAmountInKobo,
       has_account_details: !!(normalized.account_number && normalized.bank_name && normalized.account_name),
-      has_payment_url: !!normalized.payment_url
+      has_payment_url: !!normalized.payment_url,
     });
 
     if ((!normalized.account_number || !normalized.bank_name || !normalized.account_name) && !normalized.payment_url) {
-      console.warn('[Monicredit] WARNING: No payment options in API response - check merchant configuration');
+      logWarn('[Monicredit] No payment options in API response — check merchant configuration');
     }
 
     return normalized;
@@ -106,11 +108,11 @@ export class MonicreditNormalizer {
     const amountInNaira = data.amount || 0;
     const amountInKobo = Math.round(amountInNaira * 100);
     
-    console.log('[Monicredit] Verification response normalized:', {
+    logInfo('[Monicredit] Verification response normalized', {
       order_id: data.order_id || data.orderid,
       status: data.status,
       amount_naira: amountInNaira,
-      amount_kobo: amountInKobo
+      amount_kobo: amountInKobo,
     });
     
     return {

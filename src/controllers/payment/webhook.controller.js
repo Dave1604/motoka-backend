@@ -110,7 +110,8 @@ export const handleMonicreditWebhook = async (req, res) => {
     const event = webhookData.event || webhookData.type;
     const data = webhookData.data || webhookData;
     
-    signatureVerified = true; // Assume verified if we reach here
+    // Signature was already verified by verifyMonicreditWebhook middleware before reaching here
+    signatureVerified = true;
     paymentMetrics.trackWebhook({
       signatureVerified,
       isDuplicate: false,

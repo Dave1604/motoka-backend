@@ -18,15 +18,16 @@ function shouldRetry(error) {
     return true;
   }
   
-  if (error.code === 'REQUEST_FAILED' || error.message.includes('fetch')) {
+  if (error.code === 'REQUEST_FAILED' || error.message?.includes('fetch')) {
     return true;
   }
-  
+
   if (error.code === 'VALIDATION_ERROR' || error.code === 'CONFIG_ERROR') {
     return false;
   }
-  
-  return true;
+
+  // Unknown errors: fail fast rather than retrying blindly
+  return false;
 }
 
 function calculateDelay(attemptNumber, initialDelay, maxDelay, multiplier) {
@@ -99,8 +100,6 @@ export async function retryWithBackoff(fn, options = {}) {
       await sleep(delay);
     }
   }
-  
-  throw lastError;
 }
 
 export async function retryMonicreditRequest(apiCall, operation) {

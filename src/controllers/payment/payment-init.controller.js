@@ -180,10 +180,16 @@ export const initializePayment = async (req, res) => {
       meta_data
     } = req.body;
     
-    // Validate renewal_months against allowlist
+    // Validate renewal_months against allowlist — reject invalid values explicitly
     const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
     const rawMonths = parseInt(rawRenewalMonths);
-    const renewal_months = VALID_RENEWAL_MONTHS.includes(rawMonths) ? rawMonths : 12;
+    if (!VALID_RENEWAL_MONTHS.includes(rawMonths)) {
+      return res.status(400).json({
+        status: false,
+        message: `Invalid renewal_months. Must be one of: ${VALID_RENEWAL_MONTHS.join(', ')}`,
+      });
+    }
+    const renewal_months = rawMonths;
     
     // Normalize payment gateway: handle case-insensitive input and various formats
     let payment_gateway = rawPaymentGateway;
