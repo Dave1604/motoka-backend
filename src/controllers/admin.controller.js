@@ -4,6 +4,9 @@ import paymentMetrics from '../services/payment/metrics.service.js';
 import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
 import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
+import { sendOrderCompletedEmail } from '../services/email/paymentEmail.service.js';
+import { createInAppNotification } from '../services/notification.service.js';
+import { logError } from '../utils/logger.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -21,6 +24,7 @@ function dbStatusToFrontend(status) {
 function frontendStatusToDB(status) {
   if (status === 'in_progress') return 'processing';
   if (status === 'declined') return 'cancelled';
+  if (status === 'new') return 'pending'; // safety net — frontend may send 'new'
   return status;
 }
 
@@ -78,7 +82,7 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
     } : null,
     payment: order.payment_transactions ? {
       transaction_id: order.payment_transactions.reference,
-      payment_gateway: 'paystack',
+      payment_gateway: order.payment_transactions.payment_gateway || 'paystack',
       status: order.payment_transactions.status,
       amount: koboToNaira(order.payment_transactions.amount),
       paid_at: order.payment_transactions.paid_at,
@@ -115,7 +119,7 @@ export const listUsers = async (req, res) => {
     const { data: profiles, count, error } = await query;
     
     if (error) {
-      console.error('List users error:', error);
+      logError('List users', error);
       return res.status(400).json({ status: false, message: 'Failed to retrieve users' });
     }
     
@@ -177,7 +181,7 @@ export const listUsers = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('List users error:', error);
+    logError('List users', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve users' });
   }
 };
@@ -245,7 +249,7 @@ export const getUser = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get user error:', error);
+    logError('Get user', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve user' });
   }
 };
@@ -285,7 +289,7 @@ export const suspendUser = async (req, res) => {
       .eq('id', userId);
     
     if (error) {
-      console.error('Suspend user error:', error);
+      logError('Suspend user', error);
       return response.error(res, 'Failed to suspend user');
     }
     
@@ -301,7 +305,7 @@ export const suspendUser = async (req, res) => {
     
     return response.success(res, { user_id: userId, is_suspended: true }, 'User suspended successfully');
   } catch (error) {
-    console.error('Suspend user error:', error);
+    logError('Suspend user', error);
     return response.serverError(res, 'Failed to suspend user');
   }
 };
@@ -332,7 +336,7 @@ export const activateUser = async (req, res) => {
       .eq('id', userId);
     
     if (error) {
-      console.error('Activate user error:', error);
+      logError('Activate user', error);
       return response.error(res, 'Failed to activate user');
     }
     
@@ -348,7 +352,7 @@ export const activateUser = async (req, res) => {
     
     return response.success(res, { user_id: userId, is_suspended: false }, 'User activated successfully');
   } catch (error) {
-    console.error('Activate user error:', error);
+    logError('Activate user', error);
     return response.serverError(res, 'Failed to activate user');
   }
 };
@@ -379,7 +383,7 @@ export const deleteUser = async (req, res) => {
       .eq('id', userId);
     
     if (error) {
-      console.error('Delete user error:', error);
+      logError('Delete user', error);
       return res.status(500).json({ status: false, message: 'Failed to delete user' });
     }
     
@@ -389,7 +393,7 @@ export const deleteUser = async (req, res) => {
       data: { user_id: userId }
     });
   } catch (error) {
-    console.error('Delete user error:', error);
+    logError('Delete user', error);
     return res.status(500).json({ status: false, message: 'Failed to delete user' });
   }
 };
@@ -416,7 +420,7 @@ export const listCars = async (req, res) => {
     const { data: cars, count, error } = await query;
     
     if (error) {
-      console.error('List cars error:', error);
+      logError('List cars', error);
       return res.status(400).json({ status: false, message: 'Failed to retrieve cars' });
     }
     
@@ -486,7 +490,7 @@ export const listCars = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('List cars error:', error);
+    logError('List cars', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve cars' });
   }
 };
@@ -518,16 +522,41 @@ export const getCarDetails = async (req, res) => {
       const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(car.user_id);
       userEmail = authUser?.user?.email;
     } catch (err) {
-      console.error('Failed to fetch user email:', err);
+      logError('Failed to fetch user email', err);
     }
     
+    // Fetch recent orders for this car
+    const { data: orders } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, order_number, order_type, amount_paid, status, selected_items, created_at')
+      .eq('car_id', car.id)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    // Fetch recent transactions for this car
+    const { data: transactions } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, reference, amount, status, payment_gateway, payment_type, created_at, paid_at')
+      .eq('car_id', car.id)
+      .in('status', ['successful', 'pending', 'failed'])
+      .order('created_at', { ascending: false })
+      .limit(5);
+
     const formattedCar = {
       ...car,
       user: profile ? {
         ...profile,
         email: userEmail,
         name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim()
-      } : null
+      } : null,
+      orders: (orders || []).map(o => ({
+        ...o,
+        amount_paid: koboToNaira(o.amount_paid)
+      })),
+      transactions: (transactions || []).map(t => ({
+        ...t,
+        amount: koboToNaira(t.amount)
+      }))
     };
     
     return res.status(200).json({
@@ -536,7 +565,7 @@ export const getCarDetails = async (req, res) => {
       data: formattedCar
     });
   } catch (error) {
-    console.error('Get car details error:', error);
+    logError('Get car details', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve car' });
   }
 };
@@ -551,7 +580,7 @@ export const getPaymentMetrics = async (req, res) => {
       data: snapshot
     });
   } catch (error) {
-    console.error('Get payment metrics error:', error);
+    logError('Get payment metrics', error);
     return res.status(500).json({ 
       status: false, 
       message: 'Failed to retrieve payment metrics' 
@@ -591,7 +620,7 @@ export const getGatewayHealth = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get gateway health error:', error);
+    logError('Get gateway health', error);
     return res.status(500).json({ 
       status: false, 
       message: 'Failed to retrieve gateway health status',
@@ -685,7 +714,7 @@ export const getDashboardStats = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Get dashboard stats error:', error);
+    logError('Get dashboard stats', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve dashboard stats' });
   }
 };
@@ -700,7 +729,7 @@ export const getRecentOrders = async (req, res) => {
       .select(`
         id, order_number, order_type, amount_paid, status, user_id, created_at,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
-        payment_transactions:transaction_id ( id, reference, amount, status, paid_at )
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway )
       `)
       .order('created_at', { ascending: false })
       .limit(5);
@@ -716,7 +745,7 @@ export const getRecentOrders = async (req, res) => {
 
     return res.status(200).json({ status: true, message: 'Recent orders retrieved', data: formatted });
   } catch (error) {
-    console.error('Get recent orders error:', error);
+    logError('Get recent orders', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve recent orders' });
   }
 };
@@ -755,7 +784,7 @@ export const getRecentTransactions = async (req, res) => {
 
     return res.status(200).json({ status: true, message: 'Recent transactions retrieved', data: formatted });
   } catch (error) {
-    console.error('Get recent transactions error:', error);
+    logError('Get recent transactions', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve recent transactions' });
   }
 };
@@ -776,26 +805,29 @@ export const listOrders = async (req, res) => {
         delivery_address, delivery_state, delivery_lga, delivery_contact,
         created_at, updated_at,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
-        payment_transactions:transaction_id ( id, reference, amount, status )
+        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway )
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    // Map frontend filter values to DB status values
     if (status && status !== 'all') {
       query = query.eq('status', frontendStatusToDB(status));
     }
 
+    // Order number search at DB level — avoids loading full pages to filter in JS
+    if (search) {
+      query = query.ilike('order_number', `%${search}%`);
+    }
+
     const { data: orders, count, error } = await query;
     if (error) {
-      console.error('List orders error:', error);
+      logError('List orders', error);
       return res.status(500).json({ status: false, message: 'Failed to retrieve orders' });
     }
 
     const userIds = [...new Set((orders || []).map(o => o.user_id))];
     const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
 
-    // Resolve state names
     const stateCodes = [...new Set((orders || []).map(o => o.delivery_state).filter(Boolean))];
     const stateNameMap = new Map();
     if (stateCodes.length > 0) {
@@ -806,7 +838,7 @@ export const listOrders = async (req, res) => {
       (states || []).forEach(s => stateNameMap.set(s.code, s.name));
     }
 
-    let formatted = (orders || []).map(o =>
+    const formatted = (orders || []).map(o =>
       formatOrder(
         o,
         profileMap.get(o.user_id),
@@ -815,15 +847,6 @@ export const listOrders = async (req, res) => {
         o.delivery_lga
       )
     );
-
-    // Client-side search filter (by user name or order number)
-    if (search) {
-      const q = search.toLowerCase();
-      formatted = formatted.filter(o =>
-        o.user?.name?.toLowerCase().includes(q) ||
-        o.order_number?.toLowerCase().includes(q)
-      );
-    }
 
     const total = count || 0;
     return res.status(200).json({
@@ -838,7 +861,7 @@ export const listOrders = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('List orders error:', error);
+    logError('List orders', error);
     return response.serverError(res, 'Failed to retrieve orders');
   }
 };
@@ -855,7 +878,7 @@ export const getOrderDetails = async (req, res) => {
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
                       registration_no, chasis_no, engine_no, expiry_date ),
-        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel )
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel, payment_gateway )
       `)
       .eq('order_number', orderNumber)
       .single();
@@ -888,7 +911,7 @@ export const getOrderDetails = async (req, res) => {
 
     return res.status(200).json({ status: true, message: 'Order retrieved successfully', data: formatted });
   } catch (error) {
-    console.error('Get order details error:', error);
+    logError('Get order details', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve order' });
   }
 };
@@ -972,21 +995,52 @@ export const updateOrderStatus = async (req, res) => {
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
                       registration_no, chasis_no, engine_no, expiry_date ),
-        payment_transactions:transaction_id ( id, reference, amount, status, paid_at )
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway )
       `)
       .single();
 
     if (updateError) {
-      console.error('Update order status error:', updateError);
+      logError('Update order status', updateError);
       return response.serverError(res, 'Failed to update order status');
     }
 
     const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, [updated.user_id]);
     const formatted = formatOrder(updated, profileMap.get(updated.user_id), emailMap.get(updated.user_id), null, updated.delivery_lga);
 
+    // Fire-and-forget: notify user when admin completes or declines their order
+    if (dbStatus === 'completed' || dbStatus === 'cancelled') {
+      const userEmail = emailMap.get(updated.user_id);
+      const profile = profileMap.get(updated.user_id);
+      if (userEmail) {
+        if (dbStatus === 'completed') {
+          sendOrderCompletedEmail({
+            to: userEmail,
+            firstName: profile?.first_name || 'User',
+            orderNumber: updated.order_number,
+            carDetails: updated.cars,
+            newExpiryDate: updateData.new_expiry_date || null,
+          }).catch(err => logError('Order completed email failed', err));
+
+          createInAppNotification(
+            updated.user_id,
+            'order',
+            'order_completed',
+            `Your renewal order ${updated.order_number} has been completed. Your vehicle documents are ready.`
+          ).catch(err => logError('Order completed notification failed', err));
+        } else {
+          createInAppNotification(
+            updated.user_id,
+            'order',
+            'order_declined',
+            `Your renewal order ${updated.order_number} was declined. ${notes ? 'Reason: ' + notes : 'Please contact support for details.'}`
+          ).catch(err => logError('Order declined notification failed', err));
+        }
+      }
+    }
+
     return res.status(200).json({ status: true, message: 'Order status updated successfully', data: formatted });
   } catch (error) {
-    console.error('Update order status error:', error);
+    logError('Update order status', error);
     return res.status(500).json({ status: false, message: 'Failed to update order status' });
   }
 };
@@ -1016,16 +1070,21 @@ export const listTransactions = async (req, res) => {
       query = query.eq('status', dbStatus);
     }
 
+    // Reference search at DB level
+    if (search) {
+      query = query.ilike('reference', `%${search}%`);
+    }
+
     const { data: transactions, count, error } = await query;
     if (error) {
-      console.error('List transactions error:', error);
+      logError('List transactions', error);
       return res.status(500).json({ status: false, message: 'Failed to retrieve transactions' });
     }
 
     const userIds = [...new Set((transactions || []).map(t => t.user_id).filter(Boolean))];
     const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
 
-    // Summary stats across all transactions (not just this page)
+    // Summary uses aggregate counts — fetch only what we need, not full rows
     const { data: allTx } = await supabaseAdmin
       .from('payment_transactions')
       .select('amount, status');
@@ -1045,12 +1104,13 @@ export const listTransactions = async (req, res) => {
     });
     summary.total_amount = koboToNaira(summary.total_amount);
 
-    let formatted = (transactions || []).map(t => {
+    const formatted = (transactions || []).map(t => {
       const profile = profileMap.get(t.user_id);
       return {
         id: t.id,
         transaction_id: t.reference,
-        gateway_reference: t.paystack_reference || t.reference,
+        gateway_reference: t.paystack_reference || t.monicredit_order_id || t.reference,
+        payment_gateway: t.payment_gateway || 'paystack',
         amount: koboToNaira(t.amount),
         status: t.status === 'successful' ? 'approved' : t.status,
         payment_type: t.payment_type,
@@ -1064,16 +1124,6 @@ export const listTransactions = async (req, res) => {
         } : null,
       };
     });
-
-    // Apply search filter
-    if (search) {
-      const q = search.toLowerCase();
-      formatted = formatted.filter(t =>
-        t.transaction_id?.toLowerCase().includes(q) ||
-        t.user?.name?.toLowerCase().includes(q) ||
-        t.user?.email?.toLowerCase().includes(q)
-      );
-    }
 
     const total = count || 0;
     return res.status(200).json({
@@ -1089,7 +1139,7 @@ export const listTransactions = async (req, res) => {
       summary,
     });
   } catch (error) {
-    console.error('List transactions error:', error);
+    logError('List transactions', error);
     return response.serverError(res, 'Failed to retrieve transactions');
   }
 };
@@ -1125,7 +1175,81 @@ export const getFailedTransactions = async (req, res) => {
       data: { data: formatted },
     });
   } catch (error) {
-    console.error('Get failed transactions error:', error);
+    logError('Get failed transactions', error);
     return response.serverError(res, 'Failed to retrieve failed transactions');
+  }
+};
+
+// GET /admin/transactions/:reference
+export const getTransactionDetails = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const { data: tx, error } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('*')
+      .eq('reference', reference)
+      .single();
+
+    if (error || !tx) {
+      return res.status(404).json({ status: false, message: 'Transaction not found' });
+    }
+
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, [tx.user_id]);
+    const profile = profileMap.get(tx.user_id);
+
+    // Fetch the linked order if it exists
+    const { data: order } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, order_number, status, amount_paid')
+      .eq('transaction_id', tx.id)
+      .maybeSingle();
+
+    // Fetch car details
+    const { data: car } = tx.car_id
+      ? await supabaseAdmin.from('cars').select('id, slug, vehicle_make, vehicle_model, registration_no').eq('id', tx.car_id).single()
+      : { data: null };
+
+    return res.status(200).json({
+      status: true,
+      message: 'Transaction retrieved',
+      data: {
+        id: tx.id,
+        reference: tx.reference,
+        gateway_reference: tx.paystack_reference || tx.monicredit_order_id || tx.reference,
+        payment_gateway: tx.payment_gateway || 'paystack',
+        amount: koboToNaira(tx.amount),
+        status: tx.status === 'successful' ? 'approved' : tx.status,
+        payment_type: tx.payment_type,
+        payment_description: tx.payment_type?.replace(/_/g, ' '),
+        channel: tx.channel,
+        created_at: tx.created_at,
+        paid_at: tx.paid_at,
+        updated_at: tx.updated_at,
+        user: profile ? {
+          id: profile.id,
+          name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
+          email: emailMap.get(tx.user_id) || null,
+          phone_number: profile.phone_number,
+        } : null,
+        car: car ? {
+          id: car.id,
+          slug: car.slug,
+          vehicle_make: car.vehicle_make,
+          vehicle_model: car.vehicle_model,
+          registration_no: car.registration_no,
+        } : null,
+        order: order ? {
+          id: order.id,
+          order_number: order.order_number,
+          status: dbStatusToFrontend(order.status),
+          amount_paid: koboToNaira(order.amount_paid),
+        } : null,
+      },
+    });
+  } catch (error) {
+    logError('Get transaction details', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve transaction' });
   }
 };

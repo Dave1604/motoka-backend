@@ -413,7 +413,13 @@ export async function processPaymentSuccess({
   });
 
   if (error) {
-    logError('Process payment success RPC error', { error, reference });
+    logError('Process payment success RPC error', {
+      reference,
+      message: error.message,
+      code: error.code,
+      details: error.details,
+      hint: error.hint
+    });
     throw new TransactionError('Failed to process payment', HTTP_STATUS.SERVER_ERROR);
   }
 

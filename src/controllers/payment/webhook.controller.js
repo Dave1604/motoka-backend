@@ -34,44 +34,25 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 import { sendPaymentFailedEmail } from '../../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
 import { formatAmount } from '../../utils/paymentHelpers.js';
-import {
-  parseWebhookEvent
-} from '../../services/payment/paystack.service.js';
-import {
-  generateMonicreditEventId
-} from '../../services/payment/monicredit/monicredit.service.js';
+import { parseWebhookEvent } from '../../services/payment/paystack.service.js';
+import { generateMonicreditEventId } from '../../services/payment/monicredit/monicredit.service.js';
 import { MonicreditAdapter } from '../../services/payment/monicredit/index.js';
 
-/**
- * Webhook Controller
- * 
- * Handles webhook events from payment gateways (Paystack and Monicredit).
- */
-
-/**
- * Handle Paystack webhook
- * POST /api/webhooks/paystack
- */
+// POST /api/webhooks/paystack
 export const handlePaystackWebhook = async (req, res) => {
   try {
-    // Signature is verified in middleware
+    // Signature verified by middleware
     const { event, data, eventId } = parseWebhookEvent(req.body);
     
-    logDebug('[Paystack Webhook] Received event', {
-      event,
-      eventId,
-      reference: data?.reference
-    });
+    logDebug('[Paystack Webhook] Received event', { event, eventId, reference: data?.reference });
     
     switch (event) {
       case PAYSTACK_EVENTS.CHARGE_SUCCESS:
         await handleChargeSuccess(data, eventId);
         break;
-        
       case PAYSTACK_EVENTS.CHARGE_FAILED:
         await handleChargeFailed(data, eventId);
         break;
-        
       default:
         logInfo('[Webhook] Unhandled event:', event);
     }
@@ -80,7 +61,7 @@ export const handlePaystackWebhook = async (req, res) => {
     
   } catch (error) {
     logError('Webhook processing error', error);
-    // Return 200 to prevent Paystack from retrying
+    // Always 200 — prevent Paystack from retrying on our internal errors
     const isProduction = process.env.NODE_ENV === 'production';
     return res.status(200).json({
       received: true,
@@ -89,28 +70,19 @@ export const handlePaystackWebhook = async (req, res) => {
   }
 };
 
-/**
- * Handle Monicredit webhook
- * POST /api/webhooks/monicredit
- */
+// POST /api/webhooks/monicredit
 export const handleMonicreditWebhook = async (req, res) => {
   const webhookStartTime = Date.now();
   let signatureVerified = false;
   
   try {
-    logDebug('[Monicredit Webhook] Received webhook', {
-      order_id: req.body?.order_id || req.body?.data?.order_id,
-      event: req.body?.event || req.body?.type,
-      status: req.body?.status
-    });
-    
     const webhookData = req.body;
     
-    // Normalise both event-keyed and status-keyed payload shapes
+    // Support both event-keyed { event, data } and flat { status, order_id } payload shapes
     const event = webhookData.event || webhookData.type;
     const data = webhookData.data || webhookData;
     
-    // Signature was already verified by verifyMonicreditWebhook middleware before reaching here
+    // Signature already verified by verifyMonicreditWebhook middleware
     signatureVerified = true;
     paymentMetrics.trackWebhook({
       signatureVerified,
@@ -133,8 +105,7 @@ export const handleMonicreditWebhook = async (req, res) => {
     } else {
       logWarn('[Monicredit Webhook] Unhandled event', {
         event,
-        order_id: data?.order_id || webhookData?.order_id,
-        webhookData: { status: webhookData?.status, type: webhookData?.type }
+        order_id: data?.order_id || webhookData?.order_id
       });
       paymentMetrics.trackWebhookFailure();
     }
@@ -142,18 +113,16 @@ export const handleMonicreditWebhook = async (req, res) => {
     return res.status(200).json({ received: true });
     
   } catch (error) {
-    const webhookProcessingTime = Date.now() - webhookStartTime;
-    
     logError('Monicredit webhook processing error', error);
     
     paymentMetrics.trackWebhook({
       signatureVerified,
       isDuplicate: false,
-      processingTime: webhookProcessingTime
+      processingTime: Date.now() - webhookStartTime
     });
     paymentMetrics.trackWebhookFailure();
     
-    // Return 200 even on errors to prevent Monicredit from retrying
+    // Always 200 — prevent Monicredit from retrying on our internal errors
     const isProduction = process.env.NODE_ENV === 'production';
     return res.status(200).json({
       received: true,
@@ -162,65 +131,50 @@ export const handleMonicreditWebhook = async (req, res) => {
   }
 };
 
-/**
- * Handle Paystack charge.success event
- * @private
- */
 async function handleChargeSuccess(data, eventId) {
   const reference = data.reference;
   
   logDebug('[Webhook] Processing charge.success', { reference, eventId });
   
-  // Check for duplicate event ID
   if (eventId) {
     const existingTransaction = await getTransactionByWebhookEventId(eventId);
     if (existingTransaction) {
-      logDebug('[Webhook] Duplicate event ID detected, already processed', { eventId });
+      logDebug('[Webhook] Duplicate event, already processed', { eventId });
       return;
     }
   }
   
-  // Get transaction
   let transaction = await getTransactionByPaystackReference(reference);
-  if (!transaction) {
-    transaction = await getTransactionByReference(reference);
-  }
+  if (!transaction) transaction = await getTransactionByReference(reference);
   
   if (!transaction) {
     logError('Transaction not found for webhook', { reference });
     return;
   }
   
-  // Idempotency check
   if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
     logDebug('[Webhook] Transaction already processed', { reference });
     return;
   }
   
-  // Store event ID BEFORE processing (atomic idempotency lock)
-  // This prevents race conditions where two concurrent webhooks both pass the duplicate check
+  // Store event ID before processing — prevents race conditions where two
+  // concurrent webhooks both pass the duplicate check above
   if (eventId) {
     try {
       await updateTransactionWebhookEventId(reference, eventId);
-      logDebug('[Webhook] Event ID stored for replay protection', { eventId });
     } catch (error) {
-      // Handle unique constraint violation (23505) as duplicate detection
       if (error.code === '23505') {
-        logDebug('[Webhook] Duplicate event ID detected via unique constraint', { eventId });
+        logDebug('[Webhook] Duplicate event (unique constraint)', { eventId });
         return;
       }
-      // For other errors, log but continue processing (event ID storage is best-effort)
       logError('Failed to store webhook event ID', { error, reference, eventId });
     }
   }
   
-  // Validate amount
   if (typeof data.amount === 'number') {
     if (data.amount < PAYMENT_LIMITS.MIN_AMOUNT || data.amount > PAYMENT_LIMITS.MAX_AMOUNT) {
       logError('Webhook amount out of bounds', { reference, amount: data.amount });
-      await updateTransactionStatus(transaction.reference, {
-        status: PAYMENT_STATUS.FAILED
-      });
+      await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
       return;
     }
     
@@ -230,27 +184,19 @@ async function handleChargeSuccess(data, eventId) {
         expectedAmount: transaction.amount,
         actualAmount: data.amount
       });
-      await updateTransactionStatus(transaction.reference, {
-        status: PAYMENT_STATUS.FAILED
-      });
+      await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
       return;
     }
   }
   
-  // Parse metadata
   let metadata = {};
   try {
     metadata = typeof transaction.metadata === 'string' 
       ? JSON.parse(transaction.metadata) 
       : (transaction.metadata || {});
   } catch (e) {
-    logError('Failed to parse metadata in webhook', {
-      error: e.message,
-      reference
-    });
-    await updateTransactionStatus(transaction.reference, {
-      status: PAYMENT_STATUS.FAILED
-    });
+    logError('Failed to parse metadata in webhook', { error: e.message, reference });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
     return;
   }
   
@@ -258,7 +204,6 @@ async function handleChargeSuccess(data, eventId) {
   const orderType = isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL;
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
   
-  // Process payment success
   const processResult = await processPaymentSuccess({
     reference: transaction.reference,
     status: PAYMENT_STATUS.SUCCESSFUL,
@@ -282,7 +227,6 @@ async function handleChargeSuccess(data, eventId) {
     return;
   }
   
-  // Get order
   let order = null;
   if (processResult.orderId) {
     try {
@@ -297,10 +241,8 @@ async function handleChargeSuccess(data, eventId) {
     }
   }
   
-  // Get updated transaction
   const updatedTransaction = await getTransactionByReference(reference);
   
-  // Process side-effects
   if (!processResult.alreadyProcessed) {
     try {
       await PaymentSuccessService.processPaymentSuccessSideEffects({
@@ -309,10 +251,7 @@ async function handleChargeSuccess(data, eventId) {
         order
       });
     } catch (notifyError) {
-      logError('Failed to send notifications after payment success', {
-        error: notifyError,
-        reference
-      });
+      logError('Failed to send notifications after payment success', { error: notifyError, reference });
     }
   }
   
@@ -323,20 +262,15 @@ async function handleChargeSuccess(data, eventId) {
   });
 }
 
-/**
- * Handle Paystack charge.failed event
- * @private
- */
 async function handleChargeFailed(data, eventId) {
   const reference = data.reference;
   
   logDebug('[Webhook] Processing charge.failed', { reference, eventId });
   
-  // Check for duplicate event ID
   if (eventId) {
     const existingTransaction = await getTransactionByWebhookEventId(eventId);
     if (existingTransaction) {
-      logDebug('[Webhook] Duplicate event ID detected', { eventId });
+      logDebug('[Webhook] Duplicate event', { eventId });
       return;
     }
   }
@@ -348,22 +282,16 @@ async function handleChargeFailed(data, eventId) {
     return;
   }
   
-  // Update transaction status
-  await updateTransactionStatus(transaction.reference, {
-    status: PAYMENT_STATUS.FAILED
-  });
+  await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
   
-  // Store event ID
   if (eventId) {
     try {
       await updateTransactionWebhookEventId(reference, eventId);
-      logDebug('[Webhook] Event ID stored', { eventId });
     } catch (error) {
       logError('Failed to store webhook event ID', { error, reference, eventId });
     }
   }
   
-  // Send failure notification
   try {
     const supabaseAdmin = getSupabaseAdmin();
     const { data: profile } = await supabaseAdmin
@@ -401,31 +329,19 @@ async function handleChargeFailed(data, eventId) {
   logInfo('[Webhook] Charge failed processed', { reference });
 }
 
-/**
- * Handle Monicredit payment.success event
- * @private
- */
 async function handleMonicreditPaymentSuccess(data) {
   const orderId = data.order_id || data.transid;
-  
-  logDebug('[Monicredit Webhook] Processing payment success', {
-    orderId,
-    transid: data.transid,
-    status: data.status
-  });
   
   if (!orderId) {
     logError('Monicredit webhook missing order_id', { data });
     return;
   }
   
-  // Generate event ID
   const eventId = generateMonicreditEventId(orderId, 'payment.success', data.transid);
   
-  // Check for duplicate event ID
   const existingTransaction = await getTransactionByWebhookEventId(eventId);
   if (existingTransaction) {
-    logDebug('[Monicredit Webhook] Duplicate event ID detected', { eventId });
+    logDebug('[Monicredit Webhook] Duplicate event', { eventId });
     return;
   }
   
@@ -436,36 +352,28 @@ async function handleMonicreditPaymentSuccess(data) {
     return;
   }
   
-  // Idempotency check
   if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
     logDebug('[Monicredit Webhook] Transaction already processed', { reference: transaction.reference });
     return;
   }
   
-  // Store event ID BEFORE processing (atomic idempotency lock)
-  // This prevents race conditions where two concurrent webhooks both pass the duplicate check
+  // Store event ID before processing — prevents race conditions on concurrent webhooks
   try {
     await updateTransactionWebhookEventId(transaction.reference, eventId);
-    logDebug('[Monicredit Webhook] Event ID stored for replay protection', { eventId });
   } catch (error) {
-    // Handle unique constraint violation (23505) as duplicate detection
     if (error.code === '23505') {
-      logDebug('[Monicredit Webhook] Duplicate event ID detected via unique constraint', { eventId });
+      logDebug('[Monicredit Webhook] Duplicate event (unique constraint)', { eventId });
       return;
     }
-    // For other errors, log but continue processing (event ID storage is best-effort)
     logError('Failed to store Monicredit webhook event ID', { error, reference: transaction.reference, eventId });
   }
   
-  // Re-verify with Monicredit API
+  // Re-verify with Monicredit API before crediting — never trust webhook payload alone
   let verificationResult;
   try {
     verificationResult = await MonicreditAdapter.verifyPayment(orderId);
   } catch (error) {
-    logError('Monicredit webhook verification failed', {
-      orderId,
-      error: error.message
-    });
+    logError('Monicredit webhook verification failed', { orderId, error: error.message });
     return;
   }
   
@@ -478,31 +386,24 @@ async function handleMonicreditPaymentSuccess(data) {
   );
   
   if (!isApproved) {
-    logError('[Monicredit Webhook] Payment not approved - aborting processing', {
+    logError('[Monicredit Webhook] Payment not approved — aborting', {
       orderId,
       responseStatus,
-      dataStatus,
-      verificationResult: {
-        status: verificationResult.status,
-        raw_status: verificationResult.raw_response?.status,
-        success: verificationResult.success
-      }
+      dataStatus
     });
-    return; // CRITICAL: Must return early to prevent processing unapproved payments
+    return;
   }
   
-  // Validate amount
   const monicreditAmount = verificationResult.amount || 0;
-  const expectedAmount = transaction.amount;
   
   try {
-    validatePaymentAmount(expectedAmount, monicreditAmount, 1);
+    validatePaymentAmount(transaction.amount, monicreditAmount, 1);
   } catch (error) {
     if (error instanceof AmountValidationError) {
       logError('Monicredit webhook amount mismatch', {
         orderId,
-        expectedAmount_kobo: expectedAmount,
-        actualAmount_kobo: monicreditAmount,
+        expected_kobo: transaction.amount,
+        actual_kobo: monicreditAmount,
         difference_kobo: error.difference
       });
       return;
@@ -510,17 +411,13 @@ async function handleMonicreditPaymentSuccess(data) {
     throw error;
   }
   
-  // Parse metadata
   let metadata = {};
   try {
     metadata = typeof transaction.metadata === 'string' 
       ? JSON.parse(transaction.metadata) 
       : (transaction.metadata || {});
   } catch (e) {
-    logError('Failed to parse metadata in Monicredit webhook', {
-      error: e.message,
-      orderId
-    });
+    logError('Failed to parse metadata in Monicredit webhook', { error: e.message, orderId });
     return;
   }
   
@@ -528,7 +425,6 @@ async function handleMonicreditPaymentSuccess(data) {
   const orderType = isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL;
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
   
-  // Update transaction status
   await updateTransactionStatus(transaction.reference, {
     status: PAYMENT_STATUS.SUCCESSFUL,
     channel: verificationResult.channel || 'bank_transfer',
@@ -536,7 +432,6 @@ async function handleMonicreditPaymentSuccess(data) {
     paid_at: verificationResult.date_paid || new Date().toISOString()
   });
   
-  // Process payment success
   const processResult = await processPaymentSuccess({
     reference: transaction.reference,
     status: PAYMENT_STATUS.SUCCESSFUL,
@@ -558,72 +453,44 @@ async function handleMonicreditPaymentSuccess(data) {
   const updatedTransaction = await getTransactionByReference(transaction.reference);
   const createdOrder = processResult.orderId ? await getOrderById(processResult.orderId).catch(() => null) : null;
   
-  // Process side-effects (send email, notifications)
   if (!processResult.alreadyProcessed) {
     try {
-      logInfo('[Monicredit Webhook] Processing side-effects (email, notifications)', {
-        reference: transaction.reference,
-        orderId: processResult.orderId,
-        hasOrder: !!createdOrder
-      });
-      
       await PaymentSuccessService.processPaymentSuccessSideEffects({
         transaction: updatedTransaction,
         gatewayData: verificationResult,
         order: createdOrder
       });
       
-      logInfo('[Monicredit Webhook] Side-effects processed successfully', {
+      logInfo('[Monicredit Webhook] Side-effects processed', { reference: transaction.reference });
+    } catch (notifyError) {
+      // Payment is already committed — log but don't rethrow
+      logError('Failed to send notifications after Monicredit payment success', {
+        error: notifyError.message,
         reference: transaction.reference
       });
-    } catch (notifyError) {
-      logError('Failed to send notifications after Monicredit payment success', {
-        error: notifyError,
-        errorMessage: notifyError.message,
-        errorStack: notifyError.stack,
-        reference: transaction.reference,
-        userId: transaction.user_id
-      });
-      // Don't throw - payment is already processed, but log for debugging
     }
-  } else {
-    logInfo('[Monicredit Webhook] Payment already processed, skipping side-effects', {
-      reference: transaction.reference
-    });
   }
   
   logInfo('[Monicredit Webhook] Payment success processed', {
     orderId,
     transactionId: updatedTransaction.id,
-    orderId: processResult.orderId
+    orderDbId: processResult.orderId
   });
 }
 
-/**
- * Handle Monicredit payment.failed event
- * @private
- */
 async function handleMonicreditPaymentFailed(data) {
   const orderId = data.order_id || data.transid;
-  
-  logDebug('[Monicredit Webhook] Processing payment failure', {
-    orderId,
-    transid: data.transid,
-    status: data.status
-  });
   
   if (!orderId) {
     logError('Monicredit webhook missing order_id', { data });
     return;
   }
   
-  // Generate event ID
   const eventId = generateMonicreditEventId(orderId, 'payment.failed', data.transid);
   
-  // Check for duplicate event ID
   const existingTransaction = await getTransactionByWebhookEventId(eventId);
   if (existingTransaction) {
-    logDebug('[Monicredit Webhook] Duplicate event ID detected', { eventId });
+    logDebug('[Monicredit Webhook] Duplicate event', { eventId });
     return;
   }
   
@@ -634,15 +501,10 @@ async function handleMonicreditPaymentFailed(data) {
     return;
   }
   
-  // Update transaction status
-  await updateTransactionStatus(transaction.reference, {
-    status: PAYMENT_STATUS.FAILED
-  });
+  await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
   
-  // Store event ID
   try {
     await updateTransactionWebhookEventId(transaction.reference, eventId);
-    logDebug('[Monicredit Webhook] Event ID stored', { eventId });
   } catch (error) {
     logError('Failed to store Monicredit webhook event ID', { error, reference: transaction.reference, eventId });
   }

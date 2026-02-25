@@ -55,6 +55,17 @@ export class PaymentSuccessService {
         return;
       }
       
+      const scheduleIds = Array.isArray(metadata?.paymentScheduleId)
+        ? metadata.paymentScheduleId
+        : metadata?.paymentScheduleId ? [metadata.paymentScheduleId] : [];
+
+      const formatScheduleName = (id) =>
+        String(id).split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+      const documentNames = scheduleIds.length > 0
+        ? scheduleIds.map(formatScheduleName)
+        : null;
+
       await Promise.all([
         this._sendEmailNotification({
           email: profile.email,
@@ -62,12 +73,14 @@ export class PaymentSuccessService {
           amount: transaction.amount,
           reference: transaction.reference,
           orderNumber: order?.order_number,
-          carDetails: car
+          carDetails: car,
+          documentNames
         }),
         this._sendInAppNotification({
           userId: transaction.user_id,
           amount: transaction.amount,
-          orderNumber: order?.order_number
+          orderNumber: order?.order_number,
+          documentNames
         })
       ]);
       
@@ -105,31 +118,34 @@ export class PaymentSuccessService {
     }
   }
 
-  static async _sendEmailNotification({ email, firstName, amount, reference, orderNumber, carDetails }) {
+  static async _sendEmailNotification({ email, firstName, amount, reference, orderNumber, carDetails, documentNames }) {
     try {
-      await sendPaymentSuccessEmail({
+      logInfo('[Payment Success] Attempting to send email', { email, reference, orderNumber });
+      const result = await sendPaymentSuccessEmail({
         to: email,
         firstName,
         amount,
         reference,
         orderNumber: orderNumber || null,
-        carDetails
+        carDetails,
+        documentNames
       });
-      logInfo('[Payment Success] Email sent', { email });
+      logInfo('[Payment Success] Email sent successfully', { email, reference, emailId: result?.id });
     } catch (emailError) {
       logError('Failed to send payment success email', {
-        error: emailError,
+        error: emailError.message,
         email,
         reference
       });
     }
   }
 
-  static async _sendInAppNotification({ userId, amount, orderNumber }) {
+  static async _sendInAppNotification({ userId, amount, orderNumber, documentNames }) {
     try {
+      const docPart = documentNames?.length > 0 ? ` for ${documentNames.join(', ')}` : '';
       const message = orderNumber
-        ? `Payment of ${formatAmount(amount)} successful! Order ${orderNumber} created for processing.`
-        : `Payment of ${formatAmount(amount)} successful! Your renewal is being processed.`;
+        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} created for processing.`
+        : `Payment of ${formatAmount(amount)} successful${docPart}! Your renewal is being processed.`;
       
       await createInAppNotification(
         userId,

@@ -1,10 +1,4 @@
-/**
- * Payment Response Utility
- * 
- * Shared response helper for payment controllers.
- * Response shape uses 'status' (boolean) instead of 'success' for compatibility
- * with the existing frontend contract. Do not change the field name.
- */
+// Uses 'status' (boolean) not 'success' — matches the existing frontend contract. Do not rename.
 export const paymentResponse = {
   success: (res, data = null, message = 'Success', statusCode = 200) => {
     return res.status(statusCode).json({ status: true, message, data });

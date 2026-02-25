@@ -16,16 +16,7 @@ import {
   HTTP_STATUS
 } from '../../constants/payment.constants.js';
 
-/**
- * Payment Status Controller
- * 
- * Handles payment history and status-related endpoints.
- */
-
-/**
- * Get user's payment history
- * GET /api/payments/history
- */
+// GET /api/payments/history
 export const getPaymentHistory = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -44,10 +35,7 @@ export const getPaymentHistory = async (req, res) => {
   }
 };
 
-/**
- * Check for existing payments
- * POST /api/payment/check-existing
- */
+// POST /api/payment/check-existing
 export const checkExistingPayments = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -78,39 +66,47 @@ export const checkExistingPayments = async (req, res) => {
       return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
     }
     
+    // Only flag as "already paid" when there is BOTH a successful transaction AND
+    // a corresponding renewal order — guards against ghost transactions from payment bugs
     const { data: transactions, error: txError } = await supabaseAdmin
       .from('payment_transactions')
-      .select('*')
+      .select('*, renewal_orders!inner(id, status)')
       .eq('car_id', car.id)
       .eq('user_id', userId)
-      .eq('status', PAYMENT_STATUS.SUCCESSFUL);
+      .eq('status', PAYMENT_STATUS.SUCCESSFUL)
+      .not('renewal_orders.status', 'eq', 'cancelled');
     
     if (txError) {
       logError('Check existing payments DB error', txError);
       return paymentResponse.serverError(res, 'Failed to check existing payments');
     }
     
+    // Convert snake_case schedule IDs to readable names (e.g. vehicle_licence → Vehicle Licence)
+    const formatScheduleName = (id) =>
+      String(id).split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
     const existingPayments = [];
+    const seenScheduleIds = new Set();
     
-    if (transactions && transactions.length > 0) {
+    if (transactions?.length > 0) {
       for (const tx of transactions) {
         try {
           if (tx.metadata) {
             const metadata = typeof tx.metadata === 'string' ? JSON.parse(tx.metadata) : tx.metadata;
             
-            if (metadata && metadata.paymentScheduleId) {
+            if (metadata?.paymentScheduleId) {
               const scheduleIds = Array.isArray(metadata.paymentScheduleId) 
                 ? metadata.paymentScheduleId 
                 : [metadata.paymentScheduleId];
               
+              const compareIds = payment_schedule_ids.map(id => String(id));
+              
               for (const scheduleId of scheduleIds) {
-                const scheduleIdStr = String(scheduleId);
-                const compareIds = payment_schedule_ids.map(id => String(id));
-                
-                if (compareIds.includes(scheduleIdStr)) {
+                if (compareIds.includes(String(scheduleId)) && !seenScheduleIds.has(String(scheduleId))) {
+                  seenScheduleIds.add(String(scheduleId));
                   existingPayments.push({
                     payment_schedule_id: scheduleId,
-                    payment_head_name: metadata.payment_head_name || 'Renewal',
+                    payment_head_name: formatScheduleName(scheduleId),
                     transaction_id: tx.id,
                     paid_at: tx.paid_at
                   });
@@ -132,10 +128,7 @@ export const checkExistingPayments = async (req, res) => {
   }
 };
 
-/**
- * Get payments for a specific car
- * GET /api/payments/car/:slug
- */
+// GET /api/payments/car/:slug
 export const getCarPayments = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -163,10 +156,7 @@ export const getCarPayments = async (req, res) => {
   }
 };
 
-/**
- * Get payment receipt for a car
- * GET /api/payment/car-receipt/:identifier
- */
+// GET /api/payment/car-receipt/:identifier
 export const getCarPaymentReceipt = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -179,13 +169,12 @@ export const getCarPaymentReceipt = async (req, res) => {
     const isNumeric = /^\d+$/.test(identifier);
     
     if (isNumeric) {
-      // Try as order number first
       try {
         const order = await getOrderByNumber(identifier);
         if (order && order.user_id === userId && order.transaction_id) {
           const { getTransactionById } = await import('../../services/payment/transaction.service.js');
           transaction = await getTransactionById(order.transaction_id);
-          if (transaction && transaction.car_id) {
+          if (transaction?.car_id) {
             const { data: carFromOrder } = await supabaseAdmin
               .from('cars')
               .select('id, slug')
@@ -194,16 +183,13 @@ export const getCarPaymentReceipt = async (req, res) => {
               .is('deleted_at', null)
               .single();
             
-            if (carFromOrder) {
-              car = carFromOrder;
-            }
+            if (carFromOrder) car = carFromOrder;
           }
         }
       } catch (orderError) {
-        // Not an order number, continue
+        // Not an order number — fall through to car ID lookup
       }
       
-      // Try as car ID
       if (!car) {
         const { data: carById } = await supabaseAdmin
           .from('cars')
@@ -213,12 +199,9 @@ export const getCarPaymentReceipt = async (req, res) => {
           .is('deleted_at', null)
           .single();
         
-        if (carById) {
-          car = carById;
-        }
+        if (carById) car = carById;
       }
     } else {
-      // Try as car slug
       const { data: carBySlug } = await supabaseAdmin
         .from('cars')
         .select('id, slug')
@@ -227,33 +210,27 @@ export const getCarPaymentReceipt = async (req, res) => {
         .is('deleted_at', null)
         .single();
       
-      if (carBySlug) {
-        car = carBySlug;
-      }
+      if (carBySlug) car = carBySlug;
     }
     
     if (!car) {
       return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
     }
     
-    // Get latest successful transaction
     if (!transaction) {
       const transactions = await getCarTransactions(car.id, { status: PAYMENT_STATUS.SUCCESSFUL });
-      if (transactions && transactions.length > 0) {
-        transaction = transactions[0];
-      }
+      if (transactions?.length > 0) transaction = transactions[0];
     }
     
     if (!transaction) {
       return paymentResponse.notFound(res, 'No successful payment found for this car');
     }
     
-    // Get order
     let order = null;
     try {
       order = await getOrderByTransactionId(transaction.id);
     } catch (orderError) {
-      // Order may not exist
+      // Order may not exist for older transactions
     }
     
     return paymentResponse.success(res, {
@@ -271,10 +248,7 @@ export const getCarPaymentReceipt = async (req, res) => {
         status: order.status,
         amount_paid: order.amount_paid
       } : null,
-      car: {
-        id: car.id,
-        slug: car.slug
-      }
+      car: { id: car.id, slug: car.slug }
     }, 'Payment receipt retrieved');
     
   } catch (error) {

@@ -127,6 +127,8 @@ router.get(
   verifyPayment
 );
 
+router.get('/payments/history', authenticate, getPaymentHistory);
+router.get('/payments/car/:slug', authenticate, getCarPayments);
 router.get('/payments/:reference/status', authenticate, getTransactionStatus);
 router.put('/payments/:reference/cancel', authenticate, cancelPayment);
 
@@ -164,8 +166,6 @@ router.post(
 );
 
 router.post('/payment/check-existing', authenticate, checkExistingPayments);
-router.get('/payments/history', authenticate, getPaymentHistory);
-router.get('/payments/car/:slug', authenticate, getCarPayments);
 router.get('/payment/car-receipt/:identifier', authenticate, getCarPaymentReceipt);
 
 router.get('/orders', authenticate, getUserOrdersHandler);

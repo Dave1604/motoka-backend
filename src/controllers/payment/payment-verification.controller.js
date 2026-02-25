@@ -1,4 +1,4 @@
-import { logError, logDebug, logWarn } from '../../utils/logger.js';
+import { logError, logDebug, logWarn, logger } from '../../utils/logger.js';
 import { getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
 import { paymentResponse } from './payment-response.util.js';
@@ -12,7 +12,10 @@ import {
   updateTransactionStatus,
   markTransactionAbandoned,
   processPaymentSuccess,
-  TransactionError
+  TransactionError,
+  createTransaction,
+  updateTransactionWithPaystackInit,
+  updateTransactionWithMonicreditInit
 } from '../../services/payment/transaction.service.js';
 import {
   getOrderById,
@@ -36,24 +39,8 @@ import { PaystackError } from '../../services/payment/paystack.service.js';
 import { MonicreditError } from '../../services/payment/monicredit/index.js';
 import { PaymentSuccessService } from '../../services/payment/payment-success.service.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import {
-  updateTransactionWithPaystackInit,
-  updateTransactionWithMonicreditInit
-} from '../../services/payment/transaction.service.js';
-import {
-  createTransaction
-} from '../../services/payment/transaction.service.js';
 
-/**
- * Payment Verification Controller
- * 
- * Handles payment verification, retry, and cancellation endpoints.
- */
-
-/**
- * Verify payment status
- * GET /api/payments/verify/:reference
- */
+// GET /api/payments/verify/:reference
 export const verifyPayment = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -63,82 +50,50 @@ export const verifyPayment = async (req, res) => {
       return paymentResponse.error(res, 'Payment reference is required', HTTP_STATUS.BAD_REQUEST);
     }
     
-    logDebug('[Verify Payment] Starting verification', {
-      reference,
-      userId,
-      timestamp: new Date().toISOString()
-    });
-    
-    // Resolution order: internal reference → Paystack reference → Monicredit order ID
+    // Resolution order: internal ref → Paystack ref → Monicredit order ID
     let transaction = await getTransactionByReference(reference);
+    if (!transaction) transaction = await getTransactionByPaystackReference(reference);
+    if (!transaction) transaction = await getTransactionByMonicreditOrderId(reference);
     
     if (!transaction) {
-      logDebug('[Verify Payment] Transaction not found by our reference, trying gateway-specific lookups', { reference });
-      transaction = await getTransactionByPaystackReference(reference);
-      if (!transaction) {
-        transaction = await getTransactionByMonicreditOrderId(reference);
-      }
-    }
-    
-    if (!transaction) {
-      logError('Transaction not found for verification', {
-        reference,
-        userId
-      });
+      logError('Transaction not found for verification', { reference, userId });
       return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
     }
-    
-    const paymentGateway = transaction.payment_gateway || PAYMENT_GATEWAY.MONICREDIT;
-    
-    logDebug('[Verify Payment] Found transaction', {
-      id: transaction.id,
-      reference: transaction.reference,
-      payment_gateway: paymentGateway,
-      status: transaction.status
-    });
     
     if (transaction.user_id !== userId) {
       return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
     }
     
-    // Parse metadata
+    const paymentGateway = transaction.payment_gateway || PAYMENT_GATEWAY.MONICREDIT;
+    
     let metaData = {};
     try {
       metaData = typeof transaction.metadata === 'string' 
         ? JSON.parse(transaction.metadata) 
         : (transaction.metadata || {});
     } catch (e) {
-      logError('Failed to parse transaction metadata', {
-        error: e.message,
-        transactionId: transaction.id
-      });
+      logError('Failed to parse transaction metadata', { error: e.message, transactionId: transaction.id });
       return paymentResponse.error(res, 
         'Payment data corrupted. Please contact support with reference: ' + transaction.reference,
         HTTP_STATUS.INTERNAL_SERVER_ERROR
       );
     }
 
-    // If already successful, return early
     if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
       let carSlug = metaData?.carSlug;
       if (!carSlug && transaction.car_id) {
         try {
           const supabaseAdmin = getSupabaseAdmin();
           const { data: carData } = await supabaseAdmin
-            .from('cars')
-            .select('slug')
-            .eq('id', transaction.car_id)
-            .single();
+            .from('cars').select('slug').eq('id', transaction.car_id).single();
           carSlug = carData?.slug;
         } catch (carError) {
           logWarn('[Verify Payment] Failed to get car slug', { carId: transaction.car_id });
         }
       }
       
-      // For Monicredit, return status as "APPROVED" to match frontend expectations
-      const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT 
-        ? 'APPROVED' 
-        : 'success';
+      // Monicredit returns "APPROVED"; Paystack returns "success"
+      const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success';
       
       return paymentResponse.success(res, {
         status: statusForResponse,
@@ -152,10 +107,8 @@ export const verifyPayment = async (req, res) => {
       }, SUCCESS_MESSAGES.PAYMENT_VERIFIED);
     }
     
-    // Get gateway adapter
     const gateway = GatewayFactory.getGateway(paymentGateway);
     
-    // Verify with gateway
     let verifyTransactionId = transaction.reference;
     if (paymentGateway === PAYMENT_GATEWAY.MONICREDIT) {
       verifyTransactionId = transaction.monicredit_order_id || transaction.monicredit_transaction_id || transaction.reference;
@@ -181,11 +134,7 @@ export const verifyPayment = async (req, res) => {
       else if (verifyError.code === 'REQUEST_FAILED') errorType = 'network';
       else if (verifyError.code === 'API_ERROR') errorType = 'api';
       
-      paymentMetrics.trackFailure({
-        gateway: paymentGateway,
-        amount: transaction.amount,
-        errorType
-      });
+      paymentMetrics.trackFailure({ gateway: paymentGateway, amount: transaction.amount, errorType });
       
       if (verifyError instanceof PaystackError || verifyError instanceof MonicreditError) {
         return paymentResponse.error(res, verifyError.message, verifyError.statusCode);
@@ -195,9 +144,8 @@ export const verifyPayment = async (req, res) => {
     
     const verifyProcessingTime = Date.now() - verifyStartTime;
     
-    // Check if payment is successful
     const isSuccess = gatewayResult.success === true || 
-      (gatewayResult.status === 'success' || gatewayResult.status === 'approved');
+      gatewayResult.status === 'success' || gatewayResult.status === 'approved';
     
     if (!isSuccess) {
       return paymentResponse.success(res, {
@@ -210,51 +158,34 @@ export const verifyPayment = async (req, res) => {
       }, 'Payment verification pending');
     }
     
-    // Validate amount
     const gatewayAmount = gatewayResult.amount || 0;
-    const expectedAmount = transaction.amount;
     
     try {
-      validatePaymentAmount(expectedAmount, gatewayAmount, 1);
+      validatePaymentAmount(transaction.amount, gatewayAmount, 1);
     } catch (error) {
       if (error instanceof AmountValidationError) {
         logError('Payment amount mismatch', {
           reference,
-          expectedAmount_kobo: expectedAmount,
-          actualAmount_kobo: gatewayAmount,
+          expected_kobo: transaction.amount,
+          actual_kobo: gatewayAmount,
           difference_kobo: error.difference
         });
-        
-        paymentMetrics.trackAmountValidation({
-          mismatch: true,
-          rejected: true
-        });
-        
+        paymentMetrics.trackAmountValidation({ mismatch: true, rejected: true });
         return paymentResponse.error(
           res,
-          `Payment amount mismatch: expected ${expectedAmount / 100} NGN, received ${gatewayAmount / 100} NGN.`,
+          `Payment amount mismatch: expected ${transaction.amount / 100} NGN, received ${gatewayAmount / 100} NGN.`,
           400
         );
       }
       throw error;
     }
     
-    // Process successful payment
     if (transaction.status === PAYMENT_STATUS.PENDING) {
-      logDebug('[Verify Payment] Payment approved, processing payment success');
-      
       const isSubscription = metaData?.subscription_id || metaData?.is_subscription;
       const orderType = isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL;
       const paymentScheduleIds = metaData?.paymentScheduleId || metaData?.payment_schedule_id || metaData?.selected_items || [];
       
       try {
-        await updateTransactionStatus(transaction.reference, {
-          status: PAYMENT_STATUS.SUCCESSFUL,
-          channel: gatewayResult.channel || 'bank_transfer',
-          authorization_code: gatewayResult.authorization?.authorization_code || null,
-          paid_at: gatewayResult.paid_at || new Date().toISOString()
-        });
-        
         const processResult = await processPaymentSuccess({
           reference: transaction.reference,
           status: PAYMENT_STATUS.SUCCESSFUL,
@@ -273,16 +204,11 @@ export const verifyPayment = async (req, res) => {
           metadata: metaData
         });
         
-        paymentMetrics.trackSuccess({
-          gateway: paymentGateway,
-          amount: transaction.amount,
-          processingTime: verifyProcessingTime
-        });
+        paymentMetrics.trackSuccess({ gateway: paymentGateway, amount: transaction.amount, processingTime: verifyProcessingTime });
         
         const updatedTransaction = await getTransactionByReference(reference);
         const createdOrder = processResult.orderId ? await getOrderById(processResult.orderId).catch(() => null) : null;
         
-        // Process side-effects
         if (!processResult.alreadyProcessed) {
           await PaymentSuccessService.processPaymentSuccessSideEffects({
             transaction: updatedTransaction,
@@ -295,18 +221,12 @@ export const verifyPayment = async (req, res) => {
         if (!carSlug && updatedTransaction.car_id) {
           const supabaseAdmin = getSupabaseAdmin();
           const { data: carData } = await supabaseAdmin
-            .from('cars')
-            .select('slug')
-            .eq('id', updatedTransaction.car_id)
-            .single();
+            .from('cars').select('slug').eq('id', updatedTransaction.car_id).single();
           carSlug = carData?.slug;
         }
         
-        // For Monicredit, return status as "APPROVED" to match frontend expectations
-        // For Paystack, return "success" 
-        const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT 
-          ? 'APPROVED' 
-          : 'success';
+        // Monicredit returns "APPROVED"; Paystack returns "success"
+        const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success';
         
         return paymentResponse.success(res, {
           status: statusForResponse,
@@ -322,10 +242,46 @@ export const verifyPayment = async (req, res) => {
           gateway: paymentGateway
         }, SUCCESS_MESSAGES.PAYMENT_VERIFIED);
       } catch (processError) {
-        logError('Failed to process payment success', {
-          error: processError,
-          reference
-        });
+        // If payment succeeded on gateway but DB has a duplicate pending order for this car,
+        // mark transaction as successful and return the existing order — don't block the user
+        const isDuplicateOrderError = processError?.message?.includes('idx_renewal_orders_car_pending_unique') ||
+          processError?.message?.includes('duplicate key');
+
+        if (isDuplicateOrderError) {
+          const supabaseAdmin = getSupabaseAdmin();
+          // Mark transaction as successful even if order creation was skipped
+          await supabaseAdmin.from('payment_transactions')
+            .update({ status: PAYMENT_STATUS.SUCCESSFUL, updated_at: new Date().toISOString() })
+            .eq('reference', reference);
+          // Find the existing pending order for this car
+          const { data: existingOrder } = await supabaseAdmin
+            .from('renewal_orders')
+            .select('id, order_number')
+            .eq('car_id', transaction.car_id)
+            .eq('status', 'pending')
+            .single();
+          return paymentResponse.success(res, {
+            status: paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success',
+            message: 'Payment verified. Your car already has a renewal in progress.',
+            reference: transaction.reference,
+            transaction_id: transaction.id,
+            amount: transaction.amount,
+            order_id: existingOrder?.id || null,
+            order_number: existingOrder?.order_number || null,
+            gateway: paymentGateway
+          }, SUCCESS_MESSAGES.PAYMENT_VERIFIED);
+        }
+
+        logger.error({
+          context: 'Failed to process payment success',
+          reference,
+          errorMessage: processError?.message,
+          errorCode: processError?.code,
+          errorName: processError?.name,
+          errorDetails: processError?.details,
+          errorHint: processError?.hint,
+          stack: processError?.stack?.split('\n').slice(0, 5).join(' | ')
+        }, `Failed to process payment success: ${processError?.message || 'Unknown error'}`);
         
         return paymentResponse.success(res, {
           status: 'success',
@@ -338,22 +294,15 @@ export const verifyPayment = async (req, res) => {
       }
     }
     
-    // Already processed
     let carSlug = metaData?.carSlug;
     if (!carSlug && transaction.car_id) {
       const supabaseAdmin = getSupabaseAdmin();
       const { data: carData } = await supabaseAdmin
-        .from('cars')
-        .select('slug')
-        .eq('id', transaction.car_id)
-        .single();
+        .from('cars').select('slug').eq('id', transaction.car_id).single();
       carSlug = carData?.slug;
     }
     
-    // For Monicredit, return status as "APPROVED" to match frontend expectations
-    const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT 
-      ? 'APPROVED' 
-      : 'success';
+    const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success';
     
     return paymentResponse.success(res, {
       status: statusForResponse,
@@ -373,22 +322,17 @@ export const verifyPayment = async (req, res) => {
     const isProduction = process.env.NODE_ENV === 'production';
     
     if (error instanceof PaystackError || error instanceof MonicreditError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, error.statusCode);
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode);
     }
     if (error instanceof AmountValidationError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, 400);
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, 400);
     }
     
     return paymentResponse.serverError(res, isProduction ? 'Failed to verify payment' : error.message);
   }
 };
 
-/**
- * Get transaction details
- * GET /api/payments/:reference
- */
+// GET /api/payments/:reference
 export const getTransaction = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -400,13 +344,8 @@ export const getTransaction = async (req, res) => {
     
     const transaction = await getTransactionByReference(reference);
     
-    if (!transaction) {
-      return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
-    }
-    
-    if (transaction.user_id !== userId) {
-      return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
-    }
+    if (!transaction) return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
+    if (transaction.user_id !== userId) return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
     
     let metaData = {};
     try {
@@ -414,10 +353,7 @@ export const getTransaction = async (req, res) => {
         ? JSON.parse(transaction.metadata) 
         : (transaction.metadata || {});
     } catch (e) {
-      logError('Failed to parse transaction metadata', {
-        error: e.message,
-        transactionId: transaction.id
-      });
+      logError('Failed to parse transaction metadata', { error: e.message, transactionId: transaction.id });
     }
     
     return paymentResponse.success(res, {
@@ -439,22 +375,15 @@ export const getTransaction = async (req, res) => {
     
   } catch (error) {
     logError('Get transaction error', error);
-    
     const isProduction = process.env.NODE_ENV === 'production';
-    
     if (error instanceof TransactionError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, error.statusCode);
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode);
     }
-    
     return paymentResponse.serverError(res, isProduction ? 'Failed to retrieve transaction' : error.message);
   }
 };
 
-/**
- * Get transaction status (lightweight)
- * GET /api/payments/:reference/status
- */
+// GET /api/payments/:reference/status
 export const getTransactionStatus = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -466,13 +395,8 @@ export const getTransactionStatus = async (req, res) => {
     
     const transaction = await getTransactionByReference(reference);
     
-    if (!transaction) {
-      return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
-    }
-    
-    if (transaction.user_id !== userId) {
-      return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
-    }
+    if (!transaction) return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
+    if (transaction.user_id !== userId) return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
     
     return paymentResponse.success(res, {
       reference: transaction.reference,
@@ -484,29 +408,21 @@ export const getTransactionStatus = async (req, res) => {
     
   } catch (error) {
     logError('Get transaction status error', error);
-    
     const isProduction = process.env.NODE_ENV === 'production';
-    
     if (error instanceof TransactionError) {
-      const message = isProduction ? 'Failed to retrieve transaction status' : error.message;
-      return paymentResponse.error(res, message, error.statusCode);
+      return paymentResponse.error(res, isProduction ? 'Failed to retrieve transaction status' : error.message, error.statusCode);
     }
-    
     return paymentResponse.serverError(res, 'Failed to retrieve transaction status');
   }
 };
 
-/**
- * Cancel payment
- * PUT /api/payments/:reference/cancel
- */
+// PUT /api/payments/:reference/cancel
 export const cancelPayment = async (req, res) => {
   try {
     const { reference } = req.params;
     const userId = req.user.id;
-    const rawReason = req.body?.reason;
-    // Sanitize and length-cap reason to prevent injection and excessive data
-    const reason = rawReason ? String(rawReason).trim().slice(0, 255) : null;
+    // Sanitize and cap reason to prevent injection / excessive payload
+    const reason = req.body?.reason ? String(req.body.reason).trim().slice(0, 255) : null;
     
     if (!reference) {
       return paymentResponse.error(res, 'Payment reference is required', HTTP_STATUS.BAD_REQUEST);
@@ -514,13 +430,8 @@ export const cancelPayment = async (req, res) => {
     
     const transaction = await getTransactionByReference(reference);
     
-    if (!transaction) {
-      return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
-    }
-    
-    if (transaction.user_id !== userId) {
-      return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
-    }
+    if (!transaction) return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
+    if (transaction.user_id !== userId) return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
     
     if (transaction.status !== PAYMENT_STATUS.PENDING) {
       return paymentResponse.error(
@@ -540,19 +451,14 @@ export const cancelPayment = async (req, res) => {
     
   } catch (error) {
     logError('Cancel payment error', error);
-    
     if (error instanceof TransactionError) {
       return paymentResponse.error(res, error.message, error.statusCode);
     }
-    
     return paymentResponse.serverError(res, 'Failed to cancel payment');
   }
 };
 
-/**
- * Retry payment
- * POST /api/payments/:reference/retry
- */
+// POST /api/payments/:reference/retry
 export const retryPayment = async (req, res) => {
   try {
     const { reference } = req.params;
@@ -564,20 +470,10 @@ export const retryPayment = async (req, res) => {
     
     const originalTransaction = await getTransactionByReference(reference);
     
-    if (!originalTransaction) {
-      return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
-    }
+    if (!originalTransaction) return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
+    if (originalTransaction.user_id !== userId) return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
     
-    if (originalTransaction.user_id !== userId) {
-      return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
-    }
-    
-    // Guard against retrying non-retryable statuses
-    const NON_RETRYABLE = [
-      PAYMENT_STATUS.SUCCESSFUL,
-      PAYMENT_STATUS.REFUNDED,
-      PAYMENT_STATUS.ABANDONED
-    ];
+    const NON_RETRYABLE = [PAYMENT_STATUS.SUCCESSFUL, PAYMENT_STATUS.REFUNDED, PAYMENT_STATUS.ABANDONED];
     
     if (NON_RETRYABLE.includes(originalTransaction.status)) {
       return paymentResponse.error(
@@ -593,15 +489,8 @@ export const retryPayment = async (req, res) => {
         ? JSON.parse(originalTransaction.metadata) 
         : (originalTransaction.metadata || {});
     } catch (e) {
-      logError('Failed to parse metadata in retryPayment', {
-        error: e.message,
-        transactionId: originalTransaction.id
-      });
-      return paymentResponse.error(
-        res,
-        'Cannot retry payment: corrupted payment data',
-        HTTP_STATUS.INTERNAL_SERVER_ERROR
-      );
+      logError('Failed to parse metadata in retryPayment', { error: e.message, transactionId: originalTransaction.id });
+      return paymentResponse.error(res, 'Cannot retry payment: corrupted payment data', HTTP_STATUS.INTERNAL_SERVER_ERROR);
     }
     
     const newTransaction = await createTransaction({
@@ -619,31 +508,22 @@ export const retryPayment = async (req, res) => {
     
     const supabaseAdmin = getSupabaseAdmin();
     const { data: profile } = await supabaseAdmin
-      .from('profiles')
-      .select('email')
-      .eq('id', userId)
-      .single();
+      .from('profiles').select('email').eq('id', userId).single();
     
     if (!profile?.email) {
       return paymentResponse.error(res, 'User email not found', HTTP_STATUS.BAD_REQUEST);
     }
     
-    
     const retryGateway = originalTransaction.payment_gateway || PAYMENT_GATEWAY.MONICREDIT;
     const gateway = GatewayFactory.getGateway(retryGateway);
     
-    // Get car data for gateway initialization
     const { data: car } = await supabaseAdmin
-      .from('cars')
-      .select('*')
-      .eq('id', originalTransaction.car_id)
-      .single();
+      .from('cars').select('*').eq('id', originalTransaction.car_id).single();
     
     if (!car) {
       return paymentResponse.error(res, 'Car not found', HTTP_STATUS.NOT_FOUND);
     }
     
-    // Initialize payment with the correct gateway
     const gatewayResult = await gateway.initializePayment({
       userId,
       userEmail: profile.email,
@@ -658,14 +538,12 @@ export const retryPayment = async (req, res) => {
       hasDeliveryDetails: !!metaData?.delivery_details
     });
     
-    // Update transaction using the correct gateway updater
     if (retryGateway === PAYMENT_GATEWAY.MONICREDIT) {
       await updateTransactionWithMonicreditInit(newTransaction.reference, gatewayResult);
     } else {
       await updateTransactionWithPaystackInit(newTransaction.reference, gatewayResult);
     }
     
-    // Build response based on gateway type
     const responseData = {
       reference: newTransaction.reference,
       transaction_id: newTransaction.id,
@@ -674,7 +552,6 @@ export const retryPayment = async (req, res) => {
       gateway: retryGateway
     };
     
-    // Add gateway-specific fields
     if (retryGateway === PAYMENT_GATEWAY.PAYSTACK) {
       responseData.authorization_url = gatewayResult.authorization_url;
       responseData.access_code = gatewayResult.access_code;
@@ -692,14 +569,8 @@ export const retryPayment = async (req, res) => {
     
     const isProduction = process.env.NODE_ENV === 'production';
     
-    if (error instanceof PaystackError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, error.statusCode);
-    }
-    
-    if (error instanceof TransactionError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, error.statusCode);
+    if (error instanceof PaystackError || error instanceof TransactionError) {
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode);
     }
     
     return paymentResponse.serverError(res, isProduction ? 'Failed to retry payment' : error.message);

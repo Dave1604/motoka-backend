@@ -33,16 +33,7 @@ import {
 import { PaystackError } from '../../services/payment/paystack.service.js';
 import { MonicreditError } from '../../services/payment/monicredit/index.js';
 
-/**
- * Payment Initialization Controller
- * 
- * Handles payment initialization endpoints and related configuration.
- */
-
-/**
- * Get available renewal items
- * GET /api/payment-schedule
- */
+// GET /api/payment-schedule
 export const getRenewalItems = async (req, res) => {
   try {
     const { getRenewalItems: getRenewalItemsFromDb } = await import('../../services/payment/renewalItems.service.js');
@@ -66,10 +57,7 @@ export const getRenewalItems = async (req, res) => {
   }
 };
 
-/**
- * Get payment heads
- * GET /api/payment-schedule/get-payment-head
- */
+// GET /api/payment-schedule/get-payment-head
 export const getPaymentHeads = async (req, res) => {
   try {
     const { getRenewalItems: getRenewalItemsFromDb } = await import('../../services/payment/renewalItems.service.js');
@@ -90,10 +78,7 @@ export const getPaymentHeads = async (req, res) => {
   }
 };
 
-/**
- * Get all states
- * GET /api/get-all-state
- */
+// GET /api/get-all-state
 export const getStates = async (req, res) => {
   try {
     const states = await getAllStates();
@@ -113,15 +98,10 @@ export const getStates = async (req, res) => {
   }
 };
 
-/**
- * Get LGAs by state
- * GET /api/payments/states/:stateCode/lgas
- * GET /api/get-lga/:stateCode
- */
+// GET /api/payments/states/:stateCode/lgas  |  GET /api/get-lga/:stateCode
 export const getLGAs = async (req, res) => {
   try {
     const { stateCode } = req.params;
-    
     const lgas = await getLGAsByState(stateCode);
     
     if (lgas.length === 0) {
@@ -140,10 +120,7 @@ export const getLGAs = async (req, res) => {
   }
 };
 
-/**
- * Get payment configuration
- * GET /api/payments/config
- */
+// GET /api/payments/config
 export const getPaymentConfig = async (req, res) => {
   try {
     const publicKey = process.env.PAYSTACK_PUBLIC_KEY;
@@ -162,10 +139,7 @@ export const getPaymentConfig = async (req, res) => {
   }
 };
 
-/**
- * Initialize payment
- * POST /api/payments/initialize
- */
+// POST /api/payments/initialize
 export const initializePayment = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -180,58 +154,44 @@ export const initializePayment = async (req, res) => {
       meta_data
     } = req.body;
     
-    // Validate renewal_months against allowlist — reject invalid values explicitly
+    // Default to 12 months if not provided; reject if provided but invalid
     const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
     const rawMonths = parseInt(rawRenewalMonths);
-    if (!VALID_RENEWAL_MONTHS.includes(rawMonths)) {
+    let renewal_months;
+    if (!rawRenewalMonths || isNaN(rawMonths)) {
+      renewal_months = 12;
+    } else if (!VALID_RENEWAL_MONTHS.includes(rawMonths)) {
       return res.status(400).json({
         status: false,
         message: `Invalid renewal_months. Must be one of: ${VALID_RENEWAL_MONTHS.join(', ')}`,
       });
-    }
-    const renewal_months = rawMonths;
-    
-    // Normalize payment gateway: handle case-insensitive input and various formats
-    let payment_gateway = rawPaymentGateway;
-    if (payment_gateway) {
-      payment_gateway = payment_gateway.toLowerCase().trim();
+    } else {
+      renewal_months = rawMonths;
     }
     
-    // Default to Monicredit if not provided or invalid
-    if (!payment_gateway || 
+    let payment_gateway = rawPaymentGateway?.toLowerCase().trim() || null;
+    
+    if (!payment_gateway ||
         (payment_gateway !== PAYMENT_GATEWAY.PAYSTACK && payment_gateway !== PAYMENT_GATEWAY.MONICREDIT)) {
-      // Check if it's a valid gateway name in different case
-      const normalized = payment_gateway?.toLowerCase();
-      if (normalized === 'paystack' || normalized === 'monicredit') {
-        payment_gateway = normalized;
-      } else {
-        // Invalid gateway - default to Monicredit but log warning
-        if (payment_gateway) {
-          logWarn('[Payment Init] Invalid gateway provided, defaulting to Monicredit', {
-            provided: rawPaymentGateway,
-            normalized: payment_gateway
-          });
-        }
-        payment_gateway = PAYMENT_GATEWAY.MONICREDIT;
+      if (payment_gateway) {
+        logWarn('[Payment Init] Invalid gateway provided, defaulting to Monicredit', {
+          provided: rawPaymentGateway
+        });
       }
+      payment_gateway = PAYMENT_GATEWAY.MONICREDIT;
     }
     
     logDebug('[Payment Init] Request received', {
       gateway: payment_gateway,
-      rawGateway: rawPaymentGateway,
       userId,
-      userEmail,
       carSlug: car_slug,
-      paymentScheduleIds: payment_schedule_id,
-      renewalMonths: renewal_months,
-      paymentType: payment_type
+      renewalMonths: renewal_months
     });
     
-    // Validate gateway is supported
     if (!GatewayFactory.isSupported(payment_gateway)) {
       return paymentResponse.error(
         res,
-        `Unsupported payment gateway: ${payment_gateway}. Supported gateways: ${GatewayFactory.getSupportedGateways().join(', ')}`,
+        `Unsupported payment gateway: ${payment_gateway}. Supported: ${GatewayFactory.getSupportedGateways().join(', ')}`,
         HTTP_STATUS.BAD_REQUEST
       );
     }
@@ -281,17 +241,9 @@ export const initializePayment = async (req, res) => {
     const amount = renewalAmount + deliveryFee;
     
     logDebug('[Payment Init] Amount breakdown', {
-      payment_schedule_id,
-      renewalAmount_kobo: renewalAmount,
       renewalAmount_naira: renewalAmount / 100,
-      deliveryFee_kobo: deliveryFee,
       deliveryFee_naira: deliveryFee / 100,
-      totalAmount_kobo: amount,
-      totalAmount_naira: amount / 100,
-      hasDeliveryDetails,
-      stateCode: stateValidation.stateCode,
-      userId,
-      car_slug
+      total_naira: amount / 100
     });
     
     const supabaseAdmin = getSupabaseAdmin();
@@ -305,6 +257,27 @@ export const initializePayment = async (req, res) => {
     
     if (carError || !car) {
       return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
+    }
+
+    // Abandon any stale pending transactions for this car before creating a new one
+    const { data: staleTxns } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, reference')
+      .eq('car_id', car.id)
+      .eq('user_id', userId)
+      .eq('status', PAYMENT_STATUS.PENDING);
+
+    if (staleTxns && staleTxns.length > 0) {
+      await supabaseAdmin
+        .from('payment_transactions')
+        .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
+        .eq('car_id', car.id)
+        .eq('user_id', userId)
+        .eq('status', PAYMENT_STATUS.PENDING);
+      logInfo('[Payment Init] Abandoned stale pending transactions', {
+        carId: car.id,
+        count: staleTxns.length
+      });
     }
     
     const transaction = await createTransaction({
@@ -328,40 +301,22 @@ export const initializePayment = async (req, res) => {
     });
     
     const initStartTime = Date.now();
-    paymentMetrics.trackInitialization({
-      gateway: payment_gateway,
-      amount
-    });
+    paymentMetrics.trackInitialization({ gateway: payment_gateway, amount });
     
-    // Get gateway adapter using factory
     let gateway;
     try {
       gateway = GatewayFactory.getGateway(payment_gateway);
-      logInfo('[Payment Init] Initializing payment with gateway', {
+      logInfo('[Payment Init] Initializing with gateway', {
         gateway: payment_gateway,
-        gatewayAdapter: gateway?.constructor?.name || typeof gateway,
-        reference: transaction.reference,
-        userId,
-        userEmail
+        reference: transaction.reference
       });
     } catch (gatewayError) {
       logError('[Payment Init] Failed to get gateway adapter', {
         error: gatewayError.message,
-        gateway: payment_gateway,
-        errorStack: gatewayError.stack
+        gateway: payment_gateway
       });
       throw gatewayError;
     }
-    
-    logDebug('[Payment Init] Starting gateway initialization', {
-      gateway: payment_gateway,
-      reference: transaction.reference,
-      userId,
-      userEmail,
-      paymentScheduleIds: payment_schedule_id,
-      renewalAmount,
-      deliveryFee
-    });
     
     let gatewayResult;
     try {
@@ -378,43 +333,28 @@ export const initializePayment = async (req, res) => {
         deliveryData,
         hasDeliveryDetails
       });
-      
-      logDebug('[Payment Init] Gateway initialization successful', {
-        gateway: payment_gateway,
-        reference: transaction.reference,
-        hasResult: !!gatewayResult,
-        resultKeys: gatewayResult ? Object.keys(gatewayResult) : []
-      });
     } catch (initError) {
       logError('[Payment Init] Gateway initialization failed', {
         gateway: payment_gateway,
         error: initError.message,
-        errorName: initError.name,
-        errorCode: initError.code,
-        statusCode: initError.statusCode,
-        errorStack: initError.stack,
-        reference: transaction.reference,
-        userId,
-        userEmail
+        code: initError.code,
+        reference: transaction.reference
       });
       throw initError;
     }
     
-    // Update transaction with gateway-specific data
     if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
       await updateTransactionWithMonicreditInit(transaction.reference, gatewayResult);
     } else {
       await updateTransactionWithPaystackInit(transaction.reference, gatewayResult);
     }
     
-    const initProcessingTime = Date.now() - initStartTime;
     paymentMetrics.trackInitialization({
       gateway: payment_gateway,
       amount,
-      processingTime: initProcessingTime
+      processingTime: Date.now() - initStartTime
     });
     
-    // Build response based on gateway
     const responseData = {
       reference: transaction.reference,
       transaction_id: transaction.id,
@@ -422,30 +362,26 @@ export const initializePayment = async (req, res) => {
     };
     
     if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
-      // Convert amounts from kobo to naira for frontend display
-      // (gatewayResult.total_amount and amount are in kobo)
-      const totalAmountInNaira = gatewayResult.total_amount ? gatewayResult.total_amount / 100 : 0;
-      const amountInNaira = amount / 100; // Convert transaction amount from kobo to naira
-      
+      // Amounts are stored in kobo internally; send naira to the frontend
       Object.assign(responseData, {
-        order_id: gatewayResult.order_id,                         // Fixed: was gatewayResult.gateway_reference (undefined)
-        transaction_id_monicredit: gatewayResult.transaction_id,  // Fixed: was gatewayResult.gateway_reference (undefined)
+        order_id: gatewayResult.order_id,
+        transaction_id_monicredit: gatewayResult.transaction_id,
         customer: gatewayResult.customer,
         account_number: gatewayResult.account_number,
         bank_name: gatewayResult.bank_name,
         account_name: gatewayResult.account_name,
         payment_url: gatewayResult.authorization_url || null,
         checkout_url: gatewayResult.authorization_url || null,
-        total_amount: totalAmountInNaira, // Send in naira for frontend display
-        amount: amountInNaira, // Also convert amount field to naira
+        total_amount: gatewayResult.total_amount ? gatewayResult.total_amount / 100 : 0,
+        amount: amount / 100,
         expires_at: gatewayResult.expires_at
       });
     } else {
-      // For Paystack, amount stays in kobo (as expected by Paystack)
+      // Paystack expects kobo — do not convert
       Object.assign(responseData, {
         authorization_url: gatewayResult.authorization_url,
         access_code: gatewayResult.access_code,
-        amount: amount // Paystack uses kobo
+        amount
       });
     }
     
@@ -454,27 +390,17 @@ export const initializePayment = async (req, res) => {
   } catch (error) {
     logError('Initialize payment error', {
       error: error.message,
-      errorName: error.name,
-      errorCode: error.code,
-      statusCode: error.statusCode,
-      errorStack: error.stack,
+      code: error.code,
       gateway: req.body?.payment_gateway || 'unknown',
       userId: req.user?.id,
-      userEmail: req.user?.email,
-      carSlug: req.body?.car_slug,
-      paymentScheduleIds: req.body?.payment_schedule_id
+      carSlug: req.body?.car_slug
     });
     
     let errorType = 'other';
-    if (error.code === 'REQUEST_TIMEOUT' || error.name === 'AbortError') {
-      errorType = 'timeout';
-    } else if (error.code === 'REQUEST_FAILED' || error.message.includes('fetch')) {
-      errorType = 'network';
-    } else if (error.code === 'API_ERROR' || error.statusCode >= 500) {
-      errorType = 'api';
-    } else if (error.code === 'VALIDATION_ERROR' || error.code === 'CONFIG_ERROR') {
-      errorType = 'validation';
-    }
+    if (error.code === 'REQUEST_TIMEOUT' || error.name === 'AbortError') errorType = 'timeout';
+    else if (error.code === 'REQUEST_FAILED' || error.message.includes('fetch')) errorType = 'network';
+    else if (error.code === 'API_ERROR' || error.statusCode >= 500) errorType = 'api';
+    else if (error.code === 'VALIDATION_ERROR' || error.code === 'CONFIG_ERROR') errorType = 'validation';
     
     paymentMetrics.trackFailure({
       gateway: req.body?.payment_gateway || 'unknown',
@@ -485,29 +411,23 @@ export const initializePayment = async (req, res) => {
     const isProduction = process.env.NODE_ENV === 'production';
     
     if (error instanceof PaystackError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, error.statusCode || 500);
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
     if (error instanceof MonicreditError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
       logError('[Payment Init] MonicreditError details', {
         message: error.message,
-        statusCode: error.statusCode,
         code: error.code,
-        data: error.data
+        statusCode: error.statusCode
       });
-      return paymentResponse.error(res, message, error.statusCode || 500);
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
     if (error instanceof TransactionError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, error.statusCode || 500);
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
     if (error instanceof GatewayError) {
-      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
-      return paymentResponse.error(res, message, error.statusCode || 500);
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
     
-    // Generic error - return detailed message in development
     const errorMessage = isProduction 
       ? 'Failed to initialize payment' 
       : `${error.message || 'Unknown error'} (${error.name || 'Error'})`;

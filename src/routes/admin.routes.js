@@ -45,5 +45,6 @@ router.put('/orders/:orderNumber/status', authenticateAdmin, admin.updateOrderSt
 // ── Transaction management (authenticateAdmin) ────────────────────────────────
 router.get('/transactions/failed', authenticateAdmin, admin.getFailedTransactions);
 router.get('/transactions', authenticateAdmin, admin.listTransactions);
+router.get('/transactions/:reference', authenticateAdmin, admin.getTransactionDetails);
 
 export default router;

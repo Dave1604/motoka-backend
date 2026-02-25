@@ -1,9 +1,7 @@
 import crypto from 'crypto';
 import { logError, logWarn, logInfo } from '../utils/logger.js';
 
-/**
- * Timing-safe hex string comparison to prevent timing attacks.
- */
+// Timing-safe comparison prevents attackers from measuring how many bytes match
 function timingSafeHexCompare(a, b) {
   try {
     const bufA = Buffer.from(a, 'hex');
@@ -15,28 +13,20 @@ function timingSafeHexCompare(a, b) {
   }
 }
 
-/**
- * Monicredit webhook signature verification middleware.
- *
- * Bypass: Set SKIP_WEBHOOK_VERIFY=true in .env for local testing only.
- * Never set this in staging or production — it disables all security checks.
- */
+// Set SKIP_WEBHOOK_VERIFY=true in .env for local testing only.
+// Never set this in staging or production — it disables all signature checks.
 export const verifyMonicreditWebhook = (req, res, next) => {
   try {
     const signature = req.headers['x-monicredit-signature'] || req.headers['x-signature'];
     const webhookSecret = process.env.MONICREDIT_WEBHOOK_SECRET;
-    // Use an explicit opt-in flag, not NODE_ENV, so staging is never accidentally bypassed
     const skipVerify = process.env.SKIP_WEBHOOK_VERIFY === 'true';
 
-    logInfo('[Monicredit Webhook] Received webhook', {
-      hasSignature: !!signature,
-      hasSecret: !!webhookSecret,
-    });
+    logInfo('[Monicredit Webhook] Received', { hasSignature: !!signature, hasSecret: !!webhookSecret });
 
     if (!webhookSecret) {
-      logError('Monicredit webhook verification failed - MONICREDIT_WEBHOOK_SECRET not configured');
+      logError('MONICREDIT_WEBHOOK_SECRET not configured');
       if (skipVerify) {
-        logWarn('[Monicredit Webhook] SKIP_WEBHOOK_VERIFY=true — bypassing verification (local only)');
+        logWarn('[Monicredit Webhook] SKIP_WEBHOOK_VERIFY=true — bypassing (local only)');
         return next();
       }
       return res.status(500).json({ status: false, message: 'Webhook verification configuration error' });
@@ -45,7 +35,7 @@ export const verifyMonicreditWebhook = (req, res, next) => {
     if (!signature) {
       logWarn('[Monicredit Webhook] Missing signature header');
       if (skipVerify) {
-        logWarn('[Monicredit Webhook] SKIP_WEBHOOK_VERIFY=true — bypassing missing signature (local only)');
+        logWarn('[Monicredit Webhook] SKIP_WEBHOOK_VERIFY=true — bypassing (local only)');
         return next();
       }
       return res.status(401).json({ status: false, message: 'Missing signature header' });
@@ -62,7 +52,7 @@ export const verifyMonicreditWebhook = (req, res, next) => {
     const expectedSHA256 = crypto.createHmac('sha256', webhookSecret).update(payload).digest('hex');
     const expectedSHA512 = crypto.createHmac('sha512', webhookSecret).update(payload).digest('hex');
 
-    // Strip algorithm prefix if present (case-insensitive: sha256= or sha512=)
+    // Strip optional algorithm prefix (sha256= or sha512=)
     const bare = signature.replace(/^sha(256|512)=/i, '');
 
     const isValid =
@@ -70,17 +60,15 @@ export const verifyMonicreditWebhook = (req, res, next) => {
       timingSafeHexCompare(bare, expectedSHA512);
 
     if (!isValid) {
-      logError('Monicredit webhook verification failed - invalid signature', {
-        signatureLength: signature.length,
-      });
+      logError('Monicredit webhook — invalid signature', { signatureLength: signature.length });
       if (skipVerify) {
-        logWarn('[Monicredit Webhook] SKIP_WEBHOOK_VERIFY=true — bypassing invalid signature (local only)');
+        logWarn('[Monicredit Webhook] SKIP_WEBHOOK_VERIFY=true — bypassing (local only)');
         return next();
       }
       return res.status(401).json({ status: false, message: 'Invalid signature' });
     }
 
-    logInfo('[Monicredit Webhook] Signature verified successfully');
+    logInfo('[Monicredit Webhook] Signature verified');
     next();
 
   } catch (error) {

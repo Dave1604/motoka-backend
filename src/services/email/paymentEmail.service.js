@@ -23,7 +23,7 @@ import { formatAmount } from '../../utils/paymentHelpers.js';
  * @param {string} options.orderNumber - Order number created
  * @param {Object} options.carDetails - Car information
  */
-export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails }) {
+export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames }) {
   const subject = 'Payment Successful - Motoka';
   
   const carInfo = carDetails 
@@ -82,6 +82,11 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
               <span class="detail-label">Vehicle</span>
               <span class="detail-value">${carInfo}</span>
             </div>
+            ${documentNames?.length > 0 ? `
+            <div class="detail-row">
+              <span class="detail-label">Documents</span>
+              <span class="detail-value">${documentNames.join(', ')}</span>
+            </div>` : ''}
             <div class="detail-row">
               <span class="detail-label">Status</span>
               <span class="detail-value" style="color: #22c55e;">Processing</span>
