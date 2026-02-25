@@ -32,6 +32,21 @@ function isLocalhostOrigin(origin) {
   }
 }
 
+/** Allow www vs non-www when either is in ALLOWED_ORIGINS (e.g. motokaapp.ng <-> www.motokaapp.ng). */
+function originMatchesAllowed(requestOrigin, allowedOrigins) {
+  if (allowedOrigins.includes(requestOrigin)) return true;
+  try {
+    const reqUrl = new URL(requestOrigin);
+    const host = reqUrl.hostname.toLowerCase();
+    const protocol = reqUrl.protocol;
+    const alternateHost = host.startsWith('www.') ? host.slice(4) : `www.${host}`;
+    const alternateOrigin = `${protocol}//${alternateHost}`;
+    return allowedOrigins.includes(alternateOrigin);
+  } catch {
+    return false;
+  }
+}
+
 export function getCorsConfig() {
   const allowedOrigins = getAllowedOrigins();
   
@@ -48,8 +63,8 @@ export function getCorsConfig() {
         return callback(null, true);
       }
       
-      // Allow if explicitly listed in ALLOWED_ORIGINS (even localhost in production)
-      if (allowedOrigins.includes(origin)) {
+      // Allow if explicitly listed in ALLOWED_ORIGINS, or www/non-www variant (e.g. motokaapp.ng <-> www.motokaapp.ng)
+      if (allowedOrigins.includes(origin) || originMatchesAllowed(origin, allowedOrigins)) {
         return callback(null, true);
       }
       

@@ -8,38 +8,93 @@ export const register = async (req, res) => {
     const { first_name, last_name, email, phone, password } = req.body;
     const supabase = getSupabase();
     const supabaseAdmin = getSupabaseAdmin();
-    
-    
+
+    // Check if a profile with this phone already exists (would block insert)
+    if (phone) {
+      const { data: existingPhone } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .eq('phone_number', phone)
+        .maybeSingle();
+      if (existingPhone) {
+        return response.error(res, 'Phone number already in use', 409);
+      }
+    }
+
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
-      options: { 
+      options: {
         data: { first_name, last_name, phone },
-        emailRedirectTo: undefined // Disable default confirmation email
+        emailRedirectTo: undefined
       }
     });
-    
+
     if (error) {
-      if (error.message.includes('already registered')) {
+      if (error.message.toLowerCase().includes('already registered') || error.message.toLowerCase().includes('already been registered')) {
         return response.error(res, 'Email already registered', 409);
+      }
+      // "Database error saving new user" means the DB trigger failed — handle profile manually
+      if (error.message.toLowerCase().includes('database error')) {
+        return response.error(res, 'Registration failed. Please try again or contact support.', 500);
       }
       return response.error(res, error.message);
     }
-    
-    // Send OTP for email verification (uses same path as login OTP which works with Brevo)
-    const { error: otpError } = await supabase.auth.signInWithOtp({ 
-      email,
-      options: { shouldCreateUser: false } // User already exists
-    });
-    
-    const { data: profile } = await supabaseAdmin
+
+    const userId = data.user.id;
+
+    // Explicitly upsert profile — don't rely solely on the DB trigger
+    // This handles cases where the trigger fails (e.g. NOT NULL email constraint added after trigger was created)
+    let profile = null;
+    const { data: existingProfile } = await supabaseAdmin
       .from('profiles')
       .select('*')
-      .eq('id', data.user.id)
-      .single();
-    
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (!existingProfile) {
+      // Generate a unique 6-char user_id
+      let newUserId;
+      for (let i = 0; i < 10; i++) {
+        const candidate = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const { data: conflict } = await supabaseAdmin
+          .from('profiles').select('id').eq('user_id', candidate).maybeSingle();
+        if (!conflict) { newUserId = candidate; break; }
+      }
+
+      const { data: inserted, error: insertError } = await supabaseAdmin
+        .from('profiles')
+        .insert({
+          id: userId,
+          user_id: newUserId,
+          first_name: first_name || email.split('@')[0],
+          last_name: last_name || '',
+          phone_number: phone || null,
+          email,
+          user_type_id: 2
+        })
+        .select('*')
+        .single();
+
+      if (insertError) {
+        console.error('[Register] Profile insert failed:', insertError);
+        // Auth user was created — delete it to avoid orphaned auth records
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        return response.error(res, 'Registration failed. Please try again.', 500);
+      }
+      profile = inserted;
+    } else {
+      profile = existingProfile;
+    }
+
+    // Send OTP for email verification
+    await supabase.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: false }
+    }).catch(() => {}); // non-fatal if OTP fails
+
     return response.created(res, {
-      user: { id: data.user.id, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...profile },
+      user: { id: userId, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...profile },
       session: data.session
     }, 'Registration successful. Please check your email for verification code.');
   } catch (error) {
