@@ -80,7 +80,7 @@ export class MonicreditAdapter {
     const customerData = this._buildCustomerData(userEmail, profile);
     
     // Validate customer data before proceeding
-    if (!customerData.email || !customerData.first_name || !customerData.last_name) {
+    if (!customerData.email || !customerData.first_name?.trim() || !customerData.last_name?.trim()) {
       logError('[Monicredit] Invalid customer data', {
         transaction_reference: transaction.reference,
         has_email: !!customerData.email,
@@ -361,9 +361,12 @@ export class MonicreditAdapter {
    * @returns {Object}
    */
   static _buildCustomerData(userEmail, profile) {
+    const firstName = profile?.first_name || userEmail.split('@')[0];
+    // Monicredit requires non-empty last_name — fall back to first_name if missing
+    const lastName = (profile?.last_name && profile.last_name.trim()) ? profile.last_name.trim() : firstName;
     const customerData = {
-      first_name: profile?.first_name || userEmail.split('@')[0],
-      last_name: profile?.last_name || '',
+      first_name: firstName,
+      last_name: lastName,
       email: userEmail,
       phone: profile?.phone_number || ''
     };
