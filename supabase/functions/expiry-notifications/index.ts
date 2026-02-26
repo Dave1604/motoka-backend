@@ -1,501 +1,375 @@
-import { createClient } from 'npm:@supabase/supabase-js@2';
-import { Resend } from 'npm:resend@6';
-
-const NOTIFICATION_INTERVALS = [
-  { days: 30, type: '30_days' },
-  { days: 14, type: '14_days' },
-  { days: 7, type: '7_days' },
-  { days: 3, type: '3_days' },
-  { days: 2, type: '2_days' },
-  { days: 1, type: '1_day' }
-];
-
-const RETRY_CONFIG = {
-  maxRetries: 3,
-  initialDelayMs: 1000,
-  maxDelayMs: 10000,
-  backoffMultiplier: 2
-};
-
-const RATE_LIMIT_CONFIG = {
-  delayBetweenEmailsMs: 100,      // 100ms between each email
-  batchSize: 10,                   // Process 10 emails per batch
-  delayBetweenBatchesMs: 1000      // 1 second between batches
-};
-
 /**
- * Retry utility with exponential backoff
+ * Vehicle Expiry Notifications Edge Function
+ * 
+ * Sends automated email reminders for expiring vehicle documents
+ * Called daily by cron job or Supabase scheduler
+ * 
+ * Features: Idempotent, retry logic, rate limiting, comprehensive logging
  */
-async function retryWithBackoff<T>(
-  fn: () => Promise<T>,
-  fnName: string = 'operation',
-  maxRetries: number = RETRY_CONFIG.maxRetries
-): Promise<T> {
-  let lastError: Error | null = null;
-  
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fn();
-    } catch (error) {
-      lastError = error;
-      
-      if (attempt === maxRetries) {
-        break;
-      }
-      
-      const delay = Math.min(
-        RETRY_CONFIG.initialDelayMs * Math.pow(RETRY_CONFIG.backoffMultiplier, attempt),
-        RETRY_CONFIG.maxDelayMs
-      );
-      
-      console.warn(
-        `[Retry] ${fnName} attempt ${attempt + 1} failed, retrying in ${delay}ms. Error: ${error.message}`
-      );
-      
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
+
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
+import { CONFIG } from './config.ts';
+import {
+  calculateTargetDates,
+  formatDateISO,
+  getTodayUTC,
+  daysBetween,
+} from './dateCalculator.ts';
+import { CarRepository } from './carRepository.ts';
+import { EmailService } from './emailService.ts';
+import { logger } from './logger.ts';
+import { NotificationTask, ProcessingResult } from './types.ts';
+
+serve(async (req) => {
+  const startTime = Date.now();
+  const executionId = crypto.randomUUID();
+
+  logger.setExecutionId(executionId);
+  logger.info('Edge function started', { executionId });
+
+  if (req.method !== 'POST') {
+    logger.warn('Invalid HTTP method', { method: req.method });
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed' }),
+      { status: 405, headers: { 'Content-Type': 'application/json' } }
+    );
   }
-  
-  throw lastError || new Error(`${fnName} failed after ${maxRetries} retries`);
-}
 
-/**
- * Delay utility for rate limiting
- */
-async function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  return date.toLocaleDateString('en-US', { 
-    year: 'numeric', 
-    month: 'long', 
-    day: 'numeric' 
-  });
-}
+  // Authorization is handled by Supabase's built-in JWT validation
+  // Only authenticated requests with valid anon or service_role keys can reach this point
+  logger.info('Request authenticated via Supabase JWT');
 
-/**
- * Send expiry reminder email via Resend (with retry)
- */
-async function sendExpiryReminder(
-  resend: InstanceType<typeof Resend>,
-  emailFrom: string,
-  to: string,
-  userName: string,
-  vehicleName: string,
-  registrationNo: string,
-  daysRemaining: number,
-  expiryDate: string
-) {
-  return retryWithBackoff(
-    async () => {
-      const urgencyLevel = daysRemaining <= 3 ? 'high' : daysRemaining <= 7 ? 'medium' : 'low';
-      const urgencyColor = urgencyLevel === 'high' ? '#dc3545' : urgencyLevel === 'medium' ? '#1B6DBD' : '#1B6DBD';
-      const brandPrimary = '#1B6DBD';
-  
-  const subject = daysRemaining === 1 
-    ? `🚨 URGENT: Vehicle Registration Expires Tomorrow`
-    : daysRemaining === 0
-    ? `🚨 FINAL NOTICE: Vehicle Registration Expires TODAY`
-    : `⚠️ Reminder: Vehicle Registration Expires in ${daysRemaining} Days`;
-  
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e6e9ef; }
-        .header { background-color: ${brandPrimary}; color: #ffffff; padding: 30px 20px; text-align: center; }
-        .content { padding: 40px 30px; }
-        .alert-box { background-color: #f5f9ff; border-left: 4px solid ${urgencyColor}; padding: 20px; margin: 30px 0; border-radius: 6px; }
-        .alert-title { color: ${urgencyColor}; font-size: 20px; font-weight: bold; margin-bottom: 10px; }
-        .vehicle-info { background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
-        .info-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e9ecef; }
-        .info-label { font-weight: 600; color: #6c757d; }
-        .info-value { color: #1a1a1a; }
-        .cta-button { display: inline-block; background-color: ${brandPrimary}; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: 600; margin-top: 20px; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
-        .countdown { font-size: 48px; font-weight: bold; color: ${urgencyColor}; text-align: center; margin: 20px 0; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>🚗 Vehicle Registration Reminder</h1>
-        </div>
-        <div class="content">
-          <p>Hello ${userName},</p>
-          
-          <div class="alert-box">
-            <div class="alert-title">
-              ${daysRemaining === 0 ? '⚠️ Expires Today!' : daysRemaining === 1 ? '⚠️ Expires Tomorrow!' : `⚠️ ${daysRemaining} Days Remaining`}
-            </div>
-            <p style="margin: 0;">Your vehicle registration is about to expire. Please renew it promptly to avoid penalties and stay compliant.</p>
-          </div>
-
-          <div class="countdown">${daysRemaining}</div>
-          <p style="text-align: center; color: #6c757d; margin-top: -10px;">day${daysRemaining === 1 ? '' : 's'} remaining</p>
-
-          <div class="vehicle-info">
-            <h3 style="margin-top: 0;">Vehicle Details</h3>
-            <div class="info-row">
-              <span class="info-label">Vehicle:</span>
-              <span class="info-value">${vehicleName}</span>
-            </div>
-            <div class="info-row">
-              <span class="info-label">Registration No:</span>
-              <span class="info-value">${registrationNo}</span>
-            </div>
-            <div class="info-row" style="border-bottom: none;">
-              <span class="info-label">Expiry Date:</span>
-              <span class="info-value" style="color: ${urgencyColor}; font-weight: bold;">${expiryDate}</span>
-            </div>
-          </div>
-
-          <div style="background-color: #f5f9ff; padding: 15px; border-radius: 8px; margin: 20px 0;">
-            <p style="margin: 0;"><strong>💡 Next steps:</strong></p>
-            <ul style="margin: 10px 0;">
-              <li>Visit Motoka to renew your documents: motokapp.ng</li>
-              <li>Have your vehicle details ready</li>
-              <li>Complete the renewal before the expiry date</li>
-            </ul>
-          </div>
-
-          <p style="color: #6c757d; font-size: 14px; margin-top: 30px;">
-            <strong>Important:</strong> Driving with an expired registration is illegal and may result in fines, vehicle impoundment, or other penalties.
-          </p>
-
-          <div style="text-align: center;">
-            <a href="https://motokapp.ng" class="cta-button">Renew on Motoka</a>
-          </div>
-        </div>
-        <div class="footer">
-          <p>© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
-          <p>This is an automated reminder. Please do not reply to this email.</p>
-          <p style="margin-top: 10px;">Motoka - Your Vehicle Management Partner</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  const { data, error } = await resend.emails.send({
-        from: emailFrom,
-        to,
-        subject,
-        html
-      });
-
-      if (error) {
-        throw new Error(`Email send failed: ${error.message}`);
-      }
-
-      return data?.id;
-    },
-    `sendEmail(${to})`,
-    RETRY_CONFIG.maxRetries
-  );
-}
-
-/**
- * Check if notification has already been sent (with retry)
- */
-async function isNotificationSent(
-  supabase: ReturnType<typeof createClient>,
-  carId: number,
-  notificationType: string,
-  expiryDate: string
-): Promise<boolean> {
-  return retryWithBackoff(
-    async () => {
-      const { data } = await supabase
-        .from('expiry_notifications')
-        .select('id')
-        .eq('car_id', carId)
-        .eq('notification_type', notificationType)
-        .eq('expiry_date', expiryDate)
-        .single();
-
-      return !!data;
-    },
-    `isNotificationSent(car_id=${carId}, type=${notificationType})`,
-    RETRY_CONFIG.maxRetries
-  );
-}
-
-/**
- * Record that a notification was sent (with retry)
- */
-async function recordNotification(
-  supabase: ReturnType<typeof createClient>,
-  carId: number,
-  userId: string,
-  notificationType: string,
-  expiryDate: string,
-  emailId: string
-) {
-  return retryWithBackoff(
-    async () => {
-      const { error } = await supabase
-        .from('expiry_notifications')
-        .insert({
-          car_id: carId,
-          user_id: userId,
-          notification_type: notificationType,
-          expiry_date: expiryDate,
-          email_id: emailId
-        });
-
-      if (error) throw error;
-    },
-    `recordNotification(car_id=${carId}, type=${notificationType})`,
-    RETRY_CONFIG.maxRetries
-  );
-}
-
-/**
- * Get target date N days from now
- */
-function getTargetDate(daysFromNow: number): string {
-  const date = new Date();
-  date.setUTCHours(0, 0, 0, 0);
-  date.setUTCDate(date.getUTCDate() + daysFromNow);
-  return date.toISOString().split('T')[0];
-}
-
-/**
- * Main handler
- */
-Deno.serve(async (req: Request) => {
   try {
-    // Only accept POST requests
-    if (req.method !== 'POST') {
-      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-        status: 405,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // Validate API key from Authorization header
-    const authHeader = req.headers.get('Authorization');
-    const expectedSecret = Deno.env.get('CRON_SECRET_KEY');
-    
-    if (!expectedSecret) {
-      throw new Error('CRON_SECRET_KEY environment variable not set');
-    }
-
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return new Response(JSON.stringify({ error: 'Unauthorized: Missing or invalid Authorization header' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    const providedSecret = authHeader.substring(7);
-    if (providedSecret !== expectedSecret) {
-      return new Response(JSON.stringify({ error: 'Unauthorized: Invalid API key' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // Get secrets
-    const resendApiKey = Deno.env.get('RESEND_API_KEY');
-    const emailFrom = Deno.env.get('EMAIL_FROM') || 'Motoka <no-reply@motokaapp.ng>';
+    // Verify environment variables
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    const resendApiKey = Deno.env.get('RESEND_API_KEY');
+    const emailFrom = Deno.env.get('EMAIL_FROM');
 
-    if (!resendApiKey || !supabaseUrl || !supabaseServiceKey) {
-      throw new Error('Missing required environment variables');
+    if (!supabaseUrl || !supabaseKey || !resendApiKey || !emailFrom) {
+      logger.error('Missing required environment variables');
+      return new Response(
+        JSON.stringify({ error: 'Server configuration error' }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      );
     }
 
-    // Initialize clients
-    const resend = new Resend(resendApiKey);
-    const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-      auth: { autoRefreshToken: false, persistSession: false }
+    // Initialize services
+    const repository = new CarRepository(supabaseUrl, supabaseKey);
+    const emailService = new EmailService(resendApiKey, emailFrom);
+
+    // Step 1: Calculate target dates (deterministic)
+    const today = getTodayUTC();
+    const targetDatesMap = calculateTargetDates();
+    const targetDates = Array.from(targetDatesMap.values());
+
+    logger.info('📅 Target dates calculated', {
+      today: formatDateISO(today),
+      intervals: Array.from(targetDatesMap.entries()).map(([type, date]) => ({
+        type,
+        date: formatDateISO(date),
+      })),
     });
 
-    console.log('[Cron] Starting expiry notification check');
+    // Step 2: Query cars expiring on target dates
+    const cars = await repository.getCarsForNotification(targetDates);
 
-    const summary = {
-      timestamp: new Date().toISOString(),
-      intervals: [],
-      totals: {
-        total: 0,
-        sent: 0,
-        skipped: 0,
-        failed: 0
-      }
-    };
-
-    // Process each notification interval
-    for (const interval of NOTIFICATION_INTERVALS) {
-      const targetDate = getTargetDate(interval.days);
-      console.log(`[Cron] Checking for vehicles expiring on ${targetDate}`);
-
-      // Get vehicles
-      const { data: cars, error: queryError } = await supabase
-        .from('cars')
-        .select(`
-          id,
-          user_id,
-          vehicle_make,
-          vehicle_model,
-          registration_no,
-          expiry_date
-        `)
-        .eq('status', 'approved')
-        .eq('expiry_date', targetDate)
-        .is('deleted_at', null)
-        .not('registration_no', 'is', null);
-
-      if (queryError) throw queryError;
-
-      const userIds = (cars || []).map((car) => car.user_id).filter(Boolean);
-      const profilesById = new Map<string, { id: string; email: string; first_name: string; last_name: string }>();
-
-      if (userIds.length > 0) {
-        const { data: profiles, error: profilesError } = await supabase
-          .from('profiles')
-          .select('id,email,first_name,last_name')
-          .in('id', userIds);
-
-        if (profilesError) throw profilesError;
-
-        for (const profile of profiles || []) {
-          profilesById.set(profile.id, profile);
-        }
-      }
-
-      const intervalResult = {
-        interval: interval.days,
-        type: interval.type,
-        total: cars?.length || 0,
-        sent: 0,
-        skipped: 0,
-        failed: 0
-      };
-
-      // Process vehicles in batches with rate limiting
-      const batchSize = RATE_LIMIT_CONFIG.batchSize;
-      const carsArray = cars || [];
-      
-      for (let batchIndex = 0; batchIndex < carsArray.length; batchIndex += batchSize) {
-        const batch = carsArray.slice(batchIndex, batchIndex + batchSize);
-        console.log(`[Cron] Processing batch ${Math.ceil(batchIndex / batchSize) + 1} of ${Math.ceil(carsArray.length / batchSize)} for ${interval.type}`);
-        
-        // Process each car in the batch
-        for (let carIndex = 0; carIndex < batch.length; carIndex++) {
-          const car = batch[carIndex];
-          
-          try {
-            const alreadySent = await isNotificationSent(
-              supabase,
-              car.id,
-              interval.type,
-              car.expiry_date
-            );
-
-            if (alreadySent) {
-              console.log(`[Cron] Skipped ${car.registration_no} (${interval.type}) - already sent`);
-              intervalResult.skipped++;
-              // Still add delay to maintain rate limit consistency
-              if (carIndex < batch.length - 1) {
-                await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
-              }
-              continue;
-            }
-
-            const userProfile = profilesById.get(car.user_id);
-
-            if (!userProfile) {
-              console.warn(`[Cron] Skipped ${car.registration_no} - profile not found`);
-              intervalResult.skipped++;
-              if (carIndex < batch.length - 1) {
-                await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
-              }
-              continue;
-            }
-            
-            const userName = `${userProfile.first_name} ${userProfile.last_name}`;
-            const vehicleName = `${car.vehicle_make} ${car.vehicle_model}`;
-            const formattedDate = formatDate(car.expiry_date);
-
-            // Send email
-            const emailId = await sendExpiryReminder(
-              resend,
-              emailFrom,
-              userProfile.email,
-              userName,
-              vehicleName,
-              car.registration_no,
-              interval.days,
-              formattedDate
-            );
-
-            // Record notification
-            await recordNotification(
-              supabase,
-              car.id,
-              car.user_id,
-              interval.type,
-              car.expiry_date,
-              emailId
-            );
-
-            console.log(`[Cron] Sent ${car.registration_no} (${interval.type})`);
-            intervalResult.sent++;
-            
-            // Add delay between emails to prevent API overload
-            if (carIndex < batch.length - 1) {
-              await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
-            }
-          } catch (error) {
-            console.error(`[Cron] Error for ${car.registration_no}:`, error.message);
-            intervalResult.failed++;
-            // Still maintain delay on errors
-            if (carIndex < batch.length - 1) {
-              await delay(RATE_LIMIT_CONFIG.delayBetweenEmailsMs);
-            }
-          }
-        }
-        
-        // Add delay between batches (except after the last batch)
-        if (batchIndex + batchSize < carsArray.length) {
-          console.log(`[Cron] Batch complete, waiting ${RATE_LIMIT_CONFIG.delayBetweenBatchesMs}ms before next batch...`);
-          await delay(RATE_LIMIT_CONFIG.delayBetweenBatchesMs);
-        }
-      }
-
-      summary.intervals.push(intervalResult);
-      summary.totals.total += intervalResult.total;
-      summary.totals.sent += intervalResult.sent;
-      summary.totals.skipped += intervalResult.skipped;
-      summary.totals.failed += intervalResult.failed;
+    if (cars.length === 0) {
+      logger.info('✅ No cars found for notification today');
+      return createSuccessResponse({
+        totalCars: 0,
+        emailsSent: 0,
+        emailsFailed: 0,
+        alreadySent: 0,
+        errors: [],
+        executionTimeMs: Date.now() - startTime,
+      });
     }
 
-    console.log('[Cron] Completed', summary);
+    logger.info(`📧 Processing ${cars.length} cars`, { totalCars: cars.length });
 
-    return new Response(JSON.stringify({
-      success: true,
-      message: 'Expiry notification check completed',
-      data: summary
-    }), {
-      status: 200,
-      headers: { 'Content-Type': 'application/json' }
+    // Step 3: Build notification tasks
+    const tasks: NotificationTask[] = [];
+
+    for (const car of cars) {
+      const expiryDate = new Date(car.expiry_date);
+      const daysUntilExpiry = daysBetween(today, expiryDate);
+
+      // Find matching notification type by expiry date
+      let notificationType: string | undefined;
+      for (const [type, targetDate] of targetDatesMap) {
+        if (formatDateISO(targetDate) === car.expiry_date) {
+          notificationType = type;
+          break;
+        }
+      }
+
+      if (!notificationType) {
+        logger.warn('⚠️  No notification type matched for car', {
+          carId: car.id,
+          expiryDate: car.expiry_date,
+        });
+        continue;
+      }
+
+      // Get user profile (email required)
+      const profile = await repository.getUserProfile(car.user_id);
+      if (!profile || !profile.email) {
+        logger.warn('⚠️  User profile not found or missing email', {
+          carId: car.id,
+          userId: car.user_id,
+        });
+        await repository.logError('MISSING_USER_PROFILE', 'User profile missing email', {
+          carId: car.id,
+          userId: car.user_id,
+          functionName: 'buildNotificationTasks',
+          executionId,
+        });
+        continue;
+      }
+
+      // Check if notification already sent (idempotency)
+      const alreadySent = await repository.isNotificationSent(
+        car.id,
+        notificationType as any,
+        expiryDate
+      );
+      if (alreadySent) {
+        logger.info('✓ Notification already sent, skipping', {
+          carId: car.id,
+          notificationType,
+        });
+        continue;
+      }
+
+      tasks.push({
+        car,
+        profile,
+        notificationType: notificationType as any,
+        expiryDate,
+        daysUntilExpiry,
+      });
+    }
+
+    logger.info(`🎯 Tasks prepared: ${tasks.length}/${cars.length}`, {
+      totalTasks: tasks.length,
+      alreadySent: cars.length - tasks.length,
     });
+
+    if (tasks.length === 0) {
+      logger.info('✅ All cars already notified or have issues');
+      return createSuccessResponse({
+        totalCars: cars.length,
+        emailsSent: 0,
+        emailsFailed: 0,
+        alreadySent: cars.length,
+        errors: [],
+        executionTimeMs: Date.now() - startTime,
+      });
+    }
+
+    // Step 4: Process in batches (rate limiting)
+    const result = await processBatches(
+      tasks,
+      repository,
+      emailService,
+      executionId
+    );
+
+    result.executionTimeMs = Date.now() - startTime;
+
+    logger.info('✅ Processing complete', {
+      totalCars: result.totalCars,
+      emailsSent: result.emailsSent,
+      emailsFailed: result.emailsFailed,
+      executionTimeMs: result.executionTimeMs,
+    });
+
+    return createSuccessResponse(result);
   } catch (error) {
-    console.error('[Cron] Error:', error.message);
-    return new Response(JSON.stringify({
-      success: false,
-      message: 'Notification check failed',
-      error: error.message
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
+    const errorMessage = (error as Error).message;
+    const errorStack = (error as Error).stack;
+
+    logger.error('❌ Edge function failed', {
+      error: errorMessage,
+      stack: errorStack,
     });
+
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: errorMessage,
+        executionTimeMs: Date.now() - startTime,
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 });
+
+/**
+ * Process notification tasks in batches with rate limiting
+ * 
+ * Respects Resend API rate limits by processing in batches
+ * of 50 with 1-second delays between batches.
+ */
+async function processBatches(
+  tasks: NotificationTask[],
+  repository: CarRepository,
+  emailService: EmailService,
+  executionId: string
+): Promise<ProcessingResult> {
+  const result: ProcessingResult = {
+    totalCars: tasks.length,
+    emailsSent: 0,
+    emailsFailed: 0,
+    alreadySent: 0,
+    errors: [],
+    executionTimeMs: 0,
+  };
+
+  const batchSize = CONFIG.RATE_LIMIT.BATCH_SIZE;
+  const totalBatches = Math.ceil(tasks.length / batchSize);
+
+  // Process in batches to respect rate limits
+  for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
+    const startIdx = batchNum * batchSize;
+    const endIdx = Math.min(startIdx + batchSize, tasks.length);
+    const batch = tasks.slice(startIdx, endIdx);
+
+    logger.info(`📦 Processing batch ${batchNum + 1}/${totalBatches}`, {
+      batchNumber: batchNum + 1,
+      batchSize: batch.length,
+      total: tasks.length,
+    });
+
+    // Process batch tasks concurrently
+    const batchPromises = batch.map(task =>
+      processTask(task, repository, emailService, executionId)
+    );
+    const batchResults = await Promise.allSettled(batchPromises);
+
+    // Aggregate batch results
+    for (let i = 0; i < batchResults.length; i++) {
+      const taskResult = batchResults[i];
+      const task = batch[i];
+
+      if (taskResult.status === 'fulfilled') {
+        if (taskResult.value.success) {
+          result.emailsSent++;
+        } else {
+          result.emailsFailed++;
+          result.errors.push({
+            carId: task.car.id,
+            error: taskResult.value.error || 'Unknown error',
+          });
+        }
+      } else {
+        result.emailsFailed++;
+        result.errors.push({
+          carId: task.car.id,
+          error: taskResult.reason?.message || 'Task rejected',
+        });
+      }
+    }
+
+    // Delay between batches (rate limiting)
+    if (batchNum < totalBatches - 1) {
+      logger.debug('⏸️  Rate limiting delay', {
+        delayMs: CONFIG.RATE_LIMIT.BATCH_DELAY_MS,
+      });
+      await sleep(CONFIG.RATE_LIMIT.BATCH_DELAY_MS);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Process a single notification task
+ * 
+ * Sends email and records in history for idempotency.
+ */
+async function processTask(
+  task: NotificationTask,
+  repository: CarRepository,
+  emailService: EmailService,
+  executionId: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    // Send email with retry logic
+    const emailResult = await emailService.sendExpiryNotification(
+      task.car,
+      task.profile,
+      task.notificationType,
+      task.daysUntilExpiry
+    );
+
+    if (!emailResult.success) {
+      // Log error to database
+      await repository.logError('EMAIL_SEND_FAILED', emailResult.error || 'Unknown error', {
+        carId: task.car.id,
+        userId: task.car.user_id,
+        notificationType: task.notificationType,
+        functionName: 'sendExpiryNotification',
+        executionId,
+        retryCount: emailResult.retryCount,
+      });
+
+      return { success: false, error: emailResult.error };
+    }
+
+    // Record in history (transaction) for idempotency
+    await repository.recordNotification(
+      task.car.id,
+      task.car.user_id,
+      task.notificationType,
+      task.expiryDate,
+      task.profile.email,
+      emailResult.emailId
+    );
+
+    return { success: true };
+  } catch (error) {
+    const errorMessage = (error as Error).message;
+    const errorStack = (error as Error).stack;
+
+    logger.error('❌ Task processing failed', {
+      carId: task.car.id,
+      error: errorMessage,
+    });
+
+    await repository.logError('TASK_PROCESSING_ERROR', errorMessage, {
+      carId: task.car.id,
+      userId: task.car.user_id,
+      notificationType: task.notificationType,
+      errorStack,
+      functionName: 'processTask',
+      executionId,
+    });
+
+    return { success: false, error: errorMessage };
+  }
+}
+
+/**
+ * Create successful response
+ */
+function createSuccessResponse(result: ProcessingResult): Response {
+  return new Response(
+    JSON.stringify({
+      success: true,
+      ...result,
+    }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  );
+}
+
+/**
+ * Sleep helper for rate limiting delays
+ */
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}

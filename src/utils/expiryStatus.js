@@ -5,28 +5,64 @@ const toUtcDateStart = (date) => {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 };
 
-export const buildExpiryStatus = (expiryDate, now = new Date()) => {
+/**
+ * Build expiry status with pending order awareness
+ * 
+ * @param {string|Date} expiryDate - Document expiry date
+ * @param {Date} now - Current date (for testing)
+ * @param {Object|null} pendingOrder - Pending renewal order if exists
+ * @returns {Object} Expiry status object
+ */
+export const buildExpiryStatus = (expiryDate, now = new Date(), pendingOrder = null) => {
   // Condition 1: expiry_date is NULL
   if (!expiryDate) {
+    if (pendingOrder) {
+      return {
+        message: 'Renewal in progress',
+        days_left: null,
+        status: 'renewal_pending',
+        is_urgent: false,
+        is_expired: false,
+        expires_today: false,
+        has_pending_order: true,
+        order_number: pendingOrder.order_number
+      };
+    }
     return {
       message: 'No reminder available',
       days_left: null,
       status: 'no_reminder',
       is_urgent: false,
       is_expired: false,
-      expires_today: false
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     };
   }
 
   const expiry = new Date(expiryDate);
   if (Number.isNaN(expiry.getTime())) {
+    if (pendingOrder) {
+      return {
+        message: 'Renewal in progress',
+        days_left: null,
+        status: 'renewal_pending',
+        is_urgent: false,
+        is_expired: false,
+        expires_today: false,
+        has_pending_order: true,
+        order_number: pendingOrder.order_number
+      };
+    }
     return {
       message: 'Invalid expiry date',
       days_left: null,
       status: 'invalid',
       is_urgent: false,
       is_expired: false,
-      expires_today: false
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     };
   }
 
@@ -37,6 +73,19 @@ export const buildExpiryStatus = (expiryDate, now = new Date()) => {
   const isExpired = diffDays < 0;
   const isUrgent = diffDays <= 3;
 
+  if (pendingOrder) {
+    return {
+      message: 'Renewal in progress',
+      days_left: diffDays,
+      status: 'renewal_pending',
+      is_urgent: false,
+      is_expired: isExpired,
+      expires_today: expiresToday,
+      has_pending_order: true,
+      order_number: pendingOrder.order_number
+    };
+  }
+
   // Condition 4: Today > expiry_date (overdue)
   if (isExpired) {
     return {
@@ -45,7 +94,9 @@ export const buildExpiryStatus = (expiryDate, now = new Date()) => {
       status: 'overdue',
       is_urgent: true,
       is_expired: true,
-      expires_today: false
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     };
   }
 
@@ -57,7 +108,9 @@ export const buildExpiryStatus = (expiryDate, now = new Date()) => {
       status: 'no_reminder',
       is_urgent: false,
       is_expired: false,
-      expires_today: false
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     };
   }
 
@@ -69,6 +122,8 @@ export const buildExpiryStatus = (expiryDate, now = new Date()) => {
     status: 'reminder',
     is_urgent: isUrgent,
     is_expired: false,
-    expires_today: expiresToday
+    expires_today: expiresToday,
+    has_pending_order: false,
+    order_number: null
   };
 };

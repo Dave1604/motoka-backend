@@ -4,6 +4,7 @@ import * as response from '../utils/responses.js';
 import { logError } from '../utils/logger.js';
 import {
   getUserNotifications,
+  getUserNotificationsByType,
   markNotificationAsRead,
   deleteNotification,
   markAllNotificationsAsRead
@@ -34,6 +35,25 @@ router.get('/notifications', authenticate, async (req, res) => {
     return response.success(res, result, 'Notifications retrieved successfully');
   } catch (error) {
     logError('Error fetching notifications', error);
+    return response.serverError(res, error.message || 'Failed to fetch notifications');
+  }
+});
+
+/**
+ * GET /api/notifications/type/:category
+ * Fetch user's notifications filtered by category (Payments, Licenses Added, Warning, Successful)
+ */
+router.get('/notifications/type/:category', authenticate, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const category = req.params.category || 'All';
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.max(1, Math.min(50, parseInt(req.query.limit) || 20));
+
+    const result = await getUserNotificationsByType(userId, category, page, limit);
+    return response.success(res, result, 'Notifications retrieved successfully');
+  } catch (error) {
+    logError('Error fetching notifications by type', error);
     return response.serverError(res, error.message || 'Failed to fetch notifications');
   }
 });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, jest } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import request from 'supertest';
 import express from 'express';
 
@@ -10,6 +10,7 @@ const mockSupabaseUser = {
   update: jest.fn().mockReturnThis(),
   eq: jest.fn().mockReturnThis(),
   is: jest.fn().mockReturnThis(),
+  in: jest.fn().mockReturnThis(),
   neq: jest.fn().mockReturnThis(),
   single: jest.fn(),
   order: jest.fn().mockReturnThis(),
@@ -23,6 +24,7 @@ const mockSupabaseAdmin = {
   update: jest.fn().mockReturnThis(),
   eq: jest.fn().mockReturnThis(),
   is: jest.fn().mockReturnThis(),
+  in: jest.fn().mockReturnThis(),
   order: jest.fn().mockReturnThis(),
   range: jest.fn().mockReturnThis(),
   single: jest.fn().mockResolvedValue({ data: { user_id: 'ABC123', email: 'test@example.com', first_name: 'Test' }, error: null }),
@@ -237,10 +239,16 @@ const createValidCarData = (overrides = {}) => ({
 
 describe('Car Endpoints', () => {
   let app;
+  let consoleLogSpy;
+  let consoleWarnSpy;
+  let consoleErrorSpy;
 
   beforeEach(() => {
     app = createTestApp();
     jest.clearAllMocks();
+    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
     
     // Reset Supabase user mocks (kept for backwards compatibility)
     mockSupabaseUser.from.mockReturnThis();
@@ -302,6 +310,12 @@ describe('Car Endpoints', () => {
     mockDeleteFiles.mockResolvedValue();
     mockCreateInAppNotification.mockResolvedValue();
     mockSendWelcomeEmail.mockResolvedValue();
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
   });
 
   describe('Authentication Tests', () => {

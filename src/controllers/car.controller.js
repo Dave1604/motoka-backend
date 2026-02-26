@@ -21,6 +21,42 @@ import { createInAppNotification } from '../services/notification.service.js';
 import { sendWelcomeEmail } from '../services/email/carEmail.service.js';
 import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
+/**
+ * Get pending orders for multiple cars
+ * @param {Array<number>} carIds - Array of car IDs
+ * @returns {Promise<Map>} Map of car_id -> pending order
+ */
+async function getPendingOrdersForCars(carIds) {
+  if (!carIds || carIds.length === 0) {
+    return new Map();
+  }
+  
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: orders, error } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, car_id, order_number, status, created_at')
+      .in('car_id', carIds)
+      .in('status', ['pending', 'processing'])
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    // Create map: car_id -> most recent pending order
+    const orderMap = new Map();
+    (orders || []).forEach(order => {
+      if (!orderMap.has(order.car_id)) {
+        orderMap.set(order.car_id, order);
+      }
+    });
+    
+    return orderMap;
+  } catch (error) {
+    logError('Failed to fetch pending orders', error);
+    return new Map();
+  }
+}
+
 const isValidUUID = (uuid) => {
   return PATTERNS.UUID.test(uuid);
 };
@@ -130,7 +166,15 @@ export const addCar = async (req, res) => {
       // Non-blocking error for notifications - don't interrupt car creation response
     }
     
-    return response.created(res, { car }, 'Car registered successfully');
+    // Build expiry status for the created car
+    const expiryStatus = buildExpiryStatus(car.expiry_date);
+    const carWithExpiry = {
+      ...car,
+      reminder: expiryStatus,
+      expiry_status: expiryStatus
+    };
+    
+    return response.created(res, { car: carWithExpiry }, 'Car registered successfully');
   } catch (error) {
     // Monitor and cleanup temp files on error
     await monitorFileCleanup(tempFileUrls, 'addCar');
@@ -166,14 +210,27 @@ export const getCars = async (req, res) => {
     }
     
     const page = Math.max(PAGINATION.MIN_PAGE, parseInt(pageParam, 10) || PAGINATION.DEFAULT_PAGE);
-    const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT));
+    const limit = Math.min(
+      PAGINATION.MAX_LIMIT,
+      Math.max(PAGINATION.MIN_LIMIT, parseInt(limitParam, 10) || PAGINATION.DEFAULT_LIMIT)
+    );
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
-    const carsWithReminder = (result.cars || []).map((car) => ({
-      ...car,
-      reminder: buildExpiryStatus(car.expiry_date)
-    }));
-    
+
+    // Check for pending orders
+    const carIds = (result.cars || []).map(car => car.id);
+    const pendingOrdersMap = await getPendingOrdersForCars(carIds);
+
+    const carsWithReminder = (result.cars || []).map((car) => {
+      const pendingOrder = pendingOrdersMap.get(car.id) || null;
+      const expiryStatus = buildExpiryStatus(car.expiry_date, new Date(), pendingOrder);
+      return {
+        ...car,
+        reminder: expiryStatus,
+        expiry_status: expiryStatus
+      };
+    });
+
     return response.success(res, { ...result, cars: carsWithReminder }, 'Cars retrieved successfully');
   } catch (error) {
     return handleCarError(res, error);
@@ -191,9 +248,16 @@ export const getCarBySlug = async (req, res) => {
     
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
+
+    // Check for pending order
+    const pendingOrdersMap = await getPendingOrdersForCars([car.id]);
+    const pendingOrder = pendingOrdersMap.get(car.id) || null;
+    const expiryStatus = buildExpiryStatus(car.expiry_date, new Date(), pendingOrder);
+
     const carWithReminder = {
       ...car,
-      reminder: buildExpiryStatus(car.expiry_date)
+      reminder: expiryStatus,
+      expiry_status: expiryStatus
     };
     
     return response.success(res, { car: carWithReminder }, 'Car retrieved successfully');
@@ -262,12 +326,23 @@ export const updateCar = async (req, res) => {
     const updateData = buildUpdateData(sanitizedBody, existingCar);
     const updatedCar = await updateCarBySlug(supabaseUser, slug, userId, updateData, identifiers);
     
+    // Check for pending order for the updated car
+    const pendingOrdersMap = await getPendingOrdersForCars([updatedCar.id]);
+    const pendingOrder = pendingOrdersMap.get(updatedCar.id) || null;
+    
+    const updatedExpiryStatus = buildExpiryStatus(updatedCar.expiry_date, new Date(), pendingOrder);
+    const updatedCarWithExpiry = {
+      ...updatedCar,
+      reminder: updatedExpiryStatus,
+      expiry_status: updatedExpiryStatus
+    };
+    
     // Delete old files after successful update
     if (filesToDelete.length > 0) {
       await monitorFileCleanup(filesToDelete, 'updateCar-oldFiles');
     }
     
-    return response.success(res, { car: updatedCar }, 'Car updated successfully');
+    return response.success(res, { car: updatedCarWithExpiry }, 'Car updated successfully');
   } catch (error) {
     // Monitor and cleanup temp files on error
     await monitorFileCleanup(tempFileUrls, 'updateCar');

@@ -6,23 +6,38 @@ describe('buildExpiryStatus', () => {
 
   it('should return no_reminder when expiry date is null/undefined', () => {
     expect(buildExpiryStatus(null, fixedNow)).toEqual({
+      message: 'No reminder available',
+      days_left: null,
       status: 'no_reminder',
-      days_remaining: null,
-      label: 'No reminder available',
+      is_urgent: false,
+      is_expired: false,
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     });
 
     expect(buildExpiryStatus(undefined, fixedNow)).toEqual({
+      message: 'No reminder available',
+      days_left: null,
       status: 'no_reminder',
-      days_remaining: null,
-      label: 'No reminder available',
+      is_urgent: false,
+      is_expired: false,
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     });
   });
 
   it('should return invalid status for non-parsable expiry date', () => {
     expect(buildExpiryStatus('not-a-date', fixedNow)).toEqual({
+      message: 'Invalid expiry date',
+      days_left: null,
       status: 'invalid',
-      days_remaining: null,
-      label: 'Invalid expiry date',
+      is_urgent: false,
+      is_expired: false,
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     });
   });
 
@@ -31,17 +46,22 @@ describe('buildExpiryStatus', () => {
 
     expect(result.status).toBe('overdue');
     // 2024-12-20 to 2025-01-01 inclusive difference is -12 days at UTC midnight
-    expect(result.days_remaining).toBeLessThan(0);
-    expect(result.label).toBe('Overdue');
+    expect(result.days_left).toBeLessThan(0);
+    expect(result.message).toBe('Overdue');
   });
 
   it('should return reminder with 0 days remaining when expiry is today', () => {
     const result = buildExpiryStatus('2025-01-01', fixedNow);
 
     expect(result).toEqual({
+      message: 'Expires today',
+      days_left: 0,
       status: 'reminder',
-      days_remaining: 0,
-      label: '0 days remaining',
+      is_urgent: true,
+      is_expired: false,
+      expires_today: true,
+      has_pending_order: false,
+      order_number: null
     });
   });
 
@@ -49,17 +69,22 @@ describe('buildExpiryStatus', () => {
     const result = buildExpiryStatus('2025-01-15', fixedNow);
 
     expect(result.status).toBe('reminder');
-    expect(result.days_remaining).toBe(14);
-    expect(result.label).toBe('14 days remaining');
+    expect(result.days_left).toBe(14);
+    expect(result.message).toBe('14 days to expire');
   });
 
   it('should correctly pluralize day label for single day remaining', () => {
     const result = buildExpiryStatus('2025-01-02', fixedNow);
 
     expect(result).toEqual({
+      message: '1 day to expire',
+      days_left: 1,
       status: 'reminder',
-      days_remaining: 1,
-      label: '1 day remaining',
+      is_urgent: true,
+      is_expired: false,
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     });
   });
 
@@ -67,9 +92,14 @@ describe('buildExpiryStatus', () => {
     const result = buildExpiryStatus('2025-02-15', fixedNow);
 
     expect(result).toEqual({
+      message: 'No reminder available',
+      days_left: 45,
       status: 'no_reminder',
-      days_remaining: 45,
-      label: 'No reminder available',
+      is_urgent: false,
+      is_expired: false,
+      expires_today: false,
+      has_pending_order: false,
+      order_number: null
     });
   });
 });
