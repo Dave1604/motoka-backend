@@ -96,7 +96,7 @@ export function getUserFriendlyMessage(error) {
   if (error instanceof Error) {
     if (error.name === 'MonicreditError' || error.name === 'PaystackError') {
       // For validation/config errors, surface a useful message
-      if (error.code === 'VALIDATION_ERROR') {
+      if (error.code === 'VALIDATION_ERROR' || error.code === 'MISSING_PHONE') {
         return error.message || 'Invalid payment details. Please check your information.';
       }
       return 'Payment processing error. Please try again or contact support.';

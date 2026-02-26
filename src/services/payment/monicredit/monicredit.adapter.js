@@ -95,6 +95,20 @@ export class MonicreditAdapter {
         'VALIDATION_ERROR'
       );
     }
+
+    // Monicredit requires a phone number — reject early with a clear message
+    // so the user knows to complete their profile rather than seeing a generic error.
+    if (!customerData.phone || !customerData.phone.trim()) {
+      logError('[Monicredit] Missing phone number', {
+        transaction_reference: transaction.reference,
+        userId
+      });
+      throw new MonicreditError(
+        'A phone number is required for bank transfer. Please add your phone number in Settings → Profile, then try again.',
+        400,
+        'MISSING_PHONE'
+      );
+    }
     
     const metaData = this._buildMetadata({
       transaction,

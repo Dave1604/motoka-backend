@@ -37,9 +37,10 @@ function sanitizeString(value, maxLength) {
     return '';
   }
   
-  // Use validator's trim and escape functions
+  // Trim whitespace only — do NOT HTML-escape. This data goes to a payment
+  // API (Monicredit), not into HTML. validator.escape() would corrupt names
+  // like "O'Brien" into "O&#x27;Brien" and cause API 400 rejections.
   let sanitized = validator.trim(value);
-  sanitized = validator.escape(sanitized);
   
   // Remove control characters (except newlines and tabs)
   sanitized = sanitized.replace(/[\x00-\x08\x0B-\x0C\x0E-\x1F\x7F]/g, '');
