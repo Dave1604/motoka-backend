@@ -461,39 +461,39 @@ export async function getUserTransactions(userId, options = {}) {
     throw new TransactionError('Failed to retrieve transactions', HTTP_STATUS.SERVER_ERROR);
   }
   
-  const enrichedTransactions = await Promise.all(
-    (transactions || []).map(async (tx) => {
-      const { data: order, error: orderError } = await supabaseAdmin
+  // Batch-fetch all orders for these transactions in one query (avoids N+1)
+  const txIds = (transactions || []).map(tx => tx.id);
+  const { data: allOrders } = txIds.length > 0
+    ? await supabaseAdmin
         .from('renewal_orders')
-        .select('id, order_number, status, selected_items')
-        .eq('transaction_id', tx.id)
-        .maybeSingle();
-      
-      let items = [];
-      if (order && !orderError && order.selected_items) {
-        const itemKeys = order.selected_items;
-        
-        if (itemKeys.length > 0) {
-          const { data: renewalItems } = await supabaseAdmin
-            .from('renewal_items')
-            .select('item_key, name, price')
-            .in('item_key', itemKeys);
-          
-          items = (renewalItems || []).map(item => ({
-            name: item.name,
-            price: item.price,
-            quantity: 1
-          }));
-        }
-      }
-      
-      return {
-        ...tx,
-        order: order || null,
-        items: items
-      };
-    })
-  );
+        .select('id, order_number, status, selected_items, transaction_id')
+        .in('transaction_id', txIds)
+    : { data: [] };
+
+  // Collect all unique item keys across all orders, then fetch names in one query
+  const allItemKeys = [...new Set(
+    (allOrders || []).flatMap(o => o.selected_items || [])
+  )];
+  const { data: allRenewalItems } = allItemKeys.length > 0
+    ? await supabaseAdmin
+        .from('renewal_items')
+        .select('item_key, name, price')
+        .in('item_key', allItemKeys)
+    : { data: [] };
+
+  const itemByKey = Object.fromEntries((allRenewalItems || []).map(i => [i.item_key, i]));
+  const orderByTxId = Object.fromEntries((allOrders || []).map(o => [o.transaction_id, o]));
+
+  const enrichedTransactions = (transactions || []).map(tx => {
+    const order = orderByTxId[tx.id] || null;
+    const items = order?.selected_items?.length > 0
+      ? order.selected_items
+          .map(key => itemByKey[key])
+          .filter(Boolean)
+          .map(item => ({ name: item.name, price: item.price, quantity: 1 }))
+      : [];
+    return { ...tx, order: order || null, items };
+  });
   
   const totalTransactions = count || 0;
   const totalPages = Math.ceil(totalTransactions / limit);
