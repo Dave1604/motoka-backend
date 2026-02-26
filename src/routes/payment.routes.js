@@ -119,6 +119,7 @@ router.post(
   initializePayment
 );
 
+
 router.get(
   '/payments/verify/:reference',
   authenticate,

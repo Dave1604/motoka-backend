@@ -182,7 +182,10 @@ export const verifyPayment = async (req, res) => {
     
     if (transaction.status === PAYMENT_STATUS.PENDING) {
       const isSubscription = metaData?.subscription_id || metaData?.is_subscription;
-      const orderType = isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL;
+      const isPlateNumber = metaData?.payment_type === 'plate_number';
+      const orderType = isPlateNumber
+        ? ORDER_TYPE.PLATE_NUMBER
+        : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
       const paymentScheduleIds = metaData?.paymentScheduleId || metaData?.payment_schedule_id || metaData?.selected_items || [];
       
       try {

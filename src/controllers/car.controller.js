@@ -35,9 +35,10 @@ async function getPendingOrdersForCars(carIds) {
     const supabaseAdmin = getSupabaseAdmin();
     const { data: orders, error } = await supabaseAdmin
       .from('renewal_orders')
-      .select('id, car_id, order_number, status, created_at')
+      .select('id, car_id, order_number, status, order_type, created_at')
       .in('car_id', carIds)
       .in('status', ['pending', 'processing'])
+      .neq('order_type', 'plate_number') // Plate number orders don't affect expiry status
       .order('created_at', { ascending: false });
     
     if (error) throw error;

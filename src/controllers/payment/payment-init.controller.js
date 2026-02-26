@@ -20,7 +20,8 @@ import {
   resolveStateAndLGA
 } from '../../services/location.service.js';
 import {
-  buildPaymentMetadata
+  buildPaymentMetadata,
+  nairaToKobo
 } from '../../utils/paymentHelpers.js';
 import {
   PAYMENT_STATUS,
@@ -151,22 +152,29 @@ export const initializePayment = async (req, res) => {
       payment_type = PAYMENT_TYPE.RENEWAL_MANUAL,
       payment_gateway: rawPaymentGateway,
       delivery_details,
-      meta_data
+      meta_data,
+      // Plate number specific fields
+      plate_type,
+      sub_type = null
     } = req.body;
-    
-    // Default to 12 months if not provided; reject if provided but invalid
+
+    const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER;
+
+    // ── Renewal months (not applicable for plate payments) ──────────────────
     const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
-    const rawMonths = parseInt(rawRenewalMonths);
-    let renewal_months;
-    if (!rawRenewalMonths || isNaN(rawMonths)) {
-      renewal_months = 12;
-    } else if (!VALID_RENEWAL_MONTHS.includes(rawMonths)) {
-      return res.status(400).json({
-        status: false,
-        message: `Invalid renewal_months. Must be one of: ${VALID_RENEWAL_MONTHS.join(', ')}`,
-      });
-    } else {
-      renewal_months = rawMonths;
+    let renewal_months = 0;
+    if (!isPlatePayment) {
+      const rawMonths = parseInt(rawRenewalMonths);
+      if (!rawRenewalMonths || isNaN(rawMonths)) {
+        renewal_months = 12;
+      } else if (!VALID_RENEWAL_MONTHS.includes(rawMonths)) {
+        return res.status(400).json({
+          status: false,
+          message: `Invalid renewal_months. Must be one of: ${VALID_RENEWAL_MONTHS.join(', ')}`,
+        });
+      } else {
+        renewal_months = rawMonths;
+      }
     }
     
     let payment_gateway = rawPaymentGateway?.toLowerCase().trim() || null;
@@ -185,6 +193,7 @@ export const initializePayment = async (req, res) => {
       gateway: payment_gateway,
       userId,
       carSlug: car_slug,
+      paymentType: payment_type,
       renewalMonths: renewal_months
     });
     
@@ -195,57 +204,107 @@ export const initializePayment = async (req, res) => {
         HTTP_STATUS.BAD_REQUEST
       );
     }
-    
-    const deliveryData = delivery_details || meta_data || {};
-    
-    const hasDeliveryDetails = !!(
-      deliveryData &&
-      (deliveryData.address || deliveryData.delivery_address || 
-       deliveryData.state || deliveryData.state_id || 
-       deliveryData.lga || deliveryData.lga_id || 
-       deliveryData.delivery_contact || deliveryData.contact)
-    );
 
+    // ── Delivery (only for non-plate payments) ──────────────────────────────
+    let deliveryData = {};
+    let hasDeliveryDetails = false;
     let stateValidation = { valid: true, delivery_fee: 0 };
-    
-    if (hasDeliveryDetails) {
-      const address = deliveryData.address || deliveryData.delivery_address;
-      const stateInput = deliveryData.state_id !== undefined ? deliveryData.state_id : deliveryData.state;
-      const lgaInput = deliveryData.lga_id !== undefined ? deliveryData.lga_id : deliveryData.lga;
-      const contact = deliveryData.contact || deliveryData.delivery_contact;
+
+    if (!isPlatePayment) {
+      deliveryData = delivery_details || meta_data || {};
+
+      hasDeliveryDetails = !!(
+        deliveryData &&
+        (deliveryData.address || deliveryData.delivery_address || 
+         deliveryData.state || deliveryData.state_id || 
+         deliveryData.lga || deliveryData.lga_id || 
+         deliveryData.delivery_contact || deliveryData.contact)
+      );
       
-      if (!address || stateInput === undefined || stateInput === null || lgaInput === undefined || lgaInput === null || !contact) {
+      if (hasDeliveryDetails) {
+        const address = deliveryData.address || deliveryData.delivery_address;
+        const stateInput = deliveryData.state_id !== undefined ? deliveryData.state_id : deliveryData.state;
+        const lgaInput = deliveryData.lga_id !== undefined ? deliveryData.lga_id : deliveryData.lga;
+        const contact = deliveryData.contact || deliveryData.delivery_contact;
+        
+        if (!address || stateInput === undefined || stateInput === null || lgaInput === undefined || lgaInput === null || !contact) {
+          return paymentResponse.error(
+            res,
+            'Delivery details are incomplete. Provide address, state/state_id, lga/lga_id, and contact, or omit delivery details entirely.',
+            HTTP_STATUS.BAD_REQUEST
+          );
+        }
+        
+        stateValidation = await resolveStateAndLGA(stateInput, lgaInput);
+        if (!stateValidation.valid) {
+          return paymentResponse.error(res, stateValidation.error, HTTP_STATUS.BAD_REQUEST);
+        }
+        
+        deliveryData.state = stateValidation.stateCode || (typeof stateInput === 'string' ? stateInput : null);
+        deliveryData.lga = stateValidation.lgaName || (typeof lgaInput === 'string' ? lgaInput : null);
+      }
+    }
+
+    // ── Amount calculation ──────────────────────────────────────────────────
+    let renewalAmount, deliveryFee, amount;
+
+    if (isPlatePayment) {
+      // Plate number: price comes from plate_number_prices table
+      if (!plate_type) {
+        return paymentResponse.error(res, 'plate_type is required for plate number payments', HTTP_STATUS.BAD_REQUEST);
+      }
+
+      const supabaseAdmin = getSupabaseAdmin();
+      let priceQuery = supabaseAdmin
+        .from('plate_number_prices')
+        .select('*')
+        .eq('plate_type', plate_type);
+
+      if (sub_type) {
+        priceQuery = priceQuery.eq('sub_type', sub_type);
+      } else {
+        priceQuery = priceQuery.is('sub_type', null);
+      }
+
+      const { data: priceData, error: priceError } = await priceQuery.single();
+
+      if (priceError || !priceData) {
         return paymentResponse.error(
           res,
-          'Delivery details are incomplete. Provide address, state/state_id, lga/lga_id, and contact, or omit delivery details entirely.',
+          `No price configured for plate type "${plate_type}"${sub_type ? ` / sub-type "${sub_type}"` : ''}`,
           HTTP_STATUS.BAD_REQUEST
         );
       }
-      
-      stateValidation = await resolveStateAndLGA(stateInput, lgaInput);
-      if (!stateValidation.valid) {
-        return paymentResponse.error(res, stateValidation.error, HTTP_STATUS.BAD_REQUEST);
+
+      // Prices stored in naira → convert to kobo
+      renewalAmount = nairaToKobo(Number(priceData.price));
+      deliveryFee = 0;
+      amount = renewalAmount;
+
+      logDebug('[Payment Init] Plate payment amount', {
+        plateType: plate_type,
+        subType: sub_type,
+        amountNaira: priceData.price
+      });
+    } else {
+      // Renewal: price determined by selected payment schedule items
+      const validation = await validateRenewalItemsSelection(payment_schedule_id);
+      if (!validation.valid) {
+        return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
       }
-      
-      deliveryData.state = stateValidation.stateCode || (typeof stateInput === 'string' ? stateInput : null);
-      deliveryData.lga = stateValidation.lgaName || (typeof lgaInput === 'string' ? lgaInput : null);
+
+      renewalAmount = validation.total;
+      deliveryFee = stateValidation.delivery_fee;
+      amount = renewalAmount + deliveryFee;
     }
-    
-    const validation = await validateRenewalItemsSelection(payment_schedule_id);
-    if (!validation.valid) {
-      return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
-    }
-    
-    const renewalAmount = validation.total;
-    const deliveryFee = stateValidation.delivery_fee;
-    const amount = renewalAmount + deliveryFee;
     
     logDebug('[Payment Init] Amount breakdown', {
       renewalAmount_naira: renewalAmount / 100,
       deliveryFee_naira: deliveryFee / 100,
       total_naira: amount / 100
     });
-    
+
+    // supabaseAdmin may already be defined above (plate payment path), get it if not
     const supabaseAdmin = getSupabaseAdmin();
     const { data: car, error: carError } = await supabaseAdmin
       .from('cars')
@@ -296,7 +355,9 @@ export const initializePayment = async (req, res) => {
         deliveryFee,
         deliveryDetails: hasDeliveryDetails ? deliveryData : null,
         userId,
-        paymentGateway: payment_gateway
+        paymentGateway: payment_gateway,
+        plateType: isPlatePayment ? plate_type : null,
+        subType: isPlatePayment ? (sub_type || null) : null
       })
     });
     

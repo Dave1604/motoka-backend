@@ -201,7 +201,10 @@ async function handleChargeSuccess(data, eventId) {
   }
   
   const isSubscription = metadata.subscription_id || metadata.is_subscription;
-  const orderType = isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL;
+  const isPlateNumber = metadata.payment_type === 'plate_number';
+  const orderType = isPlateNumber
+    ? ORDER_TYPE.PLATE_NUMBER
+    : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
   
   const processResult = await processPaymentSuccess({
@@ -422,7 +425,10 @@ async function handleMonicreditPaymentSuccess(data) {
   }
   
   const isSubscription = metadata.subscription_id || metadata.is_subscription;
-  const orderType = isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL;
+  const isPlateNumber = metadata.payment_type === 'plate_number';
+  const orderType = isPlateNumber
+    ? ORDER_TYPE.PLATE_NUMBER
+    : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
   
   await updateTransactionStatus(transaction.reference, {

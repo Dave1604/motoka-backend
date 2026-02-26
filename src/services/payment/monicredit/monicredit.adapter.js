@@ -58,20 +58,34 @@ export class MonicreditAdapter {
     renewalAmount,
     deliveryFee,
     deliveryData,
-    hasDeliveryDetails
+    hasDeliveryDetails,
+    plateType,
+    subType
   }) {
     const profile = await this._getUserProfile(userId);
-    const items = await this._buildPaymentItems(paymentScheduleIds, deliveryFee);
+
+    const isPlateNumber = paymentType === 'plate_number';
+
+    let items;
+    if (isPlateNumber) {
+      // For plate number payments build a single flat line item
+      items = this._buildPlateNumberItem(plateType, subType, renewalAmount);
+    } else {
+      items = await this._buildPaymentItems(paymentScheduleIds, deliveryFee);
+    }
     
     // Validate items array is not empty
     if (!items || items.length === 0) {
       logError('[Monicredit] No payment items found', {
         transaction_reference: transaction.reference,
         paymentScheduleIds,
-        deliveryFee
+        deliveryFee,
+        paymentType
       });
       throw new MonicreditError(
-        'No payment items selected. Please select at least one renewal item.',
+        isPlateNumber
+          ? 'Plate number payment amount could not be resolved. Please try again.'
+          : 'No payment items selected. Please select at least one renewal item.',
         400,
         'VALIDATION_ERROR'
       );
@@ -120,7 +134,9 @@ export class MonicreditAdapter {
       renewalAmount,
       deliveryFee,
       deliveryData,
-      hasDeliveryDetails
+      hasDeliveryDetails,
+      plateType,
+      subType
     });
 
     // Monicredit expects all monetary values in Naira. Convert items from kobo.
@@ -363,6 +379,28 @@ export class MonicreditAdapter {
   }
 
   /**
+   * Builds a single Monicredit line item for a plate number payment.
+   * Amount is in kobo (caller converts to Naira before sending to API).
+   *
+   * @param {string} plateType  - e.g. 'Normal', 'Customized', 'Dealership', 'Reprint'
+   * @param {string|null} subType - e.g. 'Cooperate', 'Business' (Dealership only)
+   * @param {number} amountKobo - Plate price in kobo
+   * @returns {Array}
+   */
+  static _buildPlateNumberItem(plateType, subType, amountKobo) {
+    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE || 'REV68dff2878cb81';
+    const label = subType && subType !== plateType
+      ? `${plateType} Plate Number (${subType})`
+      : `${plateType || 'Plate'} Number Application`;
+
+    return [{
+      unit_cost: amountKobo,
+      item: label,
+      revenue_head_code: revenueHeadCode
+    }];
+  }
+
+  /**
    * Constructs the Monicredit customer object from user profile data.
    *
    * Falls back to the email local-part as `first_name` when no profile
@@ -416,7 +454,9 @@ export class MonicreditAdapter {
     renewalAmount, 
     deliveryFee, 
     deliveryData, 
-    hasDeliveryDetails 
+    hasDeliveryDetails,
+    plateType,
+    subType
   }) {
     return {
       transaction_id: transaction.id,
@@ -430,7 +470,9 @@ export class MonicreditAdapter {
       delivery_fee: deliveryFee,
       delivery_details: hasDeliveryDetails ? deliveryData : null,
       vehicle: `${car.vehicle_make} ${car.vehicle_model}`,
-      registration: car.registration_no || 'N/A'
+      registration: car.registration_no || 'N/A',
+      ...(plateType ? { plate_type: plateType } : {}),
+      ...(subType ? { sub_type: subType } : {})
     };
   }
 }
