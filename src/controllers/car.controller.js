@@ -275,6 +275,61 @@ export const updateCar = async (req, res) => {
   }
 };
 
+export const applyPlateNumber = async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const userId = req.user.id;
+
+    if (!slug || !isValidUUID(slug)) {
+      return response.error(res, ERROR_MESSAGES.INVALID_SLUG, HTTP_STATUS.BAD_REQUEST);
+    }
+
+    const supabaseUser = getSupabaseUser(req.token);
+    await verifyCarExists(supabaseUser, slug, userId);
+
+    const {
+      type,
+      plate_number,
+      preferred_name,
+      business_type,
+      company_name,
+      company_address,
+      company_phone,
+      cac_number,
+    } = req.body;
+
+    // Resolve file uploads (if uploaded) or fall back to URL strings
+    const cac_document = req.uploadedFiles?.cac_document?.[0] ?? req.body.cac_document ?? null;
+    const letterhead = req.uploadedFiles?.letterhead?.[0] ?? req.body.letterhead ?? null;
+    const means_of_identification = req.uploadedFiles?.means_of_identification?.[0] ?? req.body.means_of_identification ?? null;
+
+    const plateData = {
+      type: type ?? null,
+      plate_number: plate_number ?? null,
+      preferred_name: preferred_name ?? null,
+      business_type: business_type ?? null,
+      company_name: company_name ?? null,
+      company_address: company_address ?? null,
+      company_phone: company_phone ?? null,
+      cac_number: cac_number ?? null,
+      cac_document,
+      letterhead,
+      means_of_identification,
+    };
+
+    // Remove null values so we only patch fields that were actually sent
+    const updateData = Object.fromEntries(
+      Object.entries(plateData).filter(([, v]) => v !== null && v !== undefined)
+    );
+
+    const updatedCar = await updateCarBySlug(supabaseUser, slug, userId, updateData);
+
+    return response.success(res, { car: updatedCar }, 'Plate number application submitted successfully');
+  } catch (error) {
+    return handleCarError(res, error);
+  }
+};
+
 export const deleteCar = async (req, res) => {
   try {
     const { slug } = req.params;
