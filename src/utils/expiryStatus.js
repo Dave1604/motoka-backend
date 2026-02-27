@@ -109,8 +109,8 @@ export const buildExpiryStatus = (expiryDate, now = new Date(), pendingOrder = n
       is_urgent: false,
       is_expired: false,
       expires_today: false,
-      has_pending_order: !!pendingOrder,
-      order_number: pendingOrder?.order_number || null
+      has_pending_order: false,
+      order_number: null
     };
   }
 

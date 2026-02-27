@@ -29,6 +29,7 @@ export class PaymentSuccessService {
         : (transaction.metadata || {});
       
       const isSubscription = metadata.subscription_id || metadata.is_subscription;
+      const paymentType = metadata.payment_type || 'renewal_manual';
 
       if (order?.order_number) {
         logInfo('[Payment Success] Order created', { orderNumber: order.order_number });
@@ -74,13 +75,15 @@ export class PaymentSuccessService {
           reference: transaction.reference,
           orderNumber: order?.order_number,
           carDetails: car,
-          documentNames
+          documentNames,
+          paymentType
         }),
         this._sendInAppNotification({
           userId: transaction.user_id,
           amount: transaction.amount,
           orderNumber: order?.order_number,
-          documentNames
+          documentNames,
+          paymentType
         })
       ]);
       
@@ -118,7 +121,7 @@ export class PaymentSuccessService {
     }
   }
 
-  static async _sendEmailNotification({ email, firstName, amount, reference, orderNumber, carDetails, documentNames }) {
+  static async _sendEmailNotification({ email, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType }) {
     try {
       logInfo('[Payment Success] Attempting to send email', { email, reference, orderNumber });
       const result = await sendPaymentSuccessEmail({
@@ -128,7 +131,8 @@ export class PaymentSuccessService {
         reference,
         orderNumber: orderNumber || null,
         carDetails,
-        documentNames
+        documentNames,
+        paymentType
       });
       logInfo('[Payment Success] Email sent successfully', { email, reference, emailId: result?.id });
     } catch (emailError) {
@@ -140,12 +144,13 @@ export class PaymentSuccessService {
     }
   }
 
-  static async _sendInAppNotification({ userId, amount, orderNumber, documentNames }) {
+  static async _sendInAppNotification({ userId, amount, orderNumber, documentNames, paymentType }) {
     try {
       const docPart = documentNames?.length > 0 ? ` for ${documentNames.join(', ')}` : '';
+      const isPlateNumber = paymentType === 'plate_number';
       const message = orderNumber
-        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} created for processing.`
-        : `Payment of ${formatAmount(amount)} successful${docPart}! Your renewal is being processed.`;
+        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} ${isPlateNumber ? 'created for your plate number application.' : 'created for processing.'}`
+        : `Payment of ${formatAmount(amount)} successful${docPart}! Your ${isPlateNumber ? 'plate number application' : 'renewal'} is being processed.`;
       
       await createInAppNotification(
         userId,

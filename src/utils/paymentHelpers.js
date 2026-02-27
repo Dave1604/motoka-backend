@@ -160,7 +160,10 @@ export function buildPaymentMetadata({
   paymentScheduleId = [],
   renewalAmount = null,
   deliveryFee = 0,
-  deliveryDetails = null
+  deliveryDetails = null,
+  // Plate number specific (optional)
+  plateType = null,
+  subType = null
 }) {
   const scheduleIds = paymentScheduleId.length > 0 ? paymentScheduleId : selectedItems;
   
@@ -175,6 +178,7 @@ export function buildPaymentMetadata({
     renewal_amount: renewalAmount,
     delivery_fee: deliveryFee,
     delivery_details: deliveryDetails,
+    ...(plateType ? { plate_type: plateType, sub_type: subType } : {}),
     initiated_at: new Date().toISOString()
   });
 }
