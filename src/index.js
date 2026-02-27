@@ -14,16 +14,54 @@ import carRoutes from './routes/car.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import adminAuthRoutes from './routes/adminAuth.routes.js';
+import notificationRoutes from './routes/notifications.routes.js';
+import paymentRoutes from './routes/payment.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
+import { getCorsConfig } from './config/cors.config.js';
+import paymentMetrics from './services/payment/metrics.service.js';
+import { logInfo, logWarn } from './utils/logger.js';
+
+const isProduction = process.env.NODE_ENV === 'production';
 
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'JWT_SECRET'];
+
+const productionRequiredEnvVars = [
+  'MONICREDIT_WEBHOOK_SECRET',
+  'ALLOWED_ORIGINS'
+];
+
+
 const missingEnvVars = requiredEnvVars.filter(key => !process.env[key]);
 
-// Always check required environment variables regardless of environment
 if (missingEnvVars.length > 0) {
   console.error('Missing required environment variables:', missingEnvVars.join(', '));
   console.error('Application cannot start without these variables.');
   process.exit(1);
+}
+
+if (isProduction) {
+  const missingProductionVars = productionRequiredEnvVars.filter(key => !process.env[key]);
+  
+  if (missingProductionVars.length > 0) {
+    console.error('╔══════════════════════════════════════════════════════════════╗');
+    console.error('║  PRODUCTION CONFIGURATION ERROR                             ║');
+    console.error('╚══════════════════════════════════════════════════════════════╝');
+    console.error('');
+    console.error('Missing required production environment variables:');
+    missingProductionVars.forEach(varName => {
+      console.error(`  ❌ ${varName}`);
+    });
+    console.error('');
+    console.error('These variables are mandatory for production security:');
+    console.error('  • MONICREDIT_WEBHOOK_SECRET: Required for webhook signature verification');
+    console.error('  • ALLOWED_ORIGINS: Required for CORS origin restrictions');
+    console.error('');
+    console.error('Set these variables in your production environment before starting.');
+    console.error('Application cannot start without these security configurations.');
+    process.exit(1);
+  }
+  
+  console.log('✅ Production security configuration validated');
 }
 
 const app = express();
@@ -31,7 +69,6 @@ const PORT = process.env.PORT || 3000;
 
 app.set('trust proxy', 1);
 
-// Configure helmet for comprehensive security headers
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -47,28 +84,23 @@ app.use(helmet({
     },
   },
   hsts: {
-    maxAge: 31536000, // 1 year
+    maxAge: 31536000,
     includeSubDomains: true,
     preload: true
   },
   referrerPolicy: {
     policy: "strict-origin-when-cross-origin"
   },
-  // Keep existing custom headers
   xContentTypeOptions: true,
   xFrameOptions: { action: 'deny' },
   xXssProtection: true,
   hidePoweredBy: true
 }));
 
-// CORS - Allow all origins during development/testing phase
-// TODO: Restrict to specific origins in production
-app.use(cors({
-  origin: true,
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Cache-Control', 'cache-control']
-}));
+app.use(cors(getCorsConfig()));
+
+app.use('/api/webhooks/paystack', express.raw({ type: 'application/json', limit: '2mb' }));
+app.use('/api/webhooks/monicredit', express.raw({ type: 'application/json', limit: '2mb' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -100,13 +132,9 @@ app.use('/api/settings/profile', profileRoutes);
 // Mount admin auth routes BEFORE admin routes to avoid middleware interference
 app.use('/api/admin', adminAuthRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api', notificationRoutes);
+app.use('/api', paymentRoutes);
 
-// Notifications stub endpoint (returns empty array until full implementation)
-app.get('/api/notifications', (req, res) => {
-  res.json({ success: true, message: 'Notifications retrieved', data: { notifications: [] } });
-});
-
-// Detailed API documentation with payloads
 app.get('/api/docs', (req, res) => {
   const baseUrl = `${req.protocol}://${req.get('host')}/api`;
   
@@ -510,6 +538,104 @@ app.listen(PORT, '0.0.0.0', () => {
 ║   Status: ${missingEnvVars.length ? 'DEGRADED' : 'READY ✅'}                       ║
 ╚══════════════════════════════════════════════╝
   `);
+  
+  const METRICS_LOG_INTERVAL_MS = 5 * 60 * 1000;
+  
+  setInterval(() => {
+    try {
+      const snapshot = paymentMetrics.getSnapshot();
+      const successRate = paymentMetrics.getSuccessRate();
+      const webhookSuccessRate = paymentMetrics.getWebhookSuccessRate();
+      
+      logInfo('[Payment Metrics] Periodic snapshot', {
+        transactions: {
+          total: snapshot.transactions.total,
+          successful: snapshot.transactions.successful,
+          failed: snapshot.transactions.failed,
+          pending: snapshot.transactions.pending,
+          successRate: `${successRate}%`
+        },
+        amounts: {
+          total_kobo: snapshot.amounts.total,
+          total_naira: (snapshot.amounts.total / 100).toFixed(2),
+          successful_kobo: snapshot.amounts.successful,
+          successful_naira: (snapshot.amounts.successful / 100).toFixed(2),
+          average_kobo: snapshot.amounts.average,
+          average_naira: (snapshot.amounts.average / 100).toFixed(2)
+        },
+        gateways: {
+          paystack: {
+            total: snapshot.gateways.paystack.total,
+            successRate: `${paymentMetrics.getGatewaySuccessRate('paystack')}%`
+          },
+          monicredit: {
+            total: snapshot.gateways.monicredit.total,
+            successRate: `${paymentMetrics.getGatewaySuccessRate('monicredit')}%`
+          }
+        },
+        webhooks: {
+          received: snapshot.webhooks.received,
+          processed: snapshot.webhooks.processed,
+          failed: snapshot.webhooks.failed,
+          successRate: `${webhookSuccessRate}%`,
+          signatureVerified: snapshot.webhooks.signatureVerified,
+          signatureFailed: snapshot.webhooks.signatureFailed,
+          duplicate: snapshot.webhooks.duplicate
+        },
+        processingTimes: {
+          avgInitialization_ms: snapshot.calculated.averageInitializationTime,
+          avgVerification_ms: snapshot.calculated.averageVerificationTime,
+          avgWebhook_ms: snapshot.calculated.averageWebhookTime
+        },
+        errors: {
+          timeout: snapshot.errors.timeout,
+          network: snapshot.errors.network,
+          api: snapshot.errors.api,
+          validation: snapshot.errors.validation,
+          other: snapshot.errors.other
+        },
+        retries: {
+          total: snapshot.retries.total,
+          successful: snapshot.retries.successful,
+          failed: snapshot.retries.failed
+        },
+        timestamps: {
+          firstTransaction: snapshot.firstTransaction,
+          lastTransaction: snapshot.lastTransaction
+        }
+      });
+      
+      if (successRate < 80 && snapshot.transactions.total > 10) {
+        logWarn('[Payment Metrics] Low success rate detected', {
+          successRate: `${successRate}%`,
+          totalTransactions: snapshot.transactions.total,
+          failedTransactions: snapshot.transactions.failed
+        });
+      }
+      
+      if (webhookSuccessRate < 90 && snapshot.webhooks.received > 10) {
+        logWarn('[Payment Metrics] Low webhook success rate detected', {
+          webhookSuccessRate: `${webhookSuccessRate}%`,
+          totalWebhooks: snapshot.webhooks.received,
+          failedWebhooks: snapshot.webhooks.failed
+        });
+      }
+      
+      if (snapshot.errors.timeout > 10) {
+        logWarn('[Payment Metrics] High timeout error count', {
+          timeoutErrors: snapshot.errors.timeout,
+          totalTransactions: snapshot.transactions.total
+        });
+      }
+      
+    } catch (error) {
+      console.error('Error logging metrics:', error);
+    }
+  }, METRICS_LOG_INTERVAL_MS);
+  
+  logInfo('Periodic metrics logging started', {
+    interval_minutes: METRICS_LOG_INTERVAL_MS / 60000
+  });
 });
 
 export default app;

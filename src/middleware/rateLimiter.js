@@ -45,41 +45,56 @@ import rateLimit from 'express-rate-limit';
  * Rate limit configuration profiles
  * Organized by endpoint sensitivity
  */
+const IS_DEV = process.env.NODE_ENV !== 'production';
+
 const RATE_LIMITS = {
   // General API - lenient limits for normal operations
   API: {
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 100,
+    max: IS_DEV ? 2000 : 300,
     message: 'Too many requests from this IP, please try again later'
   },
   
   // Authentication - moderate limits to prevent brute force
   AUTH: {
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10,
+    max: IS_DEV ? 100 : 10,
     message: 'Too many authentication attempts, please try again later'
   },
   
   // OTP endpoints - strict limits to prevent abuse and costs
-  // CRITICAL: OTP sends emails which cost money and can be spammed
   OTP: {
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5,
+    max: IS_DEV ? 50 : 5,
     message: 'Too many OTP requests, please try again later'
   },
   
   // Password reset - very strict to prevent account enumeration
   PASSWORD_RESET: {
     windowMs: 60 * 60 * 1000, // 1 hour
-    max: 3,
+    max: IS_DEV ? 30 : 3,
     message: 'Too many password reset attempts, please try again later'
   },
   
   // Car registration - moderate limits for data entry operations
   CAR_REGISTRATION: {
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5,
+    max: IS_DEV ? 100 : 5,
     message: 'Too many car registration attempts, please try again later'
+  },
+  
+  // Payment operations - moderate limits to prevent abuse
+  PAYMENT: {
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: IS_DEV ? 100 : 20,
+    message: 'Too many payment attempts, please try again later'
+  },
+  
+  // Webhook endpoints - higher limits for gateway webhooks
+  WEBHOOK: {
+    windowMs: 60 * 1000, // 1 minute
+    max: 60,
+    message: 'Too many webhook requests'
   }
 };
 
@@ -94,17 +109,13 @@ function createLimiter(config) {
     windowMs: config.windowMs,
     max: config.max,
     message: { success: false, message: config.message },
-    standardHeaders: true, // Return rate limit info in `RateLimit-*` headers
-    legacyHeaders: false, // Disable `X-RateLimit-*` headers
-    
-    // TODO: Add Redis store here
-    // store: redisStore,
-    
-    // Skip rate limiting for successful requests if needed
-    // skipSuccessfulRequests: false,
-    
-    // Skip rate limiting for failed requests if needed
-    // skipFailedRequests: false,
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Skip rate limiting entirely for local development (localhost)
+    skip: (req) => {
+      const ip = req.ip || req.connection?.remoteAddress || '';
+      return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+    },
   });
 }
 
@@ -114,3 +125,5 @@ export const authLimiter = createLimiter(RATE_LIMITS.AUTH);
 export const otpLimiter = createLimiter(RATE_LIMITS.OTP);
 export const passwordResetLimiter = createLimiter(RATE_LIMITS.PASSWORD_RESET);
 export const carRegistrationLimiter = createLimiter(RATE_LIMITS.CAR_REGISTRATION);
+export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);
+export const webhookLimiter = createLimiter(RATE_LIMITS.WEBHOOK);

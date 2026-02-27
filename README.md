@@ -1,6 +1,16 @@
 # Motoka Backend API
 
-Node.js/Express authentication API using Supabase.
+Node.js/Express backend with Supabase authentication and automated vehicle expiry notifications.
+
+## Features
+
+- ✅ User authentication (email/password, magic links)
+- ✅ Two-factor authentication (Google Authenticator, Email OTP)
+- ✅ Profile & KYC management
+- ✅ Vehicle registration & management
+- ✅ **Automated expiry notifications** (30d, 14d, 7d, 3d, 2d, 1d, expiry day, +3d, +7d)
+- ✅ File uploads to Supabase Storage
+- ✅ Rate limiting & security headers
 
 ## Quick Start
 
@@ -24,14 +34,13 @@ Edit `.env` with your Supabase credentials:
 
 ### 3. Set Up Database
 
-Run the SQL migrations in order in your Supabase SQL Editor:
+```bash
+npx supabase db push
+```
 
-1. `supabase/migrations/001_user_types.sql`
-2. `supabase/migrations/002_profiles.sql`
-3. `supabase/migrations/003_password_reset_tokens.sql`
-4. `supabase/migrations/004_kycs.sql`
-5. `supabase/migrations/005_notifications.sql`
-6. `supabase/migrations/006_handle_new_user.sql`
+This applies all migrations including the expiry notification system.
+
+**For expiry notifications setup**, see [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ### 4. Run the Server
 
@@ -174,11 +183,24 @@ backend/
 │   │   └── validators.js        # Input validation
 │   └── index.js                 # Server entry point
 ├── supabase/
-│   └── migrations/              # SQL migrations
+│   ├── functions/
+│   │   └── expiry-notifications/ # Edge Function for email notifications
+│   └── migrations/              # SQL migrations (001-014)
 ├── package.json
 ├── env.example
-└── README.md
+├── README.md
+├── DEPLOYMENT.md                # Expiry notification setup guide
+└── QUICKSTART.md                # Quick reference commands
 ```
+
+---
+
+## Documentation
+
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - Complete guide for setting up expiry notifications
+- **[QUICKSTART.md](QUICKSTART.md)** - Quick reference commands
+- **[API_DOCUMENTATION.md](API_DOCUMENTATION.md)** - REST API reference
+- **[carApi.md](carApi.md)** - Vehicle management API
 
 ---
 

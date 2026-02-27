@@ -1,10 +1,11 @@
-import { getSupabaseUser } from '../config/supabase.js';
+import { getSupabaseUser, getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
 import { logError } from '../utils/logger.js';
 import { sanitizeCarInput } from '../utils/carSanitization.js';
 import { checkCarDuplicates } from '../services/carDuplicateChecker.js';
 import { buildCarData, buildUpdateData, extractNormalizedIdentifiers } from '../utils/carDataBuilder.js';
 import { validateConditionalFields } from '../utils/carUpdateValidator.js';
+import { buildExpiryStatus } from '../utils/expiryStatus.js';
 import {
   createCar,
   updateCarBySlug,
@@ -16,73 +17,44 @@ import {
 } from '../services/car.service.js';
 import { deleteFiles } from '../services/fileUpload.service.js';
 import { handleFileUploads, getFilesToDelete, monitorFileCleanup } from '../utils/fileUploadHelper.js';
+import { createInAppNotification } from '../services/notification.service.js';
+import { sendWelcomeEmail } from '../services/email/carEmail.service.js';
 import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
 /**
- * Compute expiry status metadata for a car based on its expiry_date.
- *
- * Shape expected by the frontend:
- * {
- *   status: "reminder" | "overdue" | "no_reminder",
- *   days_remaining: number | null,
- *   label: string
- * }
+ * Get pending orders for multiple cars
+ * @param {Array<number>} carIds - Array of car IDs
+ * @returns {Promise<Map>} Map of car_id -> pending order
  */
-const computeExpiryStatus = (expiryDate) => {
-  if (!expiryDate) {
-    return {
-      status: 'no_reminder',
-      days_remaining: null,
-      label: 'No expiry date set'
-    };
+async function getPendingOrdersForCars(carIds) {
+  if (!carIds || carIds.length === 0) {
+    return new Map();
   }
-
-  const today = new Date();
-  const expiry = new Date(expiryDate);
-
-  if (Number.isNaN(expiry.getTime())) {
-    return {
-      status: 'no_reminder',
-      days_remaining: null,
-      label: 'Invalid expiry date'
-    };
+  
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: orders, error } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, car_id, order_number, status, created_at')
+      .in('car_id', carIds)
+      .in('status', ['pending', 'processing'])
+      .order('created_at', { ascending: false });
+    
+    if (error) throw error;
+    
+    const orderMap = new Map();
+    (orders || []).forEach(order => {
+      if (!orderMap.has(order.car_id)) {
+        orderMap.set(order.car_id, order);
+      }
+    });
+    
+    return orderMap;
+  } catch (error) {
+    logError('Failed to fetch pending orders', error);
+    return new Map();
   }
-
-  // Normalize both dates to midnight to avoid partial-day off‑by‑one issues
-  const startOfToday = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate()
-  );
-  const startOfExpiry = new Date(
-    expiry.getFullYear(),
-    expiry.getMonth(),
-    expiry.getDate()
-  );
-
-  const diffMs = startOfExpiry.getTime() - startOfToday.getTime();
-  const daysRemaining = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
-
-  let status = 'no_reminder';
-  let label;
-
-  if (daysRemaining < 0) {
-    status = 'overdue';
-    label = `Expired ${Math.abs(daysRemaining)} day(s) ago`;
-  } else if (daysRemaining <= 30) {
-    // Within 30 days: show reminder
-    status = 'reminder';
-    label = `Expires in ${daysRemaining} day(s)`;
-  } else {
-    label = `Expires in ${daysRemaining} day(s)`;
-  }
-
-  return {
-    status,
-    days_remaining: daysRemaining,
-    label
-  };
-};
+}
 
 const isValidUUID = (uuid) => {
   return PATTERNS.UUID.test(uuid);
@@ -134,7 +106,74 @@ export const addCar = async (req, res) => {
     const carData = buildCarData(sanitizedBody, userId);
     const car = await createCar(supabaseUser, carData);
     
-    return response.created(res, { car }, 'Car registered successfully');
+    // Check if this is the user's first car (all non-deleted cars)
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      const { count } = await supabaseAdmin
+        .from('cars')
+        .select('id', { count: 'exact' })
+        .eq('user_id', userId)
+        .is('deleted_at', null);
+      
+      const isFirstCar = count === 1;
+      
+      if (isFirstCar) {
+        // Fetch user profile for email and name
+        const { data: userProfile } = await supabaseAdmin
+          .from('profiles')
+          .select('email, first_name')
+          .eq('id', userId)
+          .single();
+        
+        const userEmail = userProfile?.email || supabaseUser.user?.email;
+        const firstName = userProfile?.first_name || null;
+        
+        // Create in-app notification (always succeeds independently)
+        try {
+          await createInAppNotification(
+            userId,
+            'welcome',
+            'first_car_registered',
+            'Welcome to Motoka 🎉 Thanks for registering your first car with us!'
+          );
+          console.log('[Car Controller] Welcome in-app notification created for user:', userId);
+        } catch (notifError) {
+          logError('Failed to create welcome in-app notification', notifError);
+          // Continue - in-app notification failure doesn't block the response
+        }
+        
+        // Send welcome email with retry logic (independent process)
+        try {
+          await sendWelcomeEmail({
+            to: userEmail,
+            firstName,
+            carDetails: {
+              make: car.vehicle_make,
+              model: car.vehicle_model,
+              registration_no: car.registration_no
+            }
+          });
+          console.log('[Car Controller] Welcome email sent to user:', userId);
+        } catch (emailError) {
+          logError('Failed to send welcome email', emailError);
+          // Log error but don't block response - this is a best-effort operation
+          // In production, this might trigger a retry queue or alerting system
+        }
+      }
+    } catch (notificationError) {
+      logError('Error processing welcome notifications', notificationError);
+      // Non-blocking error for notifications - don't interrupt car creation response
+    }
+    
+    // Build expiry status for the created car
+    const expiryStatus = buildExpiryStatus(car.expiry_date);
+    const carWithExpiry = {
+      ...car,
+      reminder: expiryStatus,
+      expiry_status: expiryStatus
+    };
+    
+    return response.created(res, { car: carWithExpiry }, 'Car registered successfully');
   } catch (error) {
     // Monitor and cleanup temp files on error
     await monitorFileCleanup(tempFileUrls, 'addCar');
@@ -177,10 +216,17 @@ export const getCars = async (req, res) => {
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
 
-    const carsWithExpiryStatus = (result.cars || []).map((car) => ({
-      ...car,
-      expiry_status: computeExpiryStatus(car.expiry_date)
-    }));
+    // Check for pending orders
+    const carIds = (result.cars || []).map(car => car.id);
+    const pendingOrdersMap = await getPendingOrdersForCars(carIds);
+
+    const carsWithExpiryStatus = (result.cars || []).map((car) => {
+      const pendingOrder = pendingOrdersMap.get(car.id) || null;
+      return {
+        ...car,
+        expiry_status: buildExpiryStatus(car.expiry_date, new Date(), pendingOrder)
+      };
+    });
 
     return response.success(
       res,
@@ -207,9 +253,13 @@ export const getCarBySlug = async (req, res) => {
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
 
+    // Check for pending order
+    const pendingOrdersMap = await getPendingOrdersForCars([car.id]);
+    const pendingOrder = pendingOrdersMap.get(car.id) || null;
+
     const carWithExpiryStatus = {
       ...car,
-      expiry_status: computeExpiryStatus(car.expiry_date)
+      expiry_status: buildExpiryStatus(car.expiry_date, new Date(), pendingOrder)
     };
     
     return response.success(res, { car: carWithExpiryStatus }, 'Car retrieved successfully');
@@ -278,12 +328,23 @@ export const updateCar = async (req, res) => {
     const updateData = buildUpdateData(sanitizedBody, existingCar);
     const updatedCar = await updateCarBySlug(supabaseUser, slug, userId, updateData, identifiers);
     
+    // Check for pending order for the updated car
+    const pendingOrdersMap = await getPendingOrdersForCars([updatedCar.id]);
+    const pendingOrder = pendingOrdersMap.get(updatedCar.id) || null;
+    
+    const updatedExpiryStatus = buildExpiryStatus(updatedCar.expiry_date, new Date(), pendingOrder);
+    const updatedCarWithExpiry = {
+      ...updatedCar,
+      reminder: updatedExpiryStatus,
+      expiry_status: updatedExpiryStatus
+    };
+    
     // Delete old files after successful update
     if (filesToDelete.length > 0) {
       await monitorFileCleanup(filesToDelete, 'updateCar-oldFiles');
     }
     
-    return response.success(res, { car: updatedCar }, 'Car updated successfully');
+    return response.success(res, { car: updatedCarWithExpiry }, 'Car updated successfully');
   } catch (error) {
     // Monitor and cleanup temp files on error
     await monitorFileCleanup(tempFileUrls, 'updateCar');
