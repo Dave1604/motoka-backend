@@ -42,7 +42,6 @@ async function getPendingOrdersForCars(carIds) {
     
     if (error) throw error;
     
-    // Create map: car_id -> most recent pending order
     const orderMap = new Map();
     (orders || []).forEach(order => {
       if (!orderMap.has(order.car_id)) {
