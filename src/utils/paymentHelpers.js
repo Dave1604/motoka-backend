@@ -65,13 +65,6 @@ export function formatAmount(kobo, currency = 'NGN') {
   return formatter.format(naira);
 }
 
-/**
- * Calculate new expiry date based on current expiry and renewal months
- * 
- * @param {string|Date} currentExpiryDate - Current expiry date
- * @param {number} renewalMonths - Number of months to add (default: 12)
- * @returns {string} New expiry date in YYYY-MM-DD format
- */
 export function calculateNewExpiryDate(currentExpiryDate, renewalMonths = 12) {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
@@ -81,39 +74,21 @@ export function calculateNewExpiryDate(currentExpiryDate, renewalMonths = 12) {
   if (currentExpiryDate) {
     const expiry = new Date(currentExpiryDate);
     expiry.setUTCHours(0, 0, 0, 0);
-    
-    // If already expired, start from today; otherwise, start from current expiry
     baseDate = expiry < today ? today : expiry;
   } else {
-    // No expiry date set, start from today
     baseDate = today;
   }
   
-  // Add renewal months
   const newExpiry = new Date(baseDate);
   newExpiry.setMonth(newExpiry.getMonth() + renewalMonths);
   
-  // Return as YYYY-MM-DD
   return newExpiry.toISOString().split('T')[0];
 }
 
-/**
- * Get the number of months for a subscription plan
- * 
- * @param {string} plan - Subscription plan (annual, biannual, quarterly)
- * @returns {number} Number of months
- */
 export function getMonthsForPlan(plan) {
   return PLAN_MONTHS[plan] || 12;
 }
 
-/**
- * Calculate next billing date for a subscription
- * 
- * @param {string|Date} lastBillingDate - Last billing date (or null for new)
- * @param {string} plan - Subscription plan
- * @returns {string} Next billing date in YYYY-MM-DD format
- */
 export function calculateNextBillingDate(lastBillingDate, plan = 'annual') {
   const months = getMonthsForPlan(plan);
   const base = lastBillingDate ? new Date(lastBillingDate) : new Date();
@@ -121,13 +96,6 @@ export function calculateNextBillingDate(lastBillingDate, plan = 'annual') {
   return base.toISOString().split('T')[0];
 }
 
-/**
- * Check if a date is within N days from now
- * 
- * @param {string|Date} date - Date to check
- * @param {number} days - Number of days
- * @returns {boolean} True if date is within the specified days
- */
 export function isWithinDays(date, days) {
   const targetDate = new Date(date);
   const today = new Date();
@@ -139,12 +107,6 @@ export function isWithinDays(date, days) {
   return targetDate <= futureDate && targetDate >= today;
 }
 
-/**
- * Calculate days until a date
- * 
- * @param {string|Date} date - Target date
- * @returns {number} Number of days (negative if past)
- */
 export function daysUntil(date) {
   const targetDate = new Date(date);
   targetDate.setUTCHours(0, 0, 0, 0);
@@ -156,39 +118,21 @@ export function daysUntil(date) {
   return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 }
 
-/**
- * Get today's date in YYYY-MM-DD format
- * 
- * @returns {string} Today's date
- */
 export function getTodayDateString() {
   return new Date().toISOString().split('T')[0];
 }
 
-/**
- * Validate a payment reference format
- * 
- * @param {string} reference - Reference to validate
- * @returns {boolean} True if valid format
- */
 export function isValidPaymentReference(reference) {
   if (!reference || typeof reference !== 'string') {
     return false;
   }
   
-  // Format: PAY-{timestamp}-{random} or Paystack format
   const internalPattern = /^PAY-[A-Z0-9]+-[A-F0-9]+$/;
   const paystackPattern = /^[a-zA-Z0-9_-]+$/;
   
   return internalPattern.test(reference) || paystackPattern.test(reference);
 }
 
-/**
- * Sanitize metadata object (remove sensitive fields)
- * 
- * @param {Object} metadata - Metadata object
- * @returns {Object} Sanitized metadata
- */
 export function sanitizeMetadata(metadata) {
   if (!metadata || typeof metadata !== 'object') {
     return {};
@@ -206,12 +150,6 @@ export function sanitizeMetadata(metadata) {
   return sanitized;
 }
 
-/**
- * Build payment metadata object
- * 
- * @param {Object} options - Options for metadata
- * @returns {Object} Structured metadata
- */
 export function buildPaymentMetadata({
   carId,
   carSlug,
@@ -222,9 +160,11 @@ export function buildPaymentMetadata({
   paymentScheduleId = [],
   renewalAmount = null,
   deliveryFee = 0,
-  deliveryDetails = null
+  deliveryDetails = null,
+  // Plate number specific (optional)
+  plateType = null,
+  subType = null
 }) {
-  // Support both selectedItems (legacy) and paymentScheduleId (new)
   const scheduleIds = paymentScheduleId.length > 0 ? paymentScheduleId : selectedItems;
   
   return sanitizeMetadata({
@@ -233,11 +173,12 @@ export function buildPaymentMetadata({
     payment_type: paymentType,
     renewal_months: renewalMonths,
     user_id: userId,
-    selected_items: selectedItems, // Keep for backward compatibility
-    paymentScheduleId: scheduleIds, // New field for frontend
+    selected_items: selectedItems,
+    paymentScheduleId: scheduleIds,
     renewal_amount: renewalAmount,
     delivery_fee: deliveryFee,
     delivery_details: deliveryDetails,
+    ...(plateType ? { plate_type: plateType, sub_type: subType } : {}),
     initiated_at: new Date().toISOString()
   });
 }

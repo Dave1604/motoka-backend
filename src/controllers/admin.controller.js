@@ -1,5 +1,94 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
+import paymentMetrics from '../services/payment/metrics.service.js';
+import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
+import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
+import { invalidateProfileCache } from '../middleware/authenticate.js';
+import { sendOrderCompletedEmail } from '../services/email/paymentEmail.service.js';
+import { createInAppNotification } from '../services/notification.service.js';
+import { logError } from '../utils/logger.js';
+
+// Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
+const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
+
+// ─── Status normalization helpers ────────────────────────────────────────────
+// DB stores: pending | processing | completed | cancelled
+// Frontend expects: pending (New) | in_progress (Inprogress) | completed | declined
+
+function dbStatusToFrontend(status) {
+  if (status === 'processing') return 'in_progress';
+  if (status === 'cancelled') return 'declined';
+  return status;
+}
+
+function frontendStatusToDB(status) {
+  if (status === 'in_progress') return 'processing';
+  if (status === 'declined') return 'cancelled';
+  if (status === 'new') return 'pending'; // safety net — frontend may send 'new'
+  return status;
+}
+
+// Format an order row into the shape the frontend expects
+function formatOrder(order, profile, userEmail, stateName, lgaName) {
+  return {
+    id: order.id,
+    slug: order.order_number,          // frontend navigates by this field
+    order_number: order.order_number,
+    order_type: order.order_type,
+    amount: koboToNaira(order.amount_paid),
+    amount_paid: koboToNaira(order.amount_paid),
+    renewal_months: order.renewal_months,
+    status: dbStatusToFrontend(order.status),
+    delivery_address: order.delivery_address,
+    delivery_contact: order.delivery_contact,
+    delivery_state: order.delivery_state,
+    delivery_lga: order.delivery_lga,
+    state_name: stateName || order.delivery_state,
+    lga_name: lgaName || order.delivery_lga,
+    selected_items: order.selected_items,
+    previous_expiry_date: order.previous_expiry_date,
+    new_expiry_date: order.new_expiry_date,
+    processing_notes: order.processing_notes,
+    completion_notes: order.completion_notes,
+    rejection_reason: order.rejection_reason,
+    documents_uploaded: order.documents_uploaded,
+    documents_sent_at: order.documents_sent_at || null,
+    assigned_to: order.assigned_to,
+    assigned_at: order.assigned_at,
+    processing_started_at: order.processing_started_at,
+    completed_at: order.completed_at,
+    cancelled_at: order.cancelled_at,
+    created_at: order.created_at,
+    updated_at: order.updated_at,
+    user: profile ? {
+      id: profile.id,
+      name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Unknown',
+      first_name: profile.first_name,
+      last_name: profile.last_name,
+      email: userEmail || null,
+      phone_number: profile.phone_number,
+    } : null,
+    car: order.cars ? {
+      id: order.cars.id,
+      slug: order.cars.slug,
+      vehicle_make: order.cars.vehicle_make,
+      vehicle_model: order.cars.vehicle_model,
+      vehicle_year: order.cars.vehicle_year,
+      vehicle_color: order.cars.vehicle_color,
+      registration_no: order.cars.registration_no,
+      chasis_no: order.cars.chasis_no,
+      engine_no: order.cars.engine_no,
+      expiry_date: order.cars.expiry_date,
+    } : null,
+    payment: order.payment_transactions ? {
+      transaction_id: order.payment_transactions.reference,
+      payment_gateway: order.payment_transactions.payment_gateway || 'paystack',
+      status: order.payment_transactions.status,
+      amount: koboToNaira(order.payment_transactions.amount),
+      paid_at: order.payment_transactions.paid_at,
+    } : null,
+  };
+}
 
 export const listUsers = async (req, res) => {
   try {
@@ -30,11 +119,10 @@ export const listUsers = async (req, res) => {
     const { data: profiles, count, error } = await query;
     
     if (error) {
-      console.error('List users error:', error);
+      logError('List users', error);
       return res.status(400).json({ status: false, message: 'Failed to retrieve users' });
     }
     
-    // SCALABILITY FIX: Batch fetch only the auth users for paginated profiles
     const emailMap = new Map();
     
     if (profiles && profiles.length > 0) {
@@ -50,7 +138,6 @@ export const listUsers = async (req, res) => {
       });
     }
 
-    // Get car counts for each user
     const userIds = profiles.map(p => p.id);
     
     const { data: carCounts } = await supabaseAdmin
@@ -78,7 +165,7 @@ export const listUsers = async (req, res) => {
       is_suspended: profile.is_suspended,
       deleted_at: profile.deleted_at,
       cars_count: carsCountMap.get(profile.id) || 0,
-      orders_count: 0, // TODO: Add orders count when orders table is ready
+      orders_count: 0,
       created_at: profile.created_at
     }));
     
@@ -94,7 +181,7 @@ export const listUsers = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('List users error:', error);
+    logError('List users', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve users' });
   }
 };
@@ -162,7 +249,7 @@ export const getUser = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get user error:', error);
+    logError('Get user', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve user' });
   }
 };
@@ -202,9 +289,12 @@ export const suspendUser = async (req, res) => {
       .eq('id', userId);
     
     if (error) {
-      console.error('Suspend user error:', error);
+      logError('Suspend user', error);
       return response.error(res, 'Failed to suspend user');
     }
+    
+    // Invalidate profile cache to ensure suspension takes effect immediately
+    invalidateProfileCache(userId);
     
     await supabaseAdmin.from('notifications').insert({
       user_id: userId,
@@ -215,7 +305,7 @@ export const suspendUser = async (req, res) => {
     
     return response.success(res, { user_id: userId, is_suspended: true }, 'User suspended successfully');
   } catch (error) {
-    console.error('Suspend user error:', error);
+    logError('Suspend user', error);
     return response.serverError(res, 'Failed to suspend user');
   }
 };
@@ -246,9 +336,12 @@ export const activateUser = async (req, res) => {
       .eq('id', userId);
     
     if (error) {
-      console.error('Activate user error:', error);
+      logError('Activate user', error);
       return response.error(res, 'Failed to activate user');
     }
+    
+    // Invalidate profile cache to ensure activation takes effect immediately
+    invalidateProfileCache(userId);
     
     await supabaseAdmin.from('notifications').insert({
       user_id: userId,
@@ -259,7 +352,7 @@ export const activateUser = async (req, res) => {
     
     return response.success(res, { user_id: userId, is_suspended: false }, 'User activated successfully');
   } catch (error) {
-    console.error('Activate user error:', error);
+    logError('Activate user', error);
     return response.serverError(res, 'Failed to activate user');
   }
 };
@@ -284,14 +377,13 @@ export const deleteUser = async (req, res) => {
       return res.status(403).json({ status: false, message: 'Cannot delete an admin user' });
     }
     
-    // Soft delete
     const { error } = await supabaseAdmin
       .from('profiles')
       .update({ deleted_at: new Date().toISOString() })
       .eq('id', userId);
     
     if (error) {
-      console.error('Delete user error:', error);
+      logError('Delete user', error);
       return res.status(500).json({ status: false, message: 'Failed to delete user' });
     }
     
@@ -301,7 +393,7 @@ export const deleteUser = async (req, res) => {
       data: { user_id: userId }
     });
   } catch (error) {
-    console.error('Delete user error:', error);
+    logError('Delete user', error);
     return res.status(500).json({ status: false, message: 'Failed to delete user' });
   }
 };
@@ -328,17 +420,15 @@ export const listCars = async (req, res) => {
     const { data: cars, count, error } = await query;
     
     if (error) {
-      console.error('List cars error:', error);
+      logError('List cars', error);
       return res.status(400).json({ status: false, message: 'Failed to retrieve cars' });
     }
     
-    // Fetch owner details for each car
     const userIds = [...new Set(cars.map(car => car.user_id))];
     const profilesMap = new Map();
     const emailMap = new Map();
     
     if (userIds.length > 0) {
-      // Fetch profiles
       const { data: profiles } = await supabaseAdmin
         .from('profiles')
         .select('id, first_name, last_name, user_id')
@@ -350,7 +440,6 @@ export const listCars = async (req, res) => {
         });
       }
       
-      // Fetch emails
       const userFetches = userIds.map(userId => 
         supabaseAdmin.auth.admin.getUserById(userId)
           .then(({ data }) => ({ id: userId, email: data?.user?.email }))
@@ -401,7 +490,7 @@ export const listCars = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('List cars error:', error);
+    logError('List cars', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve cars' });
   }
 };
@@ -422,29 +511,52 @@ export const getCarDetails = async (req, res) => {
       return res.status(404).json({ status: false, message: 'Car not found' });
     }
     
-    // Get owner profile
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('id, first_name, last_name, phone_number, user_id')
       .eq('id', car.user_id)
       .single();
     
-    // Get user email
     let userEmail = null;
     try {
       const { data: authUser } = await supabaseAdmin.auth.admin.getUserById(car.user_id);
       userEmail = authUser?.user?.email;
     } catch (err) {
-      console.error('Failed to fetch user email:', err);
+      logError('Failed to fetch user email', err);
     }
     
+    // Fetch recent orders for this car
+    const { data: orders } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, order_number, order_type, amount_paid, status, selected_items, created_at')
+      .eq('car_id', car.id)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    // Fetch recent transactions for this car
+    const { data: transactions } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, reference, amount, status, payment_gateway, payment_type, created_at, paid_at')
+      .eq('car_id', car.id)
+      .in('status', ['successful', 'pending', 'failed'])
+      .order('created_at', { ascending: false })
+      .limit(5);
+
     const formattedCar = {
       ...car,
       user: profile ? {
         ...profile,
         email: userEmail,
         name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim()
-      } : null
+      } : null,
+      orders: (orders || []).map(o => ({
+        ...o,
+        amount_paid: koboToNaira(o.amount_paid)
+      })),
+      transactions: (transactions || []).map(t => ({
+        ...t,
+        amount: koboToNaira(t.amount)
+      }))
     };
     
     return res.status(200).json({
@@ -453,7 +565,691 @@ export const getCarDetails = async (req, res) => {
       data: formattedCar
     });
   } catch (error) {
-    console.error('Get car details error:', error);
+    logError('Get car details', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve car' });
+  }
+};
+
+export const getPaymentMetrics = async (req, res) => {
+  try {
+    const snapshot = paymentMetrics.getSnapshot();
+    
+    return res.status(200).json({
+      status: true,
+      message: 'Payment metrics retrieved successfully',
+      data: snapshot
+    });
+  } catch (error) {
+    logError('Get payment metrics', error);
+    return res.status(500).json({ 
+      status: false, 
+      message: 'Failed to retrieve payment metrics' 
+    });
+  }
+};
+
+export const getGatewayHealth = async (req, res) => {
+  try {
+    const healthData = healthMonitor.getAllGatewayHealth();
+    const circuitBreakerStatus = gatewayManager.getCircuitBreakerStatus();
+    const statistics = gatewayManager.getStatistics();
+
+    const gatewayStatus = {};
+    Object.keys(healthData).forEach(gatewayName => {
+      gatewayStatus[gatewayName] = {
+        ...healthData[gatewayName],
+        circuitBreaker: circuitBreakerStatus[gatewayName] || null,
+        available: gatewayManager.isGatewayAvailable(gatewayName)
+      };
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: 'Gateway health status retrieved successfully',
+      data: {
+        gateways: gatewayStatus,
+        primary: gatewayManager.getPrimaryGateway(),
+        fallback: gatewayManager.getFallbackGateway(),
+        statistics: {
+          circuitBreakers: circuitBreakerStatus,
+          healthMonitor: {
+            isRunning: healthMonitor.isRunning,
+            checkIntervalMs: healthMonitor.checkIntervalMs
+          }
+        }
+      }
+    });
+  } catch (error) {
+    logError('Get gateway health', error);
+    return res.status(500).json({ 
+      status: false, 
+      message: 'Failed to retrieve gateway health status',
+      error: error.message 
+    });
+  }
+};
+
+// ─── Helper: resolve state/LGA names for a batch of orders ───────────────────
+async function enrichOrdersWithLocation(supabaseAdmin, orders) {
+  const stateCodes = [...new Set(orders.map(o => o.delivery_state).filter(Boolean))];
+  const stateMap = new Map();
+  const lgaMap = new Map();
+
+  if (stateCodes.length > 0) {
+    const { data: states } = await supabaseAdmin
+      .from('states')
+      .select('code, name')
+      .in('code', stateCodes);
+
+    (states || []).forEach(s => stateMap.set(s.code, s.name));
+
+    // Fetch LGAs for matched states
+    const stateIds = (states || []).map(s => s.id).filter(Boolean);
+    if (stateIds.length > 0) {
+      const { data: lgas } = await supabaseAdmin
+        .from('local_governments')
+        .select('id, name, state_id')
+        .in('state_id', stateIds);
+
+      (lgas || []).forEach(l => lgaMap.set(`${l.state_id}:${l.name}`, l.name));
+    }
+  }
+
+  return { stateMap, lgaMap };
+}
+
+// ─── Helper: fetch user profiles + emails for a list of user UUIDs ───────────
+async function fetchUserDetails(supabaseAdmin, userIds) {
+  const profileMap = new Map();
+  const emailMap = new Map();
+
+  if (userIds.length === 0) return { profileMap, emailMap };
+
+  const { data: profiles } = await supabaseAdmin
+    .from('profiles')
+    .select('id, first_name, last_name, phone_number')
+    .in('id', userIds);
+
+  (profiles || []).forEach(p => profileMap.set(p.id, p));
+
+  const emailFetches = userIds.map(uid =>
+    supabaseAdmin.auth.admin.getUserById(uid)
+      .then(({ data }) => ({ id: uid, email: data?.user?.email }))
+      .catch(() => ({ id: uid, email: null }))
+  );
+  const emailResults = await Promise.all(emailFetches);
+  emailResults.forEach(r => { if (r.email) emailMap.set(r.id, r.email); });
+
+  return { profileMap, emailMap };
+}
+
+// ─── Dashboard Stats ──────────────────────────────────────────────────────────
+export const getDashboardStats = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const [
+      { count: totalOrders },
+      { count: totalCars },
+      { count: totalUsers },
+      { data: amountData },
+    ] = await Promise.all([
+      supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }),
+      supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null),
+      supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false),
+      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
+    ]);
+
+    const totalAmountKobo = (amountData || []).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+
+    return res.status(200).json({
+      status: true,
+      message: 'Dashboard stats retrieved',
+      data: {
+        total_amount: koboToNaira(totalAmountKobo),
+        total_orders: totalOrders || 0,
+        total_agents: 0,
+        total_cars: totalCars || 0,
+        total_users: totalUsers || 0,
+      },
+    });
+  } catch (error) {
+    logError('Get dashboard stats', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve dashboard stats' });
+  }
+};
+
+// ─── Recent Orders (last 5) ───────────────────────────────────────────────────
+export const getRecentOrders = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const { data: orders, error } = await supabaseAdmin
+      .from('renewal_orders')
+      .select(`
+        id, order_number, order_type, amount_paid, status, user_id, created_at,
+        cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (error) return res.status(500).json({ status: false, message: 'Failed to retrieve recent orders' });
+
+    const userIds = [...new Set((orders || []).map(o => o.user_id))];
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
+
+    const formatted = (orders || []).map(o =>
+      formatOrder(o, profileMap.get(o.user_id), emailMap.get(o.user_id), null, null)
+    );
+
+    return res.status(200).json({ status: true, message: 'Recent orders retrieved', data: formatted });
+  } catch (error) {
+    logError('Get recent orders', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve recent orders' });
+  }
+};
+
+// ─── Recent Transactions (last 5) ────────────────────────────────────────────
+export const getRecentTransactions = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const { data: transactions, error } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, reference, amount, status, payment_type, user_id, created_at, paid_at')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (error) return res.status(500).json({ status: false, message: 'Failed to retrieve recent transactions' });
+
+    const userIds = [...new Set((transactions || []).map(t => t.user_id))];
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
+
+    const formatted = (transactions || []).map(t => ({
+      id: t.id,
+      transaction_id: t.reference,
+      gateway_reference: t.reference,
+      amount: koboToNaira(t.amount),
+      status: t.status,
+      payment_type: t.payment_type,
+      payment_description: t.payment_type?.replace(/_/g, ' '),
+      created_at: t.created_at,
+      paid_at: t.paid_at,
+      user: profileMap.get(t.user_id) ? {
+        name: `${profileMap.get(t.user_id).first_name || ''} ${profileMap.get(t.user_id).last_name || ''}`.trim(),
+        email: emailMap.get(t.user_id) || null,
+      } : null,
+    }));
+
+    return res.status(200).json({ status: true, message: 'Recent transactions retrieved', data: formatted });
+  } catch (error) {
+    logError('Get recent transactions', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve recent transactions' });
+  }
+};
+
+// ─── List Orders (paginated, filterable) ─────────────────────────────────────
+export const listOrders = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { page = 1, per_page = 15, status = 'all', search } = req.query;
+
+    const limit = Math.min(100, Math.max(1, parseInt(per_page)));
+    const offset = (Math.max(1, parseInt(page)) - 1) * limit;
+
+    let query = supabaseAdmin
+      .from('renewal_orders')
+      .select(`
+        id, order_number, order_type, amount_paid, status, user_id,
+        delivery_address, delivery_state, delivery_lga, delivery_contact,
+        created_at, updated_at,
+        cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
+        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway )
+      `, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (status && status !== 'all') {
+      query = query.eq('status', frontendStatusToDB(status));
+    }
+
+    // Order number search at DB level — avoids loading full pages to filter in JS
+    if (search) {
+      query = query.ilike('order_number', `%${search}%`);
+    }
+
+    const { data: orders, count, error } = await query;
+    if (error) {
+      logError('List orders', error);
+      return res.status(500).json({ status: false, message: 'Failed to retrieve orders' });
+    }
+
+    const userIds = [...new Set((orders || []).map(o => o.user_id))];
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
+
+    const stateCodes = [...new Set((orders || []).map(o => o.delivery_state).filter(Boolean))];
+    const stateNameMap = new Map();
+    if (stateCodes.length > 0) {
+      const { data: states } = await supabaseAdmin
+        .from('states')
+        .select('code, name')
+        .in('code', stateCodes);
+      (states || []).forEach(s => stateNameMap.set(s.code, s.name));
+    }
+
+    const formatted = (orders || []).map(o =>
+      formatOrder(
+        o,
+        profileMap.get(o.user_id),
+        emailMap.get(o.user_id),
+        stateNameMap.get(o.delivery_state),
+        o.delivery_lga
+      )
+    );
+
+    const total = count || 0;
+    return res.status(200).json({
+      status: true,
+      message: 'Orders retrieved successfully',
+      data: {
+        data: formatted,
+        current_page: parseInt(page),
+        per_page: limit,
+        total,
+        last_page: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    logError('List orders', error);
+    return response.serverError(res, 'Failed to retrieve orders');
+  }
+};
+
+// ─── Get Single Order Details ─────────────────────────────────────────────────
+export const getOrderDetails = async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const { data: order, error } = await supabaseAdmin
+      .from('renewal_orders')
+      .select(`
+        *,
+        cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
+                      registration_no, chasis_no, engine_no, expiry_date ),
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel, payment_gateway )
+      `)
+      .eq('order_number', orderNumber)
+      .single();
+
+    if (error || !order) {
+      return res.status(404).json({ status: false, message: 'Order not found' });
+    }
+
+    // Fetch user profile + email
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, [order.user_id]);
+
+    // Resolve state name
+    let stateName = order.delivery_state;
+    if (order.delivery_state) {
+      const { data: stateRow } = await supabaseAdmin
+        .from('states')
+        .select('name')
+        .eq('code', order.delivery_state)
+        .single();
+      if (stateRow) stateName = stateRow.name;
+    }
+
+    const formatted = formatOrder(
+      order,
+      profileMap.get(order.user_id),
+      emailMap.get(order.user_id),
+      stateName,
+      order.delivery_lga
+    );
+
+    return res.status(200).json({ status: true, message: 'Order retrieved successfully', data: formatted });
+  } catch (error) {
+    logError('Get order details', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve order' });
+  }
+};
+
+// ─── Update Order Status ──────────────────────────────────────────────────────
+export const updateOrderStatus = async (req, res) => {
+  try {
+    const { orderNumber } = req.params;
+    const { status, notes } = req.body;
+    const supabaseAdmin = getSupabaseAdmin();
+
+    if (!status) {
+      return res.status(400).json({ status: false, message: 'Status is required' });
+    }
+
+    const dbStatus = frontendStatusToDB(status);
+    const validStatuses = ['pending', 'processing', 'completed', 'cancelled'];
+    if (!validStatuses.includes(dbStatus)) {
+      return res.status(400).json({ status: false, message: 'Invalid status. Must be one of: pending, in_progress, completed, declined' });
+    }
+
+    // Fetch current order
+    const { data: current, error: fetchError } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, status, car_id, renewal_months, cars:car_id(expiry_date)')
+      .eq('order_number', orderNumber)
+      .single();
+
+    if (fetchError || !current) {
+      return res.status(404).json({ status: false, message: 'Order not found' });
+    }
+
+    if (current.status === 'completed') {
+      return res.status(409).json({ status: false, message: 'Cannot update a completed order' });
+    }
+
+    const updateData = {
+      status: dbStatus,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (dbStatus === 'processing' && current.status === 'pending') {
+      updateData.processing_started_at = new Date().toISOString();
+      // Auto-assign to the admin performing the action
+      updateData.assigned_to = req.admin?.id || null;
+      updateData.assigned_at = new Date().toISOString();
+    }
+
+    if (dbStatus === 'completed') {
+      updateData.completed_at = new Date().toISOString();
+      // Extend the car's expiry date
+      const renewalMonths = current.renewal_months || 12;
+      const baseDate = current.cars?.expiry_date
+        ? new Date(current.cars.expiry_date)
+        : new Date();
+      baseDate.setMonth(baseDate.getMonth() + renewalMonths);
+      const newExpiry = baseDate.toISOString().split('T')[0];
+      updateData.new_expiry_date = newExpiry;
+      updateData.completion_notes = notes || null;
+
+      await supabaseAdmin
+        .from('cars')
+        .update({ expiry_date: newExpiry, date_issued: new Date().toISOString().split('T')[0], status: 'approved' })
+        .eq('id', current.car_id);
+    }
+
+    if (dbStatus === 'cancelled') {
+      updateData.cancelled_at = new Date().toISOString();
+      updateData.rejection_reason = notes || null;
+    }
+
+    if (notes && dbStatus !== 'cancelled') {
+      updateData.processing_notes = notes;
+    }
+
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('renewal_orders')
+      .update(updateData)
+      .eq('order_number', orderNumber)
+      .select(`
+        *,
+        cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
+                      registration_no, chasis_no, engine_no, expiry_date ),
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway )
+      `)
+      .single();
+
+    if (updateError) {
+      logError('Update order status', updateError);
+      return response.serverError(res, 'Failed to update order status');
+    }
+
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, [updated.user_id]);
+    const formatted = formatOrder(updated, profileMap.get(updated.user_id), emailMap.get(updated.user_id), null, updated.delivery_lga);
+
+    // Fire-and-forget: notify user when admin completes or declines their order
+    if (dbStatus === 'completed' || dbStatus === 'cancelled') {
+      const userEmail = emailMap.get(updated.user_id);
+      const profile = profileMap.get(updated.user_id);
+      if (userEmail) {
+        if (dbStatus === 'completed') {
+          sendOrderCompletedEmail({
+            to: userEmail,
+            firstName: profile?.first_name || 'User',
+            orderNumber: updated.order_number,
+            carDetails: updated.cars,
+            newExpiryDate: updateData.new_expiry_date || null,
+          }).catch(err => logError('Order completed email failed', err));
+
+          createInAppNotification(
+            updated.user_id,
+            'order',
+            'order_completed',
+            `Your renewal order ${updated.order_number} has been completed. Your vehicle documents are ready.`
+          ).catch(err => logError('Order completed notification failed', err));
+        } else {
+          createInAppNotification(
+            updated.user_id,
+            'order',
+            'order_declined',
+            `Your renewal order ${updated.order_number} was declined. ${notes ? 'Reason: ' + notes : 'Please contact support for details.'}`
+          ).catch(err => logError('Order declined notification failed', err));
+        }
+      }
+    }
+
+    return res.status(200).json({ status: true, message: 'Order status updated successfully', data: formatted });
+  } catch (error) {
+    logError('Update order status', error);
+    return res.status(500).json({ status: false, message: 'Failed to update order status' });
+  }
+};
+
+// ─── List Transactions (paginated, filterable) ────────────────────────────────
+export const listTransactions = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { page = 1, per_page = 15, status = 'all', search } = req.query;
+
+    const limit = Math.min(100, Math.max(1, parseInt(per_page)));
+    const offset = (Math.max(1, parseInt(page)) - 1) * limit;
+
+    // Map frontend filter 'success' → DB 'successful'
+    const dbStatus = status === 'success' ? 'successful'
+      : status === 'failed' ? 'failed'
+      : status === 'pending' ? 'pending'
+      : null;
+
+    let query = supabaseAdmin
+      .from('payment_transactions')
+      .select('*', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+
+    if (dbStatus) {
+      query = query.eq('status', dbStatus);
+    }
+
+    // Reference search at DB level
+    if (search) {
+      query = query.ilike('reference', `%${search}%`);
+    }
+
+    const { data: transactions, count, error } = await query;
+    if (error) {
+      logError('List transactions', error);
+      return res.status(500).json({ status: false, message: 'Failed to retrieve transactions' });
+    }
+
+    const userIds = [...new Set((transactions || []).map(t => t.user_id).filter(Boolean))];
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
+
+    // Summary uses aggregate counts — fetch only what we need, not full rows
+    const { data: allTx } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('amount, status');
+
+    const summary = {
+      total_amount: 0,
+      total_transactions: count || 0,
+      successful_transactions: 0,
+      failed_transactions: 0,
+      pending_transactions: 0,
+    };
+    (allTx || []).forEach(t => {
+      const amtKobo = parseFloat(t.amount || 0);
+      if (t.status === 'successful') { summary.successful_transactions++; summary.total_amount += amtKobo; }
+      else if (t.status === 'failed' || t.status === 'abandoned') summary.failed_transactions++;
+      else if (t.status === 'pending') summary.pending_transactions++;
+    });
+    summary.total_amount = koboToNaira(summary.total_amount);
+
+    const formatted = (transactions || []).map(t => {
+      const profile = profileMap.get(t.user_id);
+      return {
+        id: t.id,
+        transaction_id: t.reference,
+        gateway_reference: t.paystack_reference || t.monicredit_order_id || t.reference,
+        payment_gateway: t.payment_gateway || 'paystack',
+        amount: koboToNaira(t.amount),
+        status: t.status === 'successful' ? 'approved' : t.status,
+        payment_type: t.payment_type,
+        payment_description: t.payment_type?.replace(/_/g, ' '),
+        channel: t.channel,
+        created_at: t.created_at,
+        paid_at: t.paid_at,
+        user: profile ? {
+          name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
+          email: emailMap.get(t.user_id) || null,
+        } : null,
+      };
+    });
+
+    const total = count || 0;
+    return res.status(200).json({
+      status: true,
+      message: 'Transactions retrieved successfully',
+      data: {
+        data: formatted,
+        current_page: parseInt(page),
+        per_page: limit,
+        total,
+        last_page: Math.ceil(total / limit),
+      },
+      summary,
+    });
+  } catch (error) {
+    logError('List transactions', error);
+    return response.serverError(res, 'Failed to retrieve transactions');
+  }
+};
+
+// ─── Failed Transactions (top N) ─────────────────────────────────────────────
+export const getFailedTransactions = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { per_page = 8 } = req.query;
+    const limit = Math.min(50, Math.max(1, parseInt(per_page)));
+
+    const { data: transactions, error } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, reference, amount, status, payment_type, user_id, created_at')
+      .in('status', ['failed', 'abandoned'])
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) return res.status(500).json({ status: false, message: 'Failed to retrieve failed transactions' });
+
+    const formatted = (transactions || []).map(t => ({
+      id: t.id,
+      transaction_id: t.reference,
+      amount: koboToNaira(t.amount),
+      status: t.status,
+      payment_description: t.payment_type?.replace(/_/g, ' ') || 'Transaction',
+      created_at: t.created_at,
+    }));
+
+    return res.status(200).json({
+      status: true,
+      message: 'Failed transactions retrieved',
+      data: { data: formatted },
+    });
+  } catch (error) {
+    logError('Get failed transactions', error);
+    return response.serverError(res, 'Failed to retrieve failed transactions');
+  }
+};
+
+// GET /admin/transactions/:reference
+export const getTransactionDetails = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const { data: tx, error } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('*')
+      .eq('reference', reference)
+      .single();
+
+    if (error || !tx) {
+      return res.status(404).json({ status: false, message: 'Transaction not found' });
+    }
+
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, [tx.user_id]);
+    const profile = profileMap.get(tx.user_id);
+
+    // Fetch the linked order if it exists
+    const { data: order } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, order_number, status, amount_paid')
+      .eq('transaction_id', tx.id)
+      .maybeSingle();
+
+    // Fetch car details
+    const { data: car } = tx.car_id
+      ? await supabaseAdmin.from('cars').select('id, slug, vehicle_make, vehicle_model, registration_no').eq('id', tx.car_id).single()
+      : { data: null };
+
+    return res.status(200).json({
+      status: true,
+      message: 'Transaction retrieved',
+      data: {
+        id: tx.id,
+        reference: tx.reference,
+        gateway_reference: tx.paystack_reference || tx.monicredit_order_id || tx.reference,
+        payment_gateway: tx.payment_gateway || 'paystack',
+        amount: koboToNaira(tx.amount),
+        status: tx.status === 'successful' ? 'approved' : tx.status,
+        payment_type: tx.payment_type,
+        payment_description: tx.payment_type?.replace(/_/g, ' '),
+        channel: tx.channel,
+        created_at: tx.created_at,
+        paid_at: tx.paid_at,
+        updated_at: tx.updated_at,
+        user: profile ? {
+          id: profile.id,
+          name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
+          email: emailMap.get(tx.user_id) || null,
+          phone_number: profile.phone_number,
+        } : null,
+        car: car ? {
+          id: car.id,
+          slug: car.slug,
+          vehicle_make: car.vehicle_make,
+          vehicle_model: car.vehicle_model,
+          registration_no: car.registration_no,
+        } : null,
+        order: order ? {
+          id: order.id,
+          order_number: order.order_number,
+          status: dbStatusToFrontend(order.status),
+          amount_paid: koboToNaira(order.amount_paid),
+        } : null,
+      },
+    });
+  } catch (error) {
+    logError('Get transaction details', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve transaction' });
   }
 };

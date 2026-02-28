@@ -23,12 +23,27 @@ import { formatAmount } from '../../utils/paymentHelpers.js';
  * @param {string} options.orderNumber - Order number created
  * @param {Object} options.carDetails - Car information
  */
-export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails }) {
+export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType }) {
   const subject = 'Payment Successful - Motoka';
+  const isPlateNumber = paymentType === 'plate_number';
   
   const carInfo = carDetails 
     ? `${carDetails.vehicle_make || ''} ${carDetails.vehicle_model || ''} (${carDetails.registration_no || 'N/A'})`.trim()
     : 'Your vehicle';
+
+  // Contextual copy depending on payment type
+  const bodyIntro = isPlateNumber
+    ? 'Your payment has been processed successfully. Your plate number application has been received and is being processed by our team.'
+    : 'Your payment has been processed successfully. A renewal order has been created and is being processed by our team.';
+
+  const bodyOutro = isPlateNumber
+    ? "Our team will process your plate number application and you'll receive a confirmation once it's ready."
+    : "Your vehicle documents will be renewed and you'll receive a confirmation once the process is complete.";
+
+  const serviceLabel = isPlateNumber ? 'Service' : 'Documents';
+  const serviceValue = isPlateNumber
+    ? 'Plate Number Application'
+    : (documentNames?.length > 0 ? documentNames.join(', ') : null);
   
   const html = `
     <!DOCTYPE html>
@@ -62,7 +77,7 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
         </div>
         <div class="content">
           <p>Hello ${firstName || 'there'},</p>
-          <p>Your payment has been processed successfully. A renewal order has been created and is being processed by our team.</p>
+          <p>${bodyIntro}</p>
           
           <div class="amount-box">
             <div class="amount">${formatAmount(amount)}</div>
@@ -82,13 +97,18 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
               <span class="detail-label">Vehicle</span>
               <span class="detail-value">${carInfo}</span>
             </div>
+            ${serviceValue ? `
+            <div class="detail-row">
+              <span class="detail-label">${serviceLabel}</span>
+              <span class="detail-value">${serviceValue}</span>
+            </div>` : ''}
             <div class="detail-row">
               <span class="detail-label">Status</span>
               <span class="detail-value" style="color: #22c55e;">Processing</span>
             </div>
           </div>
           
-          <p>Your vehicle documents will be renewed and you'll receive a confirmation once the process is complete.</p>
+          <p>${bodyOutro}</p>
           
           <center>
             <a href="${process.env.FRONTEND_URL}/orders/${orderNumber}" class="cta-button">View Order Details</a>
@@ -114,8 +134,8 @@ Your payment of ${formatAmount(amount)} has been processed successfully.
 Reference: ${reference}
 Order Number: ${orderNumber}
 Vehicle: ${carInfo}
-
-Your vehicle documents will be renewed and you'll receive a confirmation once the process is complete.
+${serviceValue ? `${serviceLabel}: ${serviceValue}\n` : ''}
+${bodyOutro}
 
 Thank you for using Motoka!
   `.trim();

@@ -261,7 +261,7 @@ export const adminVerifyOTP = async (req, res) => {
       })
       .eq('id', user.id);
 
-    // Generate JWT token with 30-minute expiry
+    // Generate JWT token with 8-hour expiry (reasonable admin session)
     const token = jwt.sign(
       {
         id: user.id,
@@ -270,7 +270,7 @@ export const adminVerifyOTP = async (req, res) => {
         type: 'admin'
       },
       process.env.JWT_SECRET,
-      { expiresIn: '30m' }
+      { expiresIn: '8h' }
     );
 
     // Return response matching frontend expectations: { status: true, data: { token, admin } }

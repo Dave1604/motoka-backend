@@ -230,6 +230,76 @@ export const addCarValidation = [
     (v) => v.isLength({ min: FIELD_LIMITS.CAC_NUMBER_MIN, max: FIELD_LIMITS.CAC_NUMBER_MAX }).withMessage(`CAC number must be ${FIELD_LIMITS.CAC_NUMBER_MIN}-${FIELD_LIMITS.CAC_NUMBER_MAX} characters`))
 ];
 
+export const applyPlateNumberValidation = [
+  body('type')
+    .trim()
+    .notEmpty().withMessage('Plate type is required')
+    .isIn([PLATE_TYPES.NORMAL, PLATE_TYPES.CUSTOMIZED, PLATE_TYPES.DEALERSHIP]).withMessage('Type must be Normal, Customized, or Dealership'),
+
+  body('plate_number')
+    .optional({ values: 'null' })
+    .trim()
+    .isLength({ min: FIELD_LIMITS.PLATE_NUMBER_MIN, max: FIELD_LIMITS.PLATE_NUMBER_MAX }).withMessage(`Plate number must be ${FIELD_LIMITS.PLATE_NUMBER_MIN}-${FIELD_LIMITS.PLATE_NUMBER_MAX} characters`),
+
+  body('preferred_name')
+    .optional({ values: 'null' })
+    .trim()
+    .isLength({ min: FIELD_LIMITS.PREFERRED_NAME_MIN, max: FIELD_LIMITS.PREFERRED_NAME_MAX }).withMessage(`Preferred name must be ${FIELD_LIMITS.PREFERRED_NAME_MIN}-${FIELD_LIMITS.PREFERRED_NAME_MAX} characters`),
+
+  body('business_type')
+    .optional({ values: 'null' })
+    .trim()
+    .isLength({ min: FIELD_LIMITS.BUSINESS_TYPE_MIN, max: FIELD_LIMITS.BUSINESS_TYPE_MAX }).withMessage(`Business type must be ${FIELD_LIMITS.BUSINESS_TYPE_MIN}-${FIELD_LIMITS.BUSINESS_TYPE_MAX} characters`),
+
+  body('cac_document')
+    .optional({ values: 'null' })
+    .trim()
+    .custom((value, { req }) => {
+      if (req.uploadedFiles?.cac_document && req.uploadedFiles.cac_document.length > 0) {
+        return true;
+      }
+      if (value && value !== 'null' && !isHttpUrl(value)) {
+        throw new Error('CAC document must be a valid HTTP or HTTPS URL');
+      }
+      return true;
+    }),
+
+  body('letterhead')
+    .optional({ values: 'null' })
+    .trim()
+    .custom((value, { req }) => {
+      if (req.uploadedFiles?.letterhead && req.uploadedFiles.letterhead.length > 0) {
+        return true;
+      }
+      if (value && value !== 'null' && !isHttpUrl(value)) {
+        throw new Error('Letterhead must be a valid HTTP or HTTPS URL');
+      }
+      return true;
+    }),
+
+  body('means_of_identification')
+    .optional({ values: 'null' })
+    .trim()
+    .custom((value, { req }) => {
+      if (req.uploadedFiles?.means_of_identification && req.uploadedFiles.means_of_identification.length > 0) {
+        return true;
+      }
+      if (value && value !== 'null' && !isHttpUrl(value)) {
+        throw new Error('Means of identification must be a valid HTTP or HTTPS URL');
+      }
+      return true;
+    }),
+
+  createDealershipFieldValidator('company_name', 'Company name is required for dealership plate applications',
+    (v) => v.isLength({ min: FIELD_LIMITS.COMPANY_NAME_MIN, max: FIELD_LIMITS.COMPANY_NAME_MAX }).withMessage(`Company name must be ${FIELD_LIMITS.COMPANY_NAME_MIN}-${FIELD_LIMITS.COMPANY_NAME_MAX} characters`)),
+  createDealershipFieldValidator('company_address', 'Company address is required for dealership plate applications',
+    (v) => v.isLength({ min: FIELD_LIMITS.COMPANY_ADDRESS_MIN, max: FIELD_LIMITS.COMPANY_ADDRESS_MAX }).withMessage(`Company address must be ${FIELD_LIMITS.COMPANY_ADDRESS_MIN}-${FIELD_LIMITS.COMPANY_ADDRESS_MAX} characters`)),
+  createDealershipFieldValidator('company_phone', 'Company phone is required for dealership plate applications',
+    (v) => v.isMobilePhone('any').withMessage('Invalid company phone number')),
+  createDealershipFieldValidator('cac_number', 'CAC number is required for dealership plate applications',
+    (v) => v.isLength({ min: FIELD_LIMITS.CAC_NUMBER_MIN, max: FIELD_LIMITS.CAC_NUMBER_MAX }).withMessage(`CAC number must be ${FIELD_LIMITS.CAC_NUMBER_MIN}-${FIELD_LIMITS.CAC_NUMBER_MAX} characters`)),
+];
+
 export const updateCarValidation = [
   body('name_of_owner')
     .optional({ values: 'null' })

@@ -1,10 +1,11 @@
-// Renewal item types and prices (in kobo)
+// Prices in kobo. Monicredit expects Naira — convert before API calls.
+// vehicle_licence is required and cannot be deselected.
 export const RENEWAL_ITEMS = {
   VEHICLE_LICENCE: {
     id: 'vehicle_licence',
     name: 'Vehicle Licence',
     price: 470000, // ₦4,700
-    required: true // Cannot be unchecked
+    required: true
   },
   ROAD_WORTHINESS: {
     id: 'road_worthiness',
@@ -32,12 +33,10 @@ export const RENEWAL_ITEMS = {
   }
 };
 
-// Get array of all renewal items for API response
 export const getAllRenewalItems = () => {
   return Object.values(RENEWAL_ITEMS);
 };
 
-// Calculate total price from selected items
 export const calculateRenewalTotal = (selectedItemIds = []) => {
   if (!Array.isArray(selectedItemIds) || selectedItemIds.length === 0) {
     return 0;
@@ -56,7 +55,6 @@ export const calculateRenewalTotal = (selectedItemIds = []) => {
   return total;
 };
 
-// Validate selected renewal items
 export const validateRenewalItems = (selectedItemIds = []) => {
   if (!Array.isArray(selectedItemIds) || selectedItemIds.length === 0) {
     return { valid: false, error: 'At least one renewal item must be selected' };
@@ -65,14 +63,12 @@ export const validateRenewalItems = (selectedItemIds = []) => {
   const allItems = getAllRenewalItems();
   const validIds = allItems.map(item => item.id);
   
-  // Check all selected items are valid
   for (const itemId of selectedItemIds) {
     if (!validIds.includes(itemId)) {
       return { valid: false, error: `Invalid renewal item: ${itemId}` };
     }
   }
   
-  // Check if vehicle_licence is included (required)
   const vehicleLicence = allItems.find(item => item.required);
   if (vehicleLicence && !selectedItemIds.includes(vehicleLicence.id)) {
     return { valid: false, error: `${vehicleLicence.name} is required and cannot be deselected` };
@@ -81,7 +77,6 @@ export const validateRenewalItems = (selectedItemIds = []) => {
   return { valid: true, total: calculateRenewalTotal(selectedItemIds) };
 };
 
-// Payment status enum (matches database)
 export const PAYMENT_STATUS = {
   PENDING: 'pending',
   SUCCESSFUL: 'successful',
@@ -90,14 +85,13 @@ export const PAYMENT_STATUS = {
   REFUNDED: 'refunded'
 };
 
-// Payment type enum (matches database)
 export const PAYMENT_TYPE = {
   RENEWAL_MANUAL: 'renewal_manual',
   RENEWAL_AUTO: 'renewal_auto',
-  NEW_REGISTRATION: 'new_registration'
+  NEW_REGISTRATION: 'new_registration',
+  PLATE_NUMBER: 'plate_number'
 };
 
-// Subscription status enum (matches database)
 export const SUBSCRIPTION_STATUS = {
   ACTIVE: 'active',
   PAUSED: 'paused',
@@ -106,21 +100,18 @@ export const SUBSCRIPTION_STATUS = {
   PENDING: 'pending'
 };
 
-// Subscription plan enum (matches database)
 export const SUBSCRIPTION_PLAN = {
   ANNUAL: 'annual',
   BIANNUAL: 'biannual',
   QUARTERLY: 'quarterly'
 };
 
-// Plan to months mapping
 export const PLAN_MONTHS = {
   annual: 12,
   biannual: 6,
   quarterly: 3
 };
 
-// Order status enum (matches database)
 export const ORDER_STATUS = {
   PENDING: 'pending',
   PROCESSING: 'processing',
@@ -128,21 +119,25 @@ export const ORDER_STATUS = {
   CANCELLED: 'cancelled'
 };
 
-// Order type enum (matches database)
 export const ORDER_TYPE = {
   RENEWAL_MANUAL: 'renewal_manual',
   RENEWAL_AUTO: 'renewal_auto',
-  NEW_REGISTRATION: 'new_registration'
+  NEW_REGISTRATION: 'new_registration',
+  PLATE_NUMBER: 'plate_number'
 };
 
-// Payment amount constraints (in kobo - 100 kobo = 1 NGN)
+// All values in kobo. Monicredit expects Naira — divide by 100 at API boundary.
 export const PAYMENT_LIMITS = {
-  MIN_AMOUNT: 10000,        // 100 NGN minimum
-  MAX_AMOUNT: 100000000,    // 1,000,000 NGN maximum
+  MIN_AMOUNT: 10000,        // ₦100
+  MAX_AMOUNT: 100000000,    // ₦1,000,000
   DEFAULT_CURRENCY: 'NGN'
 };
 
-// Paystack webhook events
+export const PAYMENT_GATEWAY = {
+  PAYSTACK: 'paystack',
+  MONICREDIT: 'monicredit'
+};
+
 export const PAYSTACK_EVENTS = {
   CHARGE_SUCCESS: 'charge.success',
   CHARGE_FAILED: 'charge.failed',
@@ -158,7 +153,6 @@ export const PAYSTACK_EVENTS = {
   REFUND_FAILED: 'refund.failed'
 };
 
-// Paystack API endpoints
 export const PAYSTACK_ENDPOINTS = {
   INITIALIZE: '/transaction/initialize',
   VERIFY: '/transaction/verify',
@@ -168,7 +162,11 @@ export const PAYSTACK_ENDPOINTS = {
   RESOLVE_ACCOUNT: '/bank/resolve'
 };
 
-// HTTP status codes (payment-specific)
+export const MONICREDIT_ENDPOINTS = {
+  INITIALIZE: '/payment/transactions/init-transaction',
+  VERIFY: '/payment/transactions/verify-transaction'
+};
+
 export const HTTP_STATUS = {
   OK: 200,
   CREATED: 201,
@@ -181,9 +179,7 @@ export const HTTP_STATUS = {
   SERVER_ERROR: 500
 };
 
-// Error messages
 export const ERROR_MESSAGES = {
-  // Payment errors
   INVALID_AMOUNT: 'Invalid payment amount',
   AMOUNT_TOO_LOW: `Minimum payment amount is ${PAYMENT_LIMITS.MIN_AMOUNT / 100} NGN`,
   AMOUNT_TOO_HIGH: `Maximum payment amount is ${PAYMENT_LIMITS.MAX_AMOUNT / 100} NGN`,
@@ -193,32 +189,32 @@ export const ERROR_MESSAGES = {
   INVALID_REFERENCE: 'Invalid payment reference',
   DUPLICATE_REFERENCE: 'Payment reference already exists',
   
-  // Paystack errors
   PAYSTACK_INIT_FAILED: 'Failed to initialize payment',
   PAYSTACK_VERIFY_FAILED: 'Failed to verify payment',
   PAYSTACK_WEBHOOK_INVALID: 'Invalid webhook signature',
   PAYSTACK_API_ERROR: 'Paystack API error',
   
-  // Subscription errors
+  MONICREDIT_INIT_FAILED: 'Failed to initialize Monicredit payment',
+  MONICREDIT_VERIFY_FAILED: 'Failed to verify Monicredit payment',
+  MONICREDIT_API_ERROR: 'Monicredit API error',
+  INVALID_PAYMENT_GATEWAY: 'Invalid payment gateway selected',
+  
   SUBSCRIPTION_NOT_FOUND: 'Subscription not found',
   SUBSCRIPTION_ALREADY_ACTIVE: 'An active subscription already exists for this car',
   SUBSCRIPTION_CANCELLED: 'This subscription has been cancelled',
   SUBSCRIPTION_EXPIRED: 'This subscription has expired',
   NO_AUTHORIZATION: 'No payment authorization found for recurring charge',
   
-  // Order errors
   ORDER_NOT_FOUND: 'Order not found',
   ORDER_ALREADY_PROCESSED: 'This order has already been processed',
   ORDER_CANCELLED: 'This order has been cancelled',
   INVALID_ORDER_STATUS: 'Invalid order status transition',
   
-  // General errors
   CAR_NOT_FOUND: 'Car not found',
   UNAUTHORIZED: 'Unauthorized access',
   INVALID_REQUEST: 'Invalid request data'
 };
 
-// Success messages
 export const SUCCESS_MESSAGES = {
   PAYMENT_INITIALIZED: 'Payment initialized successfully',
   PAYMENT_VERIFIED: 'Payment verified successfully',
@@ -235,7 +231,6 @@ export const SUCCESS_MESSAGES = {
   WEBHOOK_PROCESSED: 'Webhook processed successfully'
 };
 
-// Pagination defaults
 export const PAGINATION = {
   DEFAULT_PAGE: 1,
   DEFAULT_LIMIT: 20,
@@ -245,13 +240,12 @@ export const PAGINATION = {
   MAX_LIMIT: 100
 };
 
-// Subscription retry configuration
+// Retry intervals in days from the previous attempt.
 export const RETRY_CONFIG = {
   MAX_RETRIES: 3,
-  RETRY_INTERVALS_DAYS: [3, 7, 14]  // Days between retries
+  RETRY_INTERVALS_DAYS: [3, 7, 14]
 };
 
-// Reference prefixes for identification
 export const REFERENCE_PREFIX = {
   PAYMENT: 'PAY',
   SUBSCRIPTION: 'SUB',

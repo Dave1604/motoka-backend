@@ -73,11 +73,65 @@ export async function sendEmail({ to, subject, html, text }) {
   }
 }
 
+// ─── SHARED SHELL ────────────────────────────────────────────────────────────
+
+// PNG/JPG only — SVG is blocked by all major email clients
+const LOGO_URL = process.env.EMAIL_LOGO_URL || 'https://motoka-logo.vercel.app/Logo.png';
+const isPngLogo = LOGO_URL && /\.(png|jpg|jpeg|webp)$/i.test(LOGO_URL);
+
+/**
+ * Minimal branded email shell used by all transactional emails.
+ * @param {string} content - Inner HTML content
+ */
+function buildEmailShell(content) {
+  const year = new Date().getFullYear();
+  const brandMark = isPngLogo
+    ? `<img src="${LOGO_URL}" alt="Motoka" width="120" height="32" style="display:block;border:0;height:32px;width:auto" />`
+    : `<span style="font-size:22px;font-weight:800;color:#1B6DBD;letter-spacing:-0.5px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">motoka</span>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Motoka</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#ffffff;color:#111827}
+    .wrap{max-width:520px;margin:0 auto;background:#ffffff}
+    .top-bar{height:4px;background:#1B6DBD}
+    .brand{padding:22px 36px 18px;border-bottom:1px solid #e5eaf2}
+    .body{padding:32px 36px 28px}
+    .title{font-size:20px;font-weight:700;color:#111827;margin-bottom:6px;letter-spacing:-0.3px}
+    .sub{font-size:13.5px;color:#6b7280;margin-bottom:26px;line-height:1.55}
+    .code-wrap{background:#f5f9ff;border:1px solid #c9dff5;border-radius:10px;padding:22px 20px;text-align:center;margin-bottom:20px}
+    .code{font-size:38px;font-weight:800;color:#1B6DBD;letter-spacing:10px;font-family:'Courier New',monospace}
+    .expires{font-size:12px;color:#9ca3af;margin-top:8px}
+    .alert{font-size:12.5px;color:#92400e;background:#fffbeb;border-left:3px solid #f59e0b;padding:10px 14px;border-radius:0 6px 6px 0;margin-bottom:18px;line-height:1.5}
+    .note{font-size:12.5px;color:#9ca3af;line-height:1.6}
+    .footer{border-top:1px solid #e5eaf2;padding:14px 36px;text-align:center}
+    .footer p{font-size:11px;color:#c0c8d4}
+    @media(max-width:480px){.body{padding:24px 20px 20px}.brand{padding:18px 20px}.footer{padding:12px 20px}}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="top-bar"></div>
+    <div class="brand">${brandMark}</div>
+    <div class="body">${content}</div>
+    <div class="footer"><p>&copy; ${year} Motoka &mdash; Automated message, do not reply.</p></div>
+  </div>
+</body>
+</html>`;
+}
+
+// ─── PASSWORD RESET ───────────────────────────────────────────────────────────
+
 /**
  * Send password reset OTP email
- * 
+ *
  * SECURITY: Never log the OTP value
- * 
+ *
  * @param {Object} options
  * @param {string} options.to - Recipient email
  * @param {string} options.otp - 6-digit OTP code
@@ -85,52 +139,20 @@ export async function sendEmail({ to, subject, html, text }) {
  */
 export async function sendPasswordResetOTP({ to, otp }) {
   const subject = 'Reset Your Motoka Password';
-  
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
-        .header { background-color: #1a1a1a; color: #ffffff; padding: 30px 20px; text-align: center; }
-        .content { padding: 40px 30px; }
-        .otp-box { background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 8px; padding: 20px; text-align: center; margin: 30px 0; }
-        .otp-code { font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1a1a1a; font-family: monospace; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
-        .warning { color: #dc3545; font-weight: 500; margin-top: 20px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>Password Reset Request</h1>
-        </div>
-        <div class="content">
-          <p>Hello,</p>
-          <p>You requested to reset your Motoka password. Use the code below to complete the process:</p>
-          
-          <div class="otp-box">
-            <div class="otp-code">${otp}</div>
-          </div>
-          
-          <p><strong>This code will expire in 15 minutes.</strong></p>
-          
-          <p>If you didn't request this password reset, you can safely ignore this email. Your password will remain unchanged.</p>
-          
-          <p class="warning">⚠️ Never share this code with anyone. Motoka support will never ask for your OTP.</p>
-        </div>
-        <div class="footer">
-          <p>© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
-          <p>This is an automated message, please do not reply.</p>
-        </div>
-      </div>
-    </body>
-    </html>
+
+  const content = `
+    <p class="title">Password Reset</p>
+    <p class="sub">Use the code below to reset your Motoka password.</p>
+    <div class="code-wrap">
+      <div class="code">${otp}</div>
+      <div class="expires">Expires in 15 minutes</div>
+    </div>
+    <p class="alert">Never share this code — Motoka will never ask for it.</p>
+    <p class="note">Didn't request this? You can safely ignore this email.</p>
   `;
-  
+
+  const html = buildEmailShell(content);
+
   const text = `
 Motoka Password Reset
 
@@ -142,7 +164,7 @@ This code will expire in 15 minutes.
 
 If you didn't request this, you can safely ignore this email.
 
-Never share this code with anyone.
+Never share this code with anyone. Motoka support will never ask for your OTP.
 
 © ${new Date().getFullYear()} Motoka
   `.trim();
@@ -150,64 +172,34 @@ Never share this code with anyone.
   return await sendEmail({ to, subject, html, text });
 }
 
+// ─── 2FA CODE ─────────────────────────────────────────────────────────────────
+
 /**
  * Send 2FA email code
- * 
+ *
  * SECURITY: Never log the code value
- * 
+ *
  * @param {Object} options
  * @param {string} options.to - Recipient email
  * @param {string} options.code - 6-digit 2FA code
  * @returns {Promise<Object>} Send result
  */
 export async function send2FACode({ to, code }) {
-  const subject = 'Your Motoka 2FA Code';
-  
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
-        .header { background-color: #1a1a1a; color: #ffffff; padding: 30px 20px; text-align: center; }
-        .content { padding: 40px 30px; }
-        .code-box { background-color: #f8f9fa; border: 2px solid #e9ecef; border-radius: 8px; padding: 20px; text-align: center; margin: 30px 0; }
-        .code { font-size: 32px; font-weight: bold; letter-spacing: 8px; color: #1a1a1a; font-family: monospace; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
-        .warning { color: #dc3545; font-weight: 500; margin-top: 20px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>Two-Factor Authentication</h1>
-        </div>
-        <div class="content">
-          <p>Hello,</p>
-          <p>Your two-factor authentication code is:</p>
-          
-          <div class="code-box">
-            <div class="code">${code}</div>
-          </div>
-          
-          <p><strong>This code will expire in 10 minutes.</strong></p>
-          
-          <p>If you didn't attempt to sign in, please secure your account immediately by changing your password.</p>
-          
-          <p class="warning">⚠️ Never share this code with anyone. Motoka support will never ask for your 2FA code.</p>
-        </div>
-        <div class="footer">
-          <p>© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
-          <p>This is an automated message, please do not reply.</p>
-        </div>
-      </div>
-    </body>
-    </html>
+  const subject = 'Your Motoka Sign-in Code';
+
+  const content = `
+    <p class="title">Sign-in Verification</p>
+    <p class="sub">Use the code below to complete your Motoka sign-in.</p>
+    <div class="code-wrap">
+      <div class="code">${code}</div>
+      <div class="expires">Expires in 10 minutes</div>
+    </div>
+    <p class="alert">Never share this code — Motoka will never ask for it.</p>
+    <p class="note">Didn't attempt to sign in? Change your password immediately.</p>
   `;
-  
+
+  const html = buildEmailShell(content);
+
   const text = `
 Motoka Two-Factor Authentication
 
@@ -217,7 +209,7 @@ This code will expire in 10 minutes.
 
 If you didn't attempt to sign in, please secure your account immediately.
 
-Never share this code with anyone.
+Never share this code with anyone. Motoka support will never ask for your 2FA code.
 
 © ${new Date().getFullYear()} Motoka
   `.trim();

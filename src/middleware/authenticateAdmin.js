@@ -1,59 +1,73 @@
 import jwt from 'jsonwebtoken';
+import { getSupabaseAdmin } from '../config/supabase.js';
 import { unauthorized, forbidden } from '../utils/responses.js';
 
 /**
- * ADMIN JWT AUTHENTICATION MIDDLEWARE
- * 
- * Validates JWT tokens issued by the admin auth system.
- * This is separate from the regular user authentication.
- * 
- * Token should be in format: "Bearer <token>"
- * Token payload must include: { is_admin: true, type: 'admin' }
- * 
- * Usage:
- * - Apply to admin-only routes that need authentication
- * - Works alongside checkAdmin for existing Supabase-auth admin routes
+ * ADMIN AUTHENTICATION MIDDLEWARE
+ *
+ * Accepts two token types:
+ *  1. Backend JWT  – signed with JWT_SECRET, payload: { is_admin: true, type: 'admin' }
+ *     (issued by POST /api/admin/auth/verify-otp)
+ *
+ *  2. Supabase token – issued directly by Supabase Auth (frontend OTP login).
+ *     We verify it via supabaseAdmin.auth.getUser() and check profiles.is_admin.
+ *
+ * Both paths attach req.admin = { id, email, is_admin: true }
  */
-export const authenticateAdmin = (req, res, next) => {
+export const authenticateAdmin = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
-    
+
     if (!authHeader?.startsWith('Bearer ')) {
       return unauthorized(res, 'No admin token provided');
     }
-    
+
     const token = authHeader.split(' ')[1];
-    
-    if (!process.env.JWT_SECRET) {
-      console.error('[Admin Auth Middleware] JWT_SECRET not configured');
-      return forbidden(res, 'Authentication service misconfigured');
+
+    // ── Path 1: Try our backend JWT first (fast, no DB call) ─────────────────
+    if (process.env.JWT_SECRET) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.is_admin && decoded.type === 'admin') {
+          req.admin = { id: decoded.id, email: decoded.email, is_admin: true };
+          return next();
+        }
+      } catch (jwtErr) {
+        // Not our JWT — fall through to Supabase verification
+      }
     }
-    
-    // Verify JWT token
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    
-    // Validate admin credentials in token
-    if (!decoded.is_admin || decoded.type !== 'admin') {
+
+    // ── Path 2: Supabase token (frontend admin login stores session.access_token) ──
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const { data: { user }, error: authError } = await supabaseAdmin.auth.getUser(token);
+
+    if (authError || !user) {
+      return unauthorized(res, 'Invalid or expired admin token');
+    }
+
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('is_admin, is_suspended')
+      .eq('id', user.id)
+      .single();
+
+    if (profileError || !profile) {
+      return unauthorized(res, 'Admin profile not found');
+    }
+
+    if (!profile.is_admin) {
       return forbidden(res, 'Admin access required');
     }
-    
-    // Attach admin info to request
-    req.admin = {
-      id: decoded.id,
-      email: decoded.email,
-      is_admin: true
-    };
-    
-    next();
+
+    if (profile.is_suspended) {
+      return forbidden(res, 'Your account has been suspended');
+    }
+
+    req.admin = { id: user.id, email: user.email, is_admin: true };
+    return next();
+
   } catch (error) {
-    if (error.name === 'TokenExpiredError') {
-      return unauthorized(res, 'Admin token has expired');
-    }
-    
-    if (error.name === 'JsonWebTokenError') {
-      return unauthorized(res, 'Invalid admin token');
-    }
-    
     console.error('[Admin Auth Middleware] Error:', error);
     return unauthorized(res, 'Authentication failed');
   }
