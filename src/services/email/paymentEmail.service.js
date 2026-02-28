@@ -26,24 +26,30 @@ import { formatAmount } from '../../utils/paymentHelpers.js';
 export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType }) {
   const subject = 'Payment Successful - Motoka';
   const isPlateNumber = paymentType === 'plate_number';
+  const isDriverLicense = paymentType === 'driver_license';
   
   const carInfo = carDetails 
     ? `${carDetails.vehicle_make || ''} ${carDetails.vehicle_model || ''} (${carDetails.registration_no || 'N/A'})`.trim()
-    : 'Your vehicle';
+    : (isDriverLicense ? 'Driver\'s license' : 'Your vehicle');
 
-  // Contextual copy depending on payment type
-  const bodyIntro = isPlateNumber
-    ? 'Your payment has been processed successfully. Your plate number application has been received and is being processed by our team.'
-    : 'Your payment has been processed successfully. A renewal order has been created and is being processed by our team.';
+  const bodyIntro = isDriverLicense
+    ? 'Your payment has been processed successfully. Your driver\'s license application has been received and is being processed by our team.'
+    : isPlateNumber
+      ? 'Your payment has been processed successfully. Your plate number application has been received and is being processed by our team.'
+      : 'Your payment has been processed successfully. A renewal order has been created and is being processed by our team.';
 
-  const bodyOutro = isPlateNumber
-    ? "Our team will process your plate number application and you'll receive a confirmation once it's ready."
-    : "Your vehicle documents will be renewed and you'll receive a confirmation once the process is complete.";
+  const bodyOutro = isDriverLicense
+    ? "Our team will process your driver's license application and you'll receive a confirmation once it's ready."
+    : isPlateNumber
+      ? "Our team will process your plate number application and you'll receive a confirmation once it's ready."
+      : "Your vehicle documents will be renewed and you'll receive a confirmation once the process is complete.";
 
-  const serviceLabel = isPlateNumber ? 'Service' : 'Documents';
-  const serviceValue = isPlateNumber
-    ? 'Plate Number Application'
-    : (documentNames?.length > 0 ? documentNames.join(', ') : null);
+  const serviceLabel = (isPlateNumber || isDriverLicense) ? 'Service' : 'Documents';
+  const serviceValue = isDriverLicense
+    ? "Driver's License (New/Renew)"
+    : isPlateNumber
+      ? 'Plate Number Application'
+      : (documentNames?.length > 0 ? documentNames.join(', ') : null);
   
   const html = `
     <!DOCTYPE html>

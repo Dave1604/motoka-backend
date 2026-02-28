@@ -11,6 +11,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import authRoutes from './routes/auth.routes.js';
 import carRoutes from './routes/car.routes.js';
+import documentRoutes from './routes/document.routes.js';
+import driverLicenseApplicationRoutes from './routes/driverLicenseApplication.routes.js';
 import profileRoutes from './routes/profile.routes.js';
 import adminRoutes from './routes/admin.routes.js';
 import adminAuthRoutes from './routes/adminAuth.routes.js';
@@ -128,6 +130,8 @@ app.get('/health', (req, res) => {
 
 app.use('/api', authRoutes);
 app.use('/api', carRoutes);
+app.use('/api', documentRoutes);
+app.use('/api', driverLicenseApplicationRoutes);
 app.use('/api/settings/profile', profileRoutes);
 // Mount admin auth routes BEFORE admin routes to avoid middleware interference
 app.use('/api/admin', adminAuthRoutes);

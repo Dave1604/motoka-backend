@@ -1,6 +1,13 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
 import paymentMetrics from '../services/payment/metrics.service.js';
+import {
+  adminListDocuments,
+  getDocumentById,
+  createDocument,
+  updateDocumentStatus
+} from '../services/document.service.js';
+import { uploadFile } from '../services/fileUpload.service.js';
 import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
 import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
@@ -1251,5 +1258,153 @@ export const getTransactionDetails = async (req, res) => {
   } catch (error) {
     logError('Get transaction details', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve transaction' });
+  }
+};
+
+// ─── Document management (admin) ─────────────────────────────────────────────
+
+// GET /admin/documents
+export const listDocuments = async (req, res) => {
+  try {
+    const { user_id, car_id, document_type, status, page, limit } = req.query;
+    const result = await adminListDocuments({
+      userId: user_id || null,
+      carId: car_id ? parseInt(car_id, 10) : null,
+      documentType: document_type || null,
+      status: status || null,
+      page: page ? parseInt(page, 10) : 1,
+      limit: limit ? parseInt(limit, 10) : 20,
+    });
+    return res.status(200).json({
+      status: true,
+      message: 'Documents retrieved',
+      data: result.documents,
+      pagination: {
+        total: result.total,
+        page: parseInt(req.query.page || 1, 10),
+        limit: parseInt(req.query.limit || 20, 10),
+      },
+    });
+  } catch (error) {
+    logError('Admin list documents', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve documents' });
+  }
+};
+
+// GET /admin/documents/:id
+export const getDocumentDetails = async (req, res) => {
+  try {
+    const doc = await getDocumentById(parseInt(req.params.id, 10));
+    if (!doc) {
+      return res.status(404).json({ status: false, message: 'Document not found' });
+    }
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('first_name, last_name, email, phone_number')
+      .eq('id', doc.user_id)
+      .single();
+    return res.status(200).json({
+      status: true,
+      message: 'Document retrieved',
+      data: { ...doc, user: profile },
+    });
+  } catch (error) {
+    logError('Admin get document', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve document' });
+  }
+};
+
+// POST /admin/documents/upload
+export const adminUploadDocument = async (req, res) => {
+  try {
+    const adminId = req.admin?.id || req.user?.id;
+    const { user_id, car_id, car_slug, document_type, document_category } = req.body;
+    const file = req.file || req.files?.file?.[0];
+
+    if (!user_id || !document_type || !['car', 'driver_license'].includes(document_type)) {
+      return res.status(400).json({
+        status: false,
+        message: 'user_id and document_type (car|driver_license) are required',
+      });
+    }
+
+    if (document_type === 'car' && !car_id && !car_slug) {
+      return res.status(400).json({
+        status: false,
+        message: 'car_id or car_slug is required for car documents',
+      });
+    }
+
+    if (!file || !file.buffer) {
+      return res.status(400).json({ status: false, message: 'No file provided' });
+    }
+
+    const supabaseAdmin = getSupabaseAdmin();
+    let car = null;
+    if (document_type === 'car') {
+      let carQuery = supabaseAdmin.from('cars').select('id, slug, user_id').is('deleted_at', null);
+      if (car_slug) carQuery = carQuery.eq('slug', car_slug);
+      else carQuery = carQuery.eq('id', car_id);
+      const { data: carRow } = await carQuery.single();
+      if (!carRow || carRow.user_id !== user_id) {
+        return res.status(404).json({ status: false, message: 'Car not found or does not belong to user' });
+      }
+      car = carRow;
+    }
+
+    const fileUrl = document_type === 'car'
+      ? await uploadFile(file.buffer, file.originalname, file.mimetype, user_id, car.slug)
+      : await uploadFile(file.buffer, file.originalname, file.mimetype, user_id, 'driver_license');
+
+    const doc = await createDocument({
+      userId: user_id,
+      carId: document_type === 'car' ? car.id : null,
+      documentType: document_type,
+      documentCategory: document_category || null,
+      fileUrl,
+      uploadedByType: 'admin',
+      uploadedByUserId: adminId,
+    });
+
+    return res.status(201).json({
+      status: true,
+      message: 'Document uploaded successfully',
+      data: { document: doc },
+    });
+  } catch (error) {
+    logError('Admin upload document', error);
+    return res.status(500).json({ status: false, message: 'Failed to upload document' });
+  }
+};
+
+// PUT /admin/documents/:id/approve
+export const approveDocument = async (req, res) => {
+  try {
+    const doc = await updateDocumentStatus(parseInt(req.params.id, 10), 'approved');
+    return res.status(200).json({
+      status: true,
+      message: 'Document approved',
+      data: { document: doc },
+    });
+  } catch (error) {
+    logError('Admin approve document', error);
+    return res.status(500).json({ status: false, message: 'Failed to approve document' });
+  }
+};
+
+// PUT /admin/documents/:id/reject
+export const rejectDocument = async (req, res) => {
+  try {
+    const { reason } = req.body || {};
+    const doc = await updateDocumentStatus(parseInt(req.params.id, 10), 'rejected', reason);
+    return res.status(200).json({
+      status: true,
+      message: 'Document rejected',
+      data: { document: doc },
+    });
+  } catch (error) {
+    logError('Admin reject document', error);
+    return res.status(500).json({ status: false, message: 'Failed to reject document' });
   }
 };

@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import * as car from '../controllers/car.controller.js';
 import { listPlateNumberPrices } from '../controllers/platePrice.controller.js';
+import { listDriverLicensePrices } from '../controllers/driverLicensePrice.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
 import { addCarValidation, updateCarValidation, applyPlateNumberValidation } from '../utils/carValidator.js';
@@ -12,6 +13,8 @@ const router = Router();
 
 // Plate number pricing (public to authenticated users)
 router.get('/plate-number-prices', authenticate, apiLimiter, listPlateNumberPrices);
+// Driver license pricing (new / renew)
+router.get('/driver-license-prices', authenticate, apiLimiter, listDriverLicensePrices);
 
 router.post('/reg-car', authenticate, checkEmailVerified, carRegistrationLimiter, handleCarRegistrationUploads, addCarValidation, validate, car.addCar);
 router.get('/get-cars', authenticate, checkEmailVerified, apiLimiter, car.getCars);

@@ -163,7 +163,9 @@ export function buildPaymentMetadata({
   deliveryDetails = null,
   // Plate number specific (optional)
   plateType = null,
-  subType = null
+  subType = null,
+  // Driver license specific (optional)
+  licenseType = null
 }) {
   const scheduleIds = paymentScheduleId.length > 0 ? paymentScheduleId : selectedItems;
   
@@ -179,6 +181,7 @@ export function buildPaymentMetadata({
     delivery_fee: deliveryFee,
     delivery_details: deliveryDetails,
     ...(plateType ? { plate_type: plateType, sub_type: subType } : {}),
+    ...(licenseType ? { license_type: licenseType } : {}),
     initiated_at: new Date().toISOString()
   });
 }

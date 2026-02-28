@@ -12,6 +12,7 @@ import {
   validatePaymentAmount,
   formatAmount
 } from '../../utils/paymentHelpers.js';
+import { logPaymentAudit } from './audit.service.js';
 
 export class TransactionError extends Error {
   constructor(message, statusCode = 500, code = null) {
@@ -582,22 +583,50 @@ export async function markTransactionAbandoned(reference) {
 
 export async function markTransactionRefunded(reference, refundData = {}) {
   const supabaseAdmin = getSupabaseAdmin();
-  
+
+  const existing = await getTransactionByReference(reference);
+  if (!existing) {
+    throw new TransactionError(ERROR_MESSAGES.PAYMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
+  }
+
+  let mergedMetadata = {};
+  try {
+    mergedMetadata = typeof existing.metadata === 'string'
+      ? JSON.parse(existing.metadata)
+      : (existing.metadata || {});
+  } catch (e) {
+    logWarn('Could not parse existing metadata for refund', { reference });
+  }
+  mergedMetadata.refund = { ...(mergedMetadata.refund || {}), ...refundData };
+
   const { data: transaction, error } = await supabaseAdmin
     .from('payment_transactions')
     .update({
       status: PAYMENT_STATUS.REFUNDED,
-      metadata: supabaseAdmin.sql`metadata || ${JSON.stringify({ refund: refundData })}`
+      metadata: mergedMetadata,
+      updated_at: new Date().toISOString()
     })
     .eq('reference', reference)
     .select('*')
     .single();
-  
+
   if (error) {
     logError('Mark transaction refunded error', { error, reference });
     throw new TransactionError('Failed to update transaction', HTTP_STATUS.SERVER_ERROR);
   }
-  
+
+  await logPaymentAudit({
+    eventType: 'refund',
+    transactionId: transaction.id,
+    reference,
+    userId: transaction.user_id,
+    paymentGateway: transaction.payment_gateway,
+    amountKobo: transaction.amount,
+    statusBefore: existing.status,
+    statusAfter: PAYMENT_STATUS.REFUNDED,
+    metadata: { refund: refundData },
+  });
+
   return transaction;
 }
 

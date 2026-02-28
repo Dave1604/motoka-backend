@@ -3,12 +3,13 @@ import * as admin from '../controllers/admin.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { checkAdmin } from '../middleware/checkAdmin.js';
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
+import { handleDocumentUpload } from '../middleware/fileUpload.js';
 import { suspendUserValidation, validate } from '../utils/validators.js';
 
 const router = Router();
 
 /**
- * ADMIN ROUTES
+     * ADMIN ROUTES
  *
  * Two auth strategies:
  *  - Supabase token routes (legacy): authenticate + checkAdmin
@@ -46,5 +47,12 @@ router.put('/orders/:orderNumber/status', authenticateAdmin, admin.updateOrderSt
 router.get('/transactions/failed', authenticateAdmin, admin.getFailedTransactions);
 router.get('/transactions', authenticateAdmin, admin.listTransactions);
 router.get('/transactions/:reference', authenticateAdmin, admin.getTransactionDetails);
+
+// ── Document management (authenticateAdmin) ────────────────────────────────────
+router.get('/documents', authenticateAdmin, admin.listDocuments);
+router.get('/documents/:id', authenticateAdmin, admin.getDocumentDetails);
+router.post('/documents/upload', authenticateAdmin, handleDocumentUpload, admin.adminUploadDocument);
+router.put('/documents/:id/approve', authenticateAdmin, admin.approveDocument);
+router.put('/documents/:id/reject', authenticateAdmin, admin.rejectDocument);
 
 export default router;
