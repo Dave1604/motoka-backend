@@ -1322,10 +1322,18 @@ export const adminUploadDocument = async (req, res) => {
     const { user_id, car_id, car_slug, document_type, document_category } = req.body;
     const file = req.file || req.files?.file?.[0];
 
-    if (!user_id || !document_type || !['car', 'driver_license'].includes(document_type)) {
+    if (!document_type || !['car', 'driver_license'].includes(document_type)) {
       return res.status(400).json({
         status: false,
-        message: 'user_id and document_type (car|driver_license) are required',
+        message: 'document_type (car|driver_license) is required',
+      });
+    }
+
+    // driver_license requires user_id; car uploads can derive user_id from the car
+    if (document_type === 'driver_license' && !user_id) {
+      return res.status(400).json({
+        status: false,
+        message: 'user_id is required for driver_license documents',
       });
     }
 
@@ -1342,23 +1350,30 @@ export const adminUploadDocument = async (req, res) => {
 
     const supabaseAdmin = getSupabaseAdmin();
     let car = null;
+    let effectiveUserId = user_id;
+
     if (document_type === 'car') {
       let carQuery = supabaseAdmin.from('cars').select('id, slug, user_id').is('deleted_at', null);
       if (car_slug) carQuery = carQuery.eq('slug', car_slug);
       else carQuery = carQuery.eq('id', car_id);
       const { data: carRow } = await carQuery.single();
-      if (!carRow || carRow.user_id !== user_id) {
-        return res.status(404).json({ status: false, message: 'Car not found or does not belong to user' });
+      if (!carRow) {
+        return res.status(404).json({ status: false, message: 'Car not found' });
+      }
+      // Validate ownership only when caller explicitly passes a user_id
+      if (user_id && carRow.user_id !== user_id) {
+        return res.status(404).json({ status: false, message: 'Car does not belong to specified user' });
       }
       car = carRow;
+      effectiveUserId = car.user_id; // derive from car — admin doesn't need to know the user ID
     }
 
     const fileUrl = document_type === 'car'
-      ? await uploadFile(file.buffer, file.originalname, file.mimetype, user_id, car.slug)
-      : await uploadFile(file.buffer, file.originalname, file.mimetype, user_id, 'driver_license');
+      ? await uploadFile(file.buffer, file.originalname, file.mimetype, effectiveUserId, car.slug)
+      : await uploadFile(file.buffer, file.originalname, file.mimetype, effectiveUserId, 'driver_license');
 
     const doc = await createDocument({
-      userId: user_id,
+      userId: effectiveUserId,
       carId: document_type === 'car' ? car.id : null,
       documentType: document_type,
       documentCategory: document_category || null,
