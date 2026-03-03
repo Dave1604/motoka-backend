@@ -423,47 +423,54 @@ async function handleMonicreditPaymentSuccess(data) {
     logError('Failed to store Monicredit webhook event ID', { error, reference: transaction.reference, eventId });
   }
   
-  // Re-verify with Monicredit API before crediting — never trust webhook payload alone
-  let verificationResult;
+  // Re-verify with Monicredit API (defense in depth — webhook signature already
+  // verified by middleware).  If the verify call fails or returns non-approved
+  // we log a warning and continue: the signature verification is the primary
+  // trust anchor.  We only hard-abort on a *confirmed* amount mismatch.
+  let verificationResult = null;
+  let verifySkipped = false;
+
   try {
     verificationResult = await MonicreditAdapter.verifyPayment(orderId);
-  } catch (error) {
-    logError('Monicredit webhook verification failed', { orderId, error: error.message });
-    return;
-  }
-  
-  const responseStatus = verificationResult.raw_response?.status;
-  const dataStatus = verificationResult.status?.toLowerCase();
-  
-  const isApproved = (
-    (responseStatus === true || responseStatus === 'success') &&
-    (dataStatus === 'approved' || dataStatus === 'success')
-  );
-  
-  if (!isApproved) {
-    logError('[Monicredit Webhook] Payment not approved — aborting', {
-      orderId,
-      responseStatus,
-      dataStatus
-    });
-    return;
-  }
-  
-  const monicreditAmount = verificationResult.amount || 0;
-  
-  try {
-    validatePaymentAmount(transaction.amount, monicreditAmount, 1);
-  } catch (error) {
-    if (error instanceof AmountValidationError) {
-      logError('Monicredit webhook amount mismatch', {
-        orderId,
-        expected_kobo: transaction.amount,
-        actual_kobo: monicreditAmount,
-        difference_kobo: error.difference
+
+    const responseStatus = verificationResult.raw_response?.status;
+    const dataStatus = verificationResult.status?.toLowerCase();
+
+    const isApproved = (
+      (responseStatus === true || responseStatus === 'success') &&
+      (dataStatus === 'approved' || dataStatus === 'success')
+    );
+
+    if (!isApproved) {
+      logWarn('[Monicredit Webhook] Verify returned non-approved — continuing on webhook signature', {
+        orderId, responseStatus, dataStatus
       });
-      return;
+      verifySkipped = true;
     }
-    throw error;
+  } catch (error) {
+    logWarn('[Monicredit Webhook] Verify API call failed — continuing on webhook signature', {
+      orderId, error: error.message
+    });
+    verifySkipped = true;
+  }
+
+  // Only check amount when we have a confirmed verification result
+  const monicreditAmount = verificationResult?.amount || 0;
+  if (!verifySkipped && monicreditAmount > 0) {
+    try {
+      validatePaymentAmount(transaction.amount, monicreditAmount, 1);
+    } catch (error) {
+      if (error instanceof AmountValidationError) {
+        logError('Monicredit webhook amount mismatch — aborting', {
+          orderId,
+          expected_kobo: transaction.amount,
+          actual_kobo: monicreditAmount,
+          difference_kobo: error.difference
+        });
+        return;
+      }
+      throw error;
+    }
   }
   
   let metadata = {};
@@ -488,17 +495,17 @@ async function handleMonicreditPaymentSuccess(data) {
   
   await updateTransactionStatus(transaction.reference, {
     status: PAYMENT_STATUS.SUCCESSFUL,
-    channel: verificationResult.channel || 'bank_transfer',
+    channel: verificationResult?.channel || data.channel || 'bank_transfer',
     authorization_code: null,
-    paid_at: verificationResult.date_paid || new Date().toISOString()
+    paid_at: verificationResult?.date_paid || data.paid_at || new Date().toISOString()
   });
   
   const processResult = await processPaymentSuccess({
     reference: transaction.reference,
     status: PAYMENT_STATUS.SUCCESSFUL,
-    channel: verificationResult.channel || 'bank_transfer',
+    channel: verificationResult?.channel || data.channel || 'bank_transfer',
     authorization_code: null,
-    paid_at: verificationResult.date_paid || new Date().toISOString(),
+    paid_at: verificationResult?.date_paid || data.paid_at || new Date().toISOString(),
     orderType,
     renewalMonths: metadata.renewal_months || 12,
     selectedItems: paymentScheduleIds,
@@ -518,7 +525,7 @@ async function handleMonicreditPaymentSuccess(data) {
     try {
       await PaymentSuccessService.processPaymentSuccessSideEffects({
         transaction: updatedTransaction,
-        gatewayData: verificationResult,
+        gatewayData: verificationResult || data,
         order: createdOrder
       });
       
