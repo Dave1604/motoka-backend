@@ -366,11 +366,14 @@ export class MonicreditAdapter {
     
     const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE || 'REV68dff2878cb81';
     
-    const items = selectedItems.map(item => ({
-      unit_cost: item.price,
-      item: item.name,
-      revenue_head_code: revenueHeadCode
-    }));
+    // Skip items with zero cost — Monicredit rejects line items with unit_cost = 0
+    const items = selectedItems
+      .filter(item => item.price > 0)
+      .map(item => ({
+        unit_cost: item.price,
+        item: item.name,
+        revenue_head_code: revenueHeadCode
+      }));
     
     if (deliveryFee > 0) {
       items.push({
