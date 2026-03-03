@@ -197,7 +197,8 @@ export const initializePayment = async (req, res) => {
       plate_type,
       sub_type = null,
       // Driver license specific
-      license_type = null
+      license_type = null,
+      duration = null          // '3yr' | '5yr' | 'international'
     } = req.body;
 
     const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER;
@@ -331,26 +332,42 @@ export const initializePayment = async (req, res) => {
         amountNaira: priceData.price
       });
     } else if (isDriverLicensePayment) {
-      // Driver license: price from driver_license_prices (license_type: new | renew)
-      if (!license_type || !['new', 'renew'].includes(String(license_type).toLowerCase())) {
+      // Driver license: price from driver_license_prices (license_type + duration)
+      const validTypes = ['new', 'renew'];
+      const validDurations = ['3yr', '5yr', 'international'];
+      if (!license_type || !validTypes.includes(String(license_type).toLowerCase())) {
         return paymentResponse.error(
           res,
           'license_type is required for driver license payments and must be "new" or "renew"',
           HTTP_STATUS.BAD_REQUEST
         );
       }
+      const normDuration = duration ? String(duration).toLowerCase() : null;
+      if (normDuration && !validDurations.includes(normDuration)) {
+        return paymentResponse.error(
+          res,
+          `duration must be one of: ${validDurations.join(', ')}`,
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
       const supabaseAdmin = getSupabaseAdmin();
-      const { data: priceData, error: priceError } = await supabaseAdmin
+      let priceQuery = supabaseAdmin
         .from('driver_license_prices')
         .select('*')
         .eq('license_type', String(license_type).toLowerCase())
-        .eq('is_active', true)
-        .single();
+        .eq('is_active', true);
+      if (normDuration) {
+        priceQuery = priceQuery.eq('duration', normDuration);
+      } else {
+        // Legacy: no duration provided – pick the first available price for this type
+        priceQuery = priceQuery.is('duration', null);
+      }
+      const { data: priceData, error: priceError } = await priceQuery.single();
 
       if (priceError || !priceData) {
         return paymentResponse.error(
           res,
-          `No price configured for driver license type "${license_type}"`,
+          `No price configured for driver license type "${license_type}"${normDuration ? ` / duration "${normDuration}"` : ''}`,
           HTTP_STATUS.BAD_REQUEST
         );
       }
@@ -359,6 +376,7 @@ export const initializePayment = async (req, res) => {
       amount = renewalAmount;
       logDebug('[Payment Init] Driver license payment amount', {
         licenseType: license_type,
+        duration: normDuration,
         amountNaira: priceData.price
       });
     } else {
@@ -455,7 +473,8 @@ export const initializePayment = async (req, res) => {
         paymentGateway: payment_gateway,
         plateType: isPlatePayment ? plate_type : null,
         subType: isPlatePayment ? (sub_type || null) : null,
-        licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null
+        licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
+        licenseDuration: isDriverLicensePayment ? (duration || null) : null
       })
     });
     
@@ -493,7 +512,8 @@ export const initializePayment = async (req, res) => {
         hasDeliveryDetails,
         plateType: isPlatePayment ? plate_type : null,
         subType: isPlatePayment ? (sub_type || null) : null,
-        licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null
+        licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
+        licenseDuration: isDriverLicensePayment ? (duration || null) : null
       });
     } catch (initError) {
       logError('[Payment Init] Gateway initialization failed', {

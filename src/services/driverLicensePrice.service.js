@@ -9,9 +9,10 @@ export const getDriverLicensePrices = async () => {
 
   const { data, error } = await supabase
     .from('driver_license_prices')
-    .select('id, license_type, price, description')
+    .select('id, license_type, duration, price, description')
     .eq('is_active', true)
-    .order('license_type', { ascending: true });
+    .order('license_type', { ascending: true })
+    .order('price', { ascending: true });
 
   if (error) throw error;
   return data;
