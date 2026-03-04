@@ -13,7 +13,15 @@ import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
 import { sendOrderCompletedEmail } from '../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../services/notification.service.js';
-import { logError } from '../utils/logger.js';
+import { logError, logInfo } from '../utils/logger.js';
+import {
+  getTransactionByReference,
+  updateTransactionStatus,
+  processPaymentSuccess,
+} from '../services/payment/transaction.service.js';
+import { getOrderById } from '../services/payment/order.service.js';
+import { PaymentSuccessService } from '../services/payment/payment-success.service.js';
+import { PAYMENT_STATUS, ORDER_TYPE } from '../constants/payment.constants.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -217,25 +225,64 @@ export const getUser = async (req, res) => {
       .eq('user_id', userId)
       .single();
     
-    // Get user's cars count
-    const { count: carsCount } = await supabaseAdmin
+    // Get user's cars (recent 5) + count
+    const { data: carsData, count: carsCount } = await supabaseAdmin
       .from('cars')
-      .select('id', { count: 'exact' })
+      .select('id, vehicle_make, vehicle_model, registration_no, plate_number, status, expiry_date, slug', { count: 'exact' })
       .eq('user_id', userId)
-      .is('deleted_at', null);
-    
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    // Get user's orders (recent 5) + count
+    const { data: ordersData, count: ordersCount } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, order_number, order_type, status, amount_paid, created_at', { count: 'exact' })
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    // Get total spent from successful transactions
+    const { data: txData } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('amount')
+      .eq('user_id', userId)
+      .eq('status', 'successful');
+    const totalSpent = (txData || []).reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+
+    const recentCars = (carsData || []).map(c => ({
+      id: c.id,
+      slug: c.slug,
+      vehicle_make: c.vehicle_make,
+      vehicle_model: c.vehicle_model,
+      registration_no: c.registration_no || c.plate_number,
+      status: c.status,
+      expiry_date: c.expiry_date,
+    }));
+
+    const recentOrders = (ordersData || []).map(o => ({
+      id: o.id,
+      slug: o.order_number,
+      order_type: o.order_type,
+      status: dbStatusToFrontend(o.status),
+      amount: koboToNaira(o.amount_paid),
+      created_at: o.created_at,
+    }));
+
     return res.status(200).json({
       status: true,
       message: 'User retrieved successfully',
       data: {
         user: {
           id: profile.id,
+          userId: profile.user_id,
           user_id: profile.user_id,
           email: authUser?.email || null,
-          email_verified: !!authUser?.email_confirmed_at,
+          email_verified_at: authUser?.email_confirmed_at || null,
           first_name: profile.first_name,
           last_name: profile.last_name,
           name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
+          phone: profile.phone_number,
           phone_number: profile.phone_number,
           image: profile.image,
           nin: profile.nin,
@@ -249,9 +296,18 @@ export const getUser = async (req, res) => {
           two_factor_type: profile.two_factor_type,
           kyc_status: kyc?.status || null,
           cars_count: carsCount || 0,
-          orders_count: 0,
+          orders_count: ordersCount || 0,
+          cars: recentCars,
+          orders: recentOrders,
           created_at: profile.created_at,
           updated_at: profile.updated_at
+        },
+        stats: {
+          total_cars: carsCount || 0,
+          total_orders: ordersCount || 0,
+          pending_orders: (ordersData || []).filter(o => o.status === 'pending').length,
+          total_spent: totalSpent,
+          last_activity: profile.updated_at,
         }
       }
     });
@@ -1119,7 +1175,7 @@ export const listTransactions = async (req, res) => {
         gateway_reference: t.paystack_reference || t.monicredit_order_id || t.reference,
         payment_gateway: t.payment_gateway || 'paystack',
         amount: koboToNaira(t.amount),
-        status: t.status === 'successful' ? 'approved' : t.status,
+        status: t.status,
         payment_type: t.payment_type,
         payment_description: t.payment_type?.replace(/_/g, ' '),
         channel: t.channel,
@@ -1319,7 +1375,7 @@ export const getDocumentDetails = async (req, res) => {
 export const adminUploadDocument = async (req, res) => {
   try {
     const adminId = req.admin?.id || req.user?.id;
-    const { user_id, car_id, car_slug, document_type, document_category } = req.body;
+    const { user_id, car_id, car_slug, document_type, document_category, description } = req.body;
     const file = req.file || req.files?.file?.[0];
 
     if (!document_type || !['car', 'driver_license'].includes(document_type)) {
@@ -1377,6 +1433,7 @@ export const adminUploadDocument = async (req, res) => {
       carId: document_type === 'car' ? car.id : null,
       documentType: document_type,
       documentCategory: document_category || null,
+      description: description || null,
       fileUrl,
       uploadedByType: 'admin',
       uploadedByUserId: adminId,
@@ -1421,5 +1478,228 @@ export const rejectDocument = async (req, res) => {
   } catch (error) {
     logError('Admin reject document', error);
     return res.status(500).json({ status: false, message: 'Failed to reject document' });
+  }
+};
+
+// GET /admin/documents/:id/download — redirect browser to the raw file URL
+export const downloadDocument = async (req, res) => {
+  try {
+    const doc = await getDocumentById(parseInt(req.params.id, 10));
+    if (!doc) {
+      return res.status(404).json({ status: false, message: 'Document not found' });
+    }
+    // Return the URL so the frontend can open it — avoids CORS issues with direct redirect
+    return res.status(200).json({ status: true, url: doc.file_url });
+  } catch (error) {
+    logError('Admin download document', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve document' });
+  }
+};
+
+// GET /admin/users/search?q=name_or_email — used by document upload modal
+export const searchUsers = async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    if (!q || q.length < 2) {
+      return res.status(200).json({ status: true, data: [] });
+    }
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: profiles, error } = await supabaseAdmin
+      .from('profiles')
+      .select('id, first_name, last_name, email, phone_number')
+      .or(`first_name.ilike.%${q}%,last_name.ilike.%${q}%,email.ilike.%${q}%,phone_number.ilike.%${q}%`)
+      .limit(15);
+
+    if (error) {
+      logError('Admin search users', error);
+      return res.status(500).json({ status: false, message: 'Search failed' });
+    }
+
+    return res.status(200).json({
+      status: true,
+      data: (profiles || []).map((p) => ({
+        id: p.id,
+        name: `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Unknown',
+        email: p.email,
+        phone_number: p.phone_number,
+      })),
+    });
+  } catch (error) {
+    logError('Admin search users', error);
+    return res.status(500).json({ status: false, message: 'Search failed' });
+  }
+};
+
+// GET /admin/users/:userId/cars — fetch cars for a specific user (for upload modal)
+export const getUserCars = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: cars, error } = await supabaseAdmin
+      .from('cars')
+      .select('id, slug, vehicle_make, vehicle_model, registration_no, status')
+      .eq('user_id', req.params.userId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      logError('Admin get user cars', error);
+      return res.status(500).json({ status: false, message: 'Failed to fetch cars' });
+    }
+
+    return res.status(200).json({ status: true, data: cars || [] });
+  } catch (error) {
+    logError('Admin get user cars', error);
+    return res.status(500).json({ status: false, message: 'Failed to fetch cars' });
+  }
+};
+
+// PUT /admin/transactions/:reference/mark-paid — manually mark a pending payment as successful
+// Used when gateway webhook fails but payment was confirmed out-of-band.
+export const markTransactionPaid = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const transaction = await getTransactionByReference(reference);
+
+    if (!transaction) {
+      return res.status(404).json({ status: false, message: 'Transaction not found' });
+    }
+
+    if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
+      // Check if the order was actually created — if not, create it now
+      const supabaseAdmin = getSupabaseAdmin();
+      const { data: existingOrder } = await supabaseAdmin
+        .from('renewal_orders')
+        .select('id, order_number')
+        .eq('transaction_id', transaction.id)
+        .maybeSingle();
+
+      if (existingOrder) {
+        return res.status(400).json({
+          status: false,
+          message: 'Transaction is already successful and order already exists',
+          data: { orderId: existingOrder.id, orderNumber: existingOrder.order_number },
+        });
+      }
+      // Order is missing despite successful payment — fall through to create it
+    }
+
+    let metadata = {};
+    try {
+      metadata = typeof transaction.metadata === 'string'
+        ? JSON.parse(transaction.metadata)
+        : (transaction.metadata || {});
+    } catch {
+      metadata = {};
+    }
+
+    const isPlateNumber = metadata.payment_type === 'plate_number';
+    const isDriverLicense = metadata.payment_type === 'driver_license';
+    const isSubscription = metadata.subscription_id || metadata.is_subscription;
+    const orderType = isDriverLicense
+      ? ORDER_TYPE.DRIVER_LICENSE
+      : isPlateNumber
+        ? ORDER_TYPE.PLATE_NUMBER
+        : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
+    const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
+
+    const alreadySuccessful = transaction.status === PAYMENT_STATUS.SUCCESSFUL;
+
+    if (!alreadySuccessful) {
+      await updateTransactionStatus(reference, {
+        status: PAYMENT_STATUS.SUCCESSFUL,
+        channel: 'manual',
+        authorization_code: null,
+        paid_at: new Date().toISOString(),
+      });
+    }
+
+    const processResult = await processPaymentSuccess({
+      reference,
+      status: PAYMENT_STATUS.SUCCESSFUL,
+      channel: alreadySuccessful ? transaction.channel || 'manual' : 'manual',
+      authorization_code: null,
+      paid_at: alreadySuccessful ? (transaction.paid_at || new Date().toISOString()) : new Date().toISOString(),
+      orderType,
+      renewalMonths: metadata.renewal_months || 12,
+      selectedItems: paymentScheduleIds,
+      renewalAmount: metadata.renewal_amount || transaction.amount,
+      deliveryFee: metadata.delivery_fee || 0,
+      deliveryAddress: metadata.delivery_details?.address || null,
+      deliveryState: metadata.delivery_details?.state || null,
+      deliveryLGA: metadata.delivery_details?.lga || null,
+      deliveryContact: metadata.delivery_details?.contact || null,
+      metadata,
+    });
+
+    // If the RPC returned alreadyProcessed (transaction was already successful),
+    // insert the order directly since the RPC guard skipped it.
+    let finalOrderId = processResult.orderId;
+    if (alreadySuccessful && processResult.alreadyProcessed && !finalOrderId) {
+      const supabaseAdmin = getSupabaseAdmin();
+      const { data: directOrder, error: orderInsertError } = await supabaseAdmin
+        .from('renewal_orders')
+        .insert({
+          order_number: `ORD-MANUAL-${Date.now()}`,
+          user_id: transaction.user_id,
+          car_id: transaction.car_id || null,
+          transaction_id: transaction.id,
+          order_type: orderType,
+          status: 'pending',
+          amount_paid: transaction.amount,
+          currency: transaction.currency || 'NGN',
+          renewal_months: metadata.renewal_months || 12,
+          selected_items: paymentScheduleIds || [],
+          renewal_amount: metadata.renewal_amount || transaction.amount,
+          delivery_fee: metadata.delivery_fee || 0,
+          metadata: metadata,
+        })
+        .select('id')
+        .single();
+
+      if (!orderInsertError && directOrder) {
+        finalOrderId = directOrder.id;
+        // Also update car status to approved if there's a car
+        if (transaction.car_id) {
+          await supabaseAdmin
+            .from('cars')
+            .update({ status: 'approved', updated_at: new Date().toISOString() })
+            .eq('id', transaction.car_id);
+        }
+      } else if (orderInsertError) {
+        logError('mark-paid: direct order insert failed', { error: orderInsertError.message, reference });
+      }
+    }
+
+    const updatedTransaction = await getTransactionByReference(reference);
+    const createdOrder = finalOrderId ? await getOrderById(finalOrderId).catch(() => null) : null;
+
+    if (!processResult.alreadyProcessed || alreadySuccessful) {
+      try {
+        await PaymentSuccessService.processPaymentSuccessSideEffects({
+          transaction: updatedTransaction,
+          gatewayData: { channel: alreadySuccessful ? transaction.channel || 'manual' : 'manual' },
+          order: createdOrder,
+        });
+      } catch (notifyError) {
+        logError('mark-paid: side-effects failed', { error: notifyError.message, reference });
+      }
+    }
+
+    logInfo('[Admin] Transaction marked as paid', { reference, orderId: finalOrderId, alreadySuccessful });
+
+    return res.status(200).json({
+      status: true,
+      message: alreadySuccessful
+        ? 'Order created for existing successful payment'
+        : 'Transaction marked as paid and order created',
+      data: {
+        reference,
+        orderId: finalOrderId,
+        alreadyProcessed: processResult.alreadyProcessed && !finalOrderId,
+      },
+    });
+  } catch (error) {
+    logError('Admin mark transaction paid', error);
+    return res.status(500).json({ status: false, message: 'Failed to process transaction' });
   }
 };

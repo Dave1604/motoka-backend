@@ -20,7 +20,10 @@ const router = Router();
 
 // ── User management (Supabase-auth based) ────────────────────────────────────
 router.get('/users', authenticate, checkAdmin, admin.listUsers);
+// search must be registered before /:userId to avoid 'search' being captured as a userId param
+router.get('/users/search', authenticateAdmin, admin.searchUsers);
 router.get('/users/:userId', authenticate, checkAdmin, admin.getUser);
+router.get('/users/:userId/cars', authenticateAdmin, admin.getUserCars);
 router.put('/users/:userId/suspend', authenticate, checkAdmin, suspendUserValidation, validate, admin.suspendUser);
 router.put('/users/:userId/activate', authenticate, checkAdmin, admin.activateUser);
 router.delete('/users/:userId', authenticate, checkAdmin, admin.deleteUser);
@@ -50,9 +53,13 @@ router.get('/transactions/:reference', authenticateAdmin, admin.getTransactionDe
 
 // ── Document management (authenticateAdmin) ────────────────────────────────────
 router.get('/documents', authenticateAdmin, admin.listDocuments);
+router.get('/documents/:id/download', authenticateAdmin, admin.downloadDocument);
 router.get('/documents/:id', authenticateAdmin, admin.getDocumentDetails);
 router.post('/documents/upload', authenticateAdmin, handleDocumentUpload, admin.adminUploadDocument);
 router.put('/documents/:id/approve', authenticateAdmin, admin.approveDocument);
 router.put('/documents/:id/reject', authenticateAdmin, admin.rejectDocument);
+
+// ── Manual payment processing ────────────────────────────────────────────────
+router.put('/transactions/:reference/mark-paid', authenticateAdmin, admin.markTransactionPaid);
 
 export default router;
