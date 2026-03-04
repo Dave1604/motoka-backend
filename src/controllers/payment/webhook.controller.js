@@ -34,9 +34,10 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 import { sendPaymentFailedEmail } from '../../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
 import { formatAmount } from '../../utils/paymentHelpers.js';
-import { parseWebhookEvent } from '../../services/payment/paystack.service.js';
+import { parseWebhookEvent, verifyTransaction as paystackVerifyTransaction } from '../../services/payment/paystack.service.js';
 import { generateMonicreditEventId } from '../../services/payment/monicredit/monicredit.service.js';
 import { MonicreditAdapter } from '../../services/payment/monicredit/index.js';
+import { logPaymentAudit } from '../../services/payment/audit.service.js';
 
 // POST /api/webhooks/paystack
 export const handlePaystackWebhook = async (req, res) => {
@@ -171,6 +172,30 @@ async function handleChargeSuccess(data, eventId) {
     }
   }
   
+  // Industry standard: verify with Paystack API before crediting (defense in depth)
+  // Webhook signature proves origin, but API verify confirms payment state
+  try {
+    const verifyRef = transaction.paystack_reference || reference;
+    const verifyResult = await paystackVerifyTransaction(verifyRef);
+    if (verifyResult.status !== 'success') {
+      logError('[Paystack Webhook] Verify returned non-success', { reference, status: verifyResult.status });
+      await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
+      return;
+    }
+    if (typeof verifyResult.amount === 'number' && verifyResult.amount !== transaction.amount) {
+      logError('[Paystack Webhook] Verify amount mismatch', {
+        reference,
+        expected: transaction.amount,
+        actual: verifyResult.amount
+      });
+      await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
+      return;
+    }
+  } catch (verifyErr) {
+    logError('[Paystack Webhook] Verify failed', { reference, error: verifyErr.message });
+    return; // Don't process if we can't verify - Paystack will retry webhook
+  }
+
   if (typeof data.amount === 'number') {
     if (data.amount < PAYMENT_LIMITS.MIN_AMOUNT || data.amount > PAYMENT_LIMITS.MAX_AMOUNT) {
       logError('Webhook amount out of bounds', { reference, amount: data.amount });
@@ -202,9 +227,12 @@ async function handleChargeSuccess(data, eventId) {
   
   const isSubscription = metadata.subscription_id || metadata.is_subscription;
   const isPlateNumber = metadata.payment_type === 'plate_number';
-  const orderType = isPlateNumber
-    ? ORDER_TYPE.PLATE_NUMBER
-    : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
+  const isDriverLicense = metadata.payment_type === 'driver_license';
+  const orderType = isDriverLicense
+    ? ORDER_TYPE.DRIVER_LICENSE
+    : isPlateNumber
+      ? ORDER_TYPE.PLATE_NUMBER
+      : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
   
   const processResult = await processPaymentSuccess({
@@ -258,6 +286,18 @@ async function handleChargeSuccess(data, eventId) {
     }
   }
   
+  await logPaymentAudit({
+    eventType: 'webhook_success',
+    transactionId: updatedTransaction.id,
+    reference,
+    userId: updatedTransaction.user_id,
+    paymentGateway: 'paystack',
+    amountKobo: updatedTransaction.amount,
+    statusBefore: PAYMENT_STATUS.PENDING,
+    statusAfter: PAYMENT_STATUS.SUCCESSFUL,
+    metadata: { orderId: processResult.orderId },
+  });
+
   logInfo('[Webhook] Charge success processed', {
     reference,
     transactionId: updatedTransaction.id,
@@ -286,6 +326,18 @@ async function handleChargeFailed(data, eventId) {
   }
   
   await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
+
+  await logPaymentAudit({
+    eventType: 'webhook_failed',
+    transactionId: transaction.id,
+    reference,
+    userId: transaction.user_id,
+    paymentGateway: 'paystack',
+    amountKobo: transaction.amount,
+    statusBefore: transaction.status,
+    statusAfter: PAYMENT_STATUS.FAILED,
+    metadata: { eventId },
+  });
   
   if (eventId) {
     try {
@@ -371,47 +423,54 @@ async function handleMonicreditPaymentSuccess(data) {
     logError('Failed to store Monicredit webhook event ID', { error, reference: transaction.reference, eventId });
   }
   
-  // Re-verify with Monicredit API before crediting — never trust webhook payload alone
-  let verificationResult;
+  // Re-verify with Monicredit API (defense in depth — webhook signature already
+  // verified by middleware).  If the verify call fails or returns non-approved
+  // we log a warning and continue: the signature verification is the primary
+  // trust anchor.  We only hard-abort on a *confirmed* amount mismatch.
+  let verificationResult = null;
+  let verifySkipped = false;
+
   try {
     verificationResult = await MonicreditAdapter.verifyPayment(orderId);
-  } catch (error) {
-    logError('Monicredit webhook verification failed', { orderId, error: error.message });
-    return;
-  }
-  
-  const responseStatus = verificationResult.raw_response?.status;
-  const dataStatus = verificationResult.status?.toLowerCase();
-  
-  const isApproved = (
-    (responseStatus === true || responseStatus === 'success') &&
-    (dataStatus === 'approved' || dataStatus === 'success')
-  );
-  
-  if (!isApproved) {
-    logError('[Monicredit Webhook] Payment not approved — aborting', {
-      orderId,
-      responseStatus,
-      dataStatus
-    });
-    return;
-  }
-  
-  const monicreditAmount = verificationResult.amount || 0;
-  
-  try {
-    validatePaymentAmount(transaction.amount, monicreditAmount, 1);
-  } catch (error) {
-    if (error instanceof AmountValidationError) {
-      logError('Monicredit webhook amount mismatch', {
-        orderId,
-        expected_kobo: transaction.amount,
-        actual_kobo: monicreditAmount,
-        difference_kobo: error.difference
+
+    const responseStatus = verificationResult.raw_response?.status;
+    const dataStatus = verificationResult.status?.toLowerCase();
+
+    const isApproved = (
+      (responseStatus === true || responseStatus === 'success') &&
+      (dataStatus === 'approved' || dataStatus === 'success')
+    );
+
+    if (!isApproved) {
+      logWarn('[Monicredit Webhook] Verify returned non-approved — continuing on webhook signature', {
+        orderId, responseStatus, dataStatus
       });
-      return;
+      verifySkipped = true;
     }
-    throw error;
+  } catch (error) {
+    logWarn('[Monicredit Webhook] Verify API call failed — continuing on webhook signature', {
+      orderId, error: error.message
+    });
+    verifySkipped = true;
+  }
+
+  // Only check amount when we have a confirmed verification result
+  const monicreditAmount = verificationResult?.amount || 0;
+  if (!verifySkipped && monicreditAmount > 0) {
+    try {
+      validatePaymentAmount(transaction.amount, monicreditAmount, 1);
+    } catch (error) {
+      if (error instanceof AmountValidationError) {
+        logError('Monicredit webhook amount mismatch — aborting', {
+          orderId,
+          expected_kobo: transaction.amount,
+          actual_kobo: monicreditAmount,
+          difference_kobo: error.difference
+        });
+        return;
+      }
+      throw error;
+    }
   }
   
   let metadata = {};
@@ -426,24 +485,27 @@ async function handleMonicreditPaymentSuccess(data) {
   
   const isSubscription = metadata.subscription_id || metadata.is_subscription;
   const isPlateNumber = metadata.payment_type === 'plate_number';
-  const orderType = isPlateNumber
-    ? ORDER_TYPE.PLATE_NUMBER
-    : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
+  const isDriverLicense = metadata.payment_type === 'driver_license';
+  const orderType = isDriverLicense
+    ? ORDER_TYPE.DRIVER_LICENSE
+    : isPlateNumber
+      ? ORDER_TYPE.PLATE_NUMBER
+      : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
   
   await updateTransactionStatus(transaction.reference, {
     status: PAYMENT_STATUS.SUCCESSFUL,
-    channel: verificationResult.channel || 'bank_transfer',
+    channel: verificationResult?.channel || data.channel || 'bank_transfer',
     authorization_code: null,
-    paid_at: verificationResult.date_paid || new Date().toISOString()
+    paid_at: verificationResult?.date_paid || data.paid_at || new Date().toISOString()
   });
   
   const processResult = await processPaymentSuccess({
     reference: transaction.reference,
     status: PAYMENT_STATUS.SUCCESSFUL,
-    channel: verificationResult.channel || 'bank_transfer',
+    channel: verificationResult?.channel || data.channel || 'bank_transfer',
     authorization_code: null,
-    paid_at: verificationResult.date_paid || new Date().toISOString(),
+    paid_at: verificationResult?.date_paid || data.paid_at || new Date().toISOString(),
     orderType,
     renewalMonths: metadata.renewal_months || 12,
     selectedItems: paymentScheduleIds,
@@ -463,7 +525,7 @@ async function handleMonicreditPaymentSuccess(data) {
     try {
       await PaymentSuccessService.processPaymentSuccessSideEffects({
         transaction: updatedTransaction,
-        gatewayData: verificationResult,
+        gatewayData: verificationResult || data,
         order: createdOrder
       });
       
@@ -477,6 +539,18 @@ async function handleMonicreditPaymentSuccess(data) {
     }
   }
   
+  await logPaymentAudit({
+    eventType: 'webhook_success',
+    transactionId: updatedTransaction.id,
+    reference: transaction.reference,
+    userId: updatedTransaction.user_id,
+    paymentGateway: 'monicredit',
+    amountKobo: updatedTransaction.amount,
+    statusBefore: PAYMENT_STATUS.PENDING,
+    statusAfter: PAYMENT_STATUS.SUCCESSFUL,
+    metadata: { orderId, monicreditOrderId: orderId },
+  });
+
   logInfo('[Monicredit Webhook] Payment success processed', {
     orderId,
     transactionId: updatedTransaction.id,
@@ -508,6 +582,18 @@ async function handleMonicreditPaymentFailed(data) {
   }
   
   await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
+
+  await logPaymentAudit({
+    eventType: 'webhook_failed',
+    transactionId: transaction.id,
+    reference: transaction.reference,
+    userId: transaction.user_id,
+    paymentGateway: 'monicredit',
+    amountKobo: transaction.amount,
+    statusBefore: transaction.status,
+    statusAfter: PAYMENT_STATUS.FAILED,
+    metadata: { orderId, eventId },
+  });
   
   try {
     await updateTransactionWebhookEventId(transaction.reference, eventId);

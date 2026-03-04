@@ -47,7 +47,7 @@ describe('buildExpiryStatus', () => {
     expect(result.status).toBe('overdue');
     // 2024-12-20 to 2025-01-01 inclusive difference is -12 days at UTC midnight
     expect(result.days_left).toBeLessThan(0);
-    expect(result.message).toBe('Overdue');
+    expect(result.message).toBe('12 days overdue');
   });
 
   it('should return reminder with 0 days remaining when expiry is today', () => {

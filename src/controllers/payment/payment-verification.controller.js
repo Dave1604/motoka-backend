@@ -39,6 +39,7 @@ import { PaystackError } from '../../services/payment/paystack.service.js';
 import { MonicreditError } from '../../services/payment/monicredit/index.js';
 import { PaymentSuccessService } from '../../services/payment/payment-success.service.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
+import { logPaymentAudit } from '../../services/payment/audit.service.js';
 
 // GET /api/payments/verify/:reference
 export const verifyPayment = async (req, res) => {
@@ -183,9 +184,12 @@ export const verifyPayment = async (req, res) => {
     if (transaction.status === PAYMENT_STATUS.PENDING) {
       const isSubscription = metaData?.subscription_id || metaData?.is_subscription;
       const isPlateNumber = metaData?.payment_type === 'plate_number';
-      const orderType = isPlateNumber
-        ? ORDER_TYPE.PLATE_NUMBER
-        : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
+      const isDriverLicense = metaData?.payment_type === 'driver_license';
+      const orderType = isDriverLicense
+        ? ORDER_TYPE.DRIVER_LICENSE
+        : isPlateNumber
+          ? ORDER_TYPE.PLATE_NUMBER
+          : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
       const paymentScheduleIds = metaData?.paymentScheduleId || metaData?.payment_schedule_id || metaData?.selected_items || [];
       
       try {
@@ -230,6 +234,19 @@ export const verifyPayment = async (req, res) => {
         
         // Monicredit returns "APPROVED"; Paystack returns "success"
         const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success';
+
+        await logPaymentAudit({
+          eventType: 'verify',
+          transactionId: updatedTransaction.id,
+          reference: updatedTransaction.reference,
+          userId: updatedTransaction.user_id,
+          paymentGateway,
+          amountKobo: updatedTransaction.amount,
+          statusBefore: PAYMENT_STATUS.PENDING,
+          statusAfter: PAYMENT_STATUS.SUCCESSFUL,
+          metadata: { orderId: processResult.orderId },
+          ipAddress: req.ip || req.connection?.remoteAddress,
+        });
         
         return paymentResponse.success(res, {
           status: statusForResponse,

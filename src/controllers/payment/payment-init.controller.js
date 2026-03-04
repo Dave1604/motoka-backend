@@ -33,6 +33,12 @@ import {
 } from '../../constants/payment.constants.js';
 import { PaystackError } from '../../services/payment/paystack.service.js';
 import { MonicreditError } from '../../services/payment/monicredit/index.js';
+import {
+  getIdempotencyResponse,
+  reserveIdempotencyKey,
+  storeIdempotencyResponse
+} from '../../services/payment/idempotency.service.js';
+import { logPaymentAudit } from '../../services/payment/audit.service.js';
 
 // GET /api/payment-schedule
 export const getRenewalItems = async (req, res) => {
@@ -145,6 +151,40 @@ export const initializePayment = async (req, res) => {
   try {
     const userId = req.user.id;
     const userEmail = req.user.email;
+    const idempotencyKey = req.headers['idempotency-key'] || req.headers['Idempotency-Key'];
+
+    // Idempotency: return cached response if same key was used recently
+    if (idempotencyKey) {
+      const existing = await getIdempotencyResponse(idempotencyKey, userId);
+      if (existing?.cached && existing.response) {
+        logDebug('[Payment Init] Returning cached idempotency response', { key: idempotencyKey.slice(0, 8) });
+        if (existing.status === 'failed') {
+          return res.status(existing.response.statusCode || 500).json({
+            status: false,
+            message: existing.response.error || 'Payment initialization failed'
+          });
+        }
+        return paymentResponse.success(res, existing.response, SUCCESS_MESSAGES.PAYMENT_INITIALIZED);
+      }
+      if (existing?.status === 'processing') {
+        return res.status(409).json({
+          status: false,
+          message: 'A payment with this idempotency key is already being processed. Please retry in a few seconds.'
+        });
+      }
+      const reserved = await reserveIdempotencyKey(idempotencyKey, userId);
+      if (!reserved) {
+        const retry = await getIdempotencyResponse(idempotencyKey, userId);
+        if (retry?.cached && retry.response) {
+          return paymentResponse.success(res, retry.response, SUCCESS_MESSAGES.PAYMENT_INITIALIZED);
+        }
+        return res.status(409).json({
+          status: false,
+          message: 'Duplicate request. Retry in a few seconds.'
+        });
+      }
+    }
+
     const { 
       car_slug, 
       payment_schedule_id = [], 
@@ -155,15 +195,20 @@ export const initializePayment = async (req, res) => {
       meta_data,
       // Plate number specific fields
       plate_type,
-      sub_type = null
+      sub_type = null,
+      // Driver license specific
+      license_type = null,
+      duration = null          // '3yr' | '5yr' | 'international'
     } = req.body;
 
     const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER;
+    const isDriverLicensePayment = payment_type === PAYMENT_TYPE.DRIVER_LICENSE;
+    const isNonCarPayment = isPlatePayment || isDriverLicensePayment;
 
-    // ── Renewal months (not applicable for plate payments) ──────────────────
+    // ── Renewal months (not applicable for plate or driver license payments) ─
     const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
     let renewal_months = 0;
-    if (!isPlatePayment) {
+    if (!isNonCarPayment) {
       const rawMonths = parseInt(rawRenewalMonths);
       if (!rawRenewalMonths || isNaN(rawMonths)) {
         renewal_months = 12;
@@ -205,12 +250,12 @@ export const initializePayment = async (req, res) => {
       );
     }
 
-    // ── Delivery (only for non-plate payments) ──────────────────────────────
+    // ── Delivery (only for car renewal payments) ─────────────────────────────
     let deliveryData = {};
     let hasDeliveryDetails = false;
     let stateValidation = { valid: true, delivery_fee: 0 };
 
-    if (!isPlatePayment) {
+    if (!isNonCarPayment) {
       deliveryData = delivery_details || meta_data || {};
 
       hasDeliveryDetails = !!(
@@ -286,6 +331,54 @@ export const initializePayment = async (req, res) => {
         subType: sub_type,
         amountNaira: priceData.price
       });
+    } else if (isDriverLicensePayment) {
+      // Driver license: price from driver_license_prices (license_type + duration)
+      const validTypes = ['new', 'renew'];
+      const validDurations = ['3yr', '5yr', 'international'];
+      if (!license_type || !validTypes.includes(String(license_type).toLowerCase())) {
+        return paymentResponse.error(
+          res,
+          'license_type is required for driver license payments and must be "new" or "renew"',
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      const normDuration = duration ? String(duration).toLowerCase() : null;
+      if (normDuration && !validDurations.includes(normDuration)) {
+        return paymentResponse.error(
+          res,
+          `duration must be one of: ${validDurations.join(', ')}`,
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      const supabaseAdmin = getSupabaseAdmin();
+      let priceQuery = supabaseAdmin
+        .from('driver_license_prices')
+        .select('*')
+        .eq('license_type', String(license_type).toLowerCase())
+        .eq('is_active', true);
+      if (normDuration) {
+        priceQuery = priceQuery.eq('duration', normDuration);
+      } else {
+        // Legacy: no duration provided – pick the first available price for this type
+        priceQuery = priceQuery.is('duration', null);
+      }
+      const { data: priceData, error: priceError } = await priceQuery.single();
+
+      if (priceError || !priceData) {
+        return paymentResponse.error(
+          res,
+          `No price configured for driver license type "${license_type}"${normDuration ? ` / duration "${normDuration}"` : ''}`,
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      renewalAmount = nairaToKobo(Number(priceData.price));
+      deliveryFee = 0;
+      amount = renewalAmount;
+      logDebug('[Payment Init] Driver license payment amount', {
+        licenseType: license_type,
+        duration: normDuration,
+        amountNaira: priceData.price
+      });
     } else {
       // Renewal: price determined by selected payment schedule items
       const validation = await validateRenewalItemsSelection(payment_schedule_id);
@@ -304,50 +397,72 @@ export const initializePayment = async (req, res) => {
       total_naira: amount / 100
     });
 
-    // supabaseAdmin may already be defined above (plate payment path), get it if not
+    // Car required for renewal and plate number; optional (null) for driver license
     const supabaseAdmin = getSupabaseAdmin();
-    const { data: car, error: carError } = await supabaseAdmin
-      .from('cars')
-      .select('id, slug, vehicle_make, vehicle_model, registration_no, expiry_date, status, user_id')
-      .eq('slug', car_slug)
-      .eq('user_id', userId)
-      .is('deleted_at', null)
-      .single();
-    
-    if (carError || !car) {
-      return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
+    let car = null;
+    if (!isDriverLicensePayment) {
+      if (!car_slug) {
+        return paymentResponse.error(res, 'car_slug is required for this payment type', HTTP_STATUS.BAD_REQUEST);
+      }
+      const { data: carRow, error: carError } = await supabaseAdmin
+        .from('cars')
+        .select('id, slug, vehicle_make, vehicle_model, registration_no, expiry_date, status, user_id')
+        .eq('slug', car_slug)
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .single();
+      if (carError || !carRow) {
+        return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
+      }
+      car = carRow;
     }
 
-    // Abandon any stale pending transactions for this car before creating a new one
-    const { data: staleTxns } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('id, reference')
-      .eq('car_id', car.id)
-      .eq('user_id', userId)
-      .eq('status', PAYMENT_STATUS.PENDING);
-
-    if (staleTxns && staleTxns.length > 0) {
-      await supabaseAdmin
+    // Abandon stale pending transactions: for car payments by car_id; for driver license by user + type
+    if (car) {
+      const { data: staleTxns } = await supabaseAdmin
         .from('payment_transactions')
-        .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
+        .select('id, reference')
         .eq('car_id', car.id)
         .eq('user_id', userId)
         .eq('status', PAYMENT_STATUS.PENDING);
-      logInfo('[Payment Init] Abandoned stale pending transactions', {
-        carId: car.id,
-        count: staleTxns.length
-      });
+      if (staleTxns && staleTxns.length > 0) {
+        await supabaseAdmin
+          .from('payment_transactions')
+          .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
+          .eq('car_id', car.id)
+          .eq('user_id', userId)
+          .eq('status', PAYMENT_STATUS.PENDING);
+        logInfo('[Payment Init] Abandoned stale pending transactions', { carId: car.id, count: staleTxns.length });
+      }
+    } else if (isDriverLicensePayment) {
+      const { data: staleTxns } = await supabaseAdmin
+        .from('payment_transactions')
+        .select('id, reference')
+        .eq('user_id', userId)
+        .eq('payment_type', PAYMENT_TYPE.DRIVER_LICENSE)
+        .is('car_id', null)
+        .eq('status', PAYMENT_STATUS.PENDING);
+      if (staleTxns && staleTxns.length > 0) {
+        await supabaseAdmin
+          .from('payment_transactions')
+          .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('payment_type', PAYMENT_TYPE.DRIVER_LICENSE)
+          .is('car_id', null)
+          .eq('status', PAYMENT_STATUS.PENDING);
+        logInfo('[Payment Init] Abandoned stale driver license pending transactions', { count: staleTxns.length });
+      }
     }
-    
+
     const transaction = await createTransaction({
       userId,
-      carId: car.id,
+      carId: car?.id ?? null,
       amount,
       paymentType: payment_type,
       paymentGateway: payment_gateway,
       metadata: buildPaymentMetadata({
-        carId: car.id,
-        carSlug: car_slug,
+        carId: car?.id ?? null,
+        carSlug: car_slug ?? null,
         paymentType: payment_type,
         renewalMonths: renewal_months,
         paymentScheduleId: payment_schedule_id,
@@ -357,7 +472,9 @@ export const initializePayment = async (req, res) => {
         userId,
         paymentGateway: payment_gateway,
         plateType: isPlatePayment ? plate_type : null,
-        subType: isPlatePayment ? (sub_type || null) : null
+        subType: isPlatePayment ? (sub_type || null) : null,
+        licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
+        licenseDuration: isDriverLicensePayment ? (duration || null) : null
       })
     });
     
@@ -392,7 +509,11 @@ export const initializePayment = async (req, res) => {
         renewalAmount,
         deliveryFee,
         deliveryData,
-        hasDeliveryDetails
+        hasDeliveryDetails,
+        plateType: isPlatePayment ? plate_type : null,
+        subType: isPlatePayment ? (sub_type || null) : null,
+        licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
+        licenseDuration: isDriverLicensePayment ? (duration || null) : null
       });
     } catch (initError) {
       logError('[Payment Init] Gateway initialization failed', {
@@ -445,10 +566,34 @@ export const initializePayment = async (req, res) => {
         amount
       });
     }
+
+    if (idempotencyKey) {
+      await storeIdempotencyResponse(idempotencyKey, userId, transaction.id, responseData, false);
+    }
+
+    await logPaymentAudit({
+      eventType: 'init',
+      transactionId: transaction.id,
+      reference: transaction.reference,
+      userId,
+      paymentGateway: payment_gateway,
+      amountKobo: amount,
+      statusAfter: PAYMENT_STATUS.PENDING,
+      metadata: { gateway: payment_gateway },
+      ipAddress: req.ip || req.connection?.remoteAddress,
+    });
     
     return paymentResponse.success(res, responseData, SUCCESS_MESSAGES.PAYMENT_INITIALIZED);
     
   } catch (error) {
+    const idempotencyKey = req.headers['idempotency-key'] || req.headers['Idempotency-Key'];
+    if (idempotencyKey && req.user?.id) {
+      await storeIdempotencyResponse(idempotencyKey, req.user.id, null, {
+        error: error.message,
+        statusCode: error.statusCode || 500
+      }, true);
+    }
+
     logError('Initialize payment error', {
       error: error.message,
       code: error.code,

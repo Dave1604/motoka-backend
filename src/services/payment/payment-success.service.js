@@ -10,18 +10,22 @@ export class PaymentSuccessService {
     const supabaseAdmin = getSupabaseAdmin();
     
     try {
-      const { data: car, error: carError } = await supabaseAdmin
-        .from('cars')
-        .select('*')
-        .eq('id', transaction.car_id)
-        .single();
-      
-      if (carError) {
-        logError('Failed to fetch car for notifications', {
-          error: carError,
-          carId: transaction.car_id,
-          reference: transaction.reference
-        });
+      let car = null;
+      if (transaction.car_id) {
+        const { data: carRow, error: carError } = await supabaseAdmin
+          .from('cars')
+          .select('*')
+          .eq('id', transaction.car_id)
+          .single();
+        if (carError) {
+          logError('Failed to fetch car for notifications', {
+            error: carError,
+            carId: transaction.car_id,
+            reference: transaction.reference
+          });
+        } else {
+          car = carRow;
+        }
       }
       
       const metadata = typeof transaction.metadata === 'string' 
@@ -148,9 +152,11 @@ export class PaymentSuccessService {
     try {
       const docPart = documentNames?.length > 0 ? ` for ${documentNames.join(', ')}` : '';
       const isPlateNumber = paymentType === 'plate_number';
+      const isDriverLicense = paymentType === 'driver_license';
+      const productLabel = isDriverLicense ? 'driver\'s license' : isPlateNumber ? 'plate number application' : 'renewal';
       const message = orderNumber
-        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} ${isPlateNumber ? 'created for your plate number application.' : 'created for processing.'}`
-        : `Payment of ${formatAmount(amount)} successful${docPart}! Your ${isPlateNumber ? 'plate number application' : 'renewal'} is being processed.`;
+        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} created for your ${productLabel}.`
+        : `Payment of ${formatAmount(amount)} successful${docPart}! Your ${productLabel} is being processed.`;
       
       await createInAppNotification(
         userId,

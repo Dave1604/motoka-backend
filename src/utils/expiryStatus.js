@@ -88,8 +88,9 @@ export const buildExpiryStatus = (expiryDate, now = new Date(), pendingOrder = n
 
   // Condition 4: Today > expiry_date (overdue)
   if (isExpired) {
+    const daysOverdue = Math.abs(diffDays);
     return {
-      message: 'Overdue',
+      message: `${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue`,
       days_left: diffDays,
       status: 'overdue',
       is_urgent: true,

@@ -45,19 +45,38 @@ export class PaystackAdapter {
     renewalAmount,
     deliveryFee,
     deliveryData,
-    hasDeliveryDetails
+    hasDeliveryDetails,
+    plateType,
+    subType,
+    licenseType
   }) {
-    const amount = renewalAmount + deliveryFee;
-    
-    // Build callback URL
-    const callbackUrl = process.env.PAYMENT_CALLBACK_URL || 
+    const amount = renewalAmount + (deliveryFee || 0);
+
+    const callbackUrl = process.env.PAYMENT_CALLBACK_URL ||
       `${process.env.FRONTEND_URL}/payment/paystack/callback`;
-    
-    // Build metadata
+
+    const customFields = car
+      ? [
+          { display_name: 'Vehicle', variable_name: 'vehicle', value: `${car.vehicle_make || ''} ${car.vehicle_model || ''}`.trim() || 'N/A' },
+          { display_name: 'Registration', variable_name: 'registration', value: car.registration_no || 'N/A' },
+          ...(hasDeliveryDetails && deliveryData
+            ? [
+                { display_name: 'Delivery State', variable_name: 'delivery_state', value: deliveryData.state || '' },
+                { display_name: 'Delivery LGA', variable_name: 'delivery_lga', value: deliveryData.lga || '' }
+              ]
+            : [])
+        ]
+      : (hasDeliveryDetails && deliveryData
+        ? [
+            { display_name: 'Delivery State', variable_name: 'delivery_state', value: deliveryData.state || '' },
+            { display_name: 'Delivery LGA', variable_name: 'delivery_lga', value: deliveryData.lga || '' }
+          ]
+        : []);
+
     const metadata = {
       transaction_id: transaction.id,
-      car_id: car.id,
-      car_slug: car.slug,
+      car_id: car?.id ?? null,
+      car_slug: car?.slug ?? null,
       user_id: userId,
       renewal_months: renewalMonths,
       payment_type: paymentType,
@@ -65,34 +84,12 @@ export class PaystackAdapter {
       renewal_amount: renewalAmount,
       delivery_fee: deliveryFee,
       delivery_details: hasDeliveryDetails ? deliveryData : null,
-      custom_fields: [
-        {
-          display_name: 'Vehicle',
-          variable_name: 'vehicle',
-          value: `${car.vehicle_make} ${car.vehicle_model}`
-        },
-        {
-          display_name: 'Registration',
-          variable_name: 'registration',
-          value: car.registration_no || 'N/A'
-        },
-        ...(hasDeliveryDetails
-          ? [
-              {
-                display_name: 'Delivery State',
-                variable_name: 'delivery_state',
-                value: deliveryData.state
-              },
-              {
-                display_name: 'Delivery LGA',
-                variable_name: 'delivery_lga',
-                value: deliveryData.lga
-              }
-            ]
-          : [])
-      ]
+      custom_fields: customFields,
+      ...(licenseType ? { license_type: licenseType } : {}),
+      ...(plateType ? { plate_type: plateType } : {}),
+      ...(subType ? { sub_type: subType } : {})
     };
-    
+
     try {
       const paystackResult = await paystackInitialize({
         email: userEmail,

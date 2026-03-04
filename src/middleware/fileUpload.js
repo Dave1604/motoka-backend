@@ -192,6 +192,25 @@ export const handleCarRegistrationUploads = handleCarFileUploads;
 export const handleCarUpdateUploads = handleCarFileUploads;
 
 /**
+ * Single-file upload for document uploads (car/driver_license)
+ * Uses memory storage for simplicity (single file, max 10MB)
+ */
+const documentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_DOCUMENT_SIZE },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'application/pdf'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid file type. Allowed: ${allowedMimes.join(', ')}`), false);
+    }
+  }
+});
+
+export const handleDocumentUpload = documentUpload.single('file');
+
+/**
  * SCALABILITY: Cleanup temp files after processing
  * Call this in your controller after uploading to Supabase Storage
  * 

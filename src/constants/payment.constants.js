@@ -89,7 +89,8 @@ export const PAYMENT_TYPE = {
   RENEWAL_MANUAL: 'renewal_manual',
   RENEWAL_AUTO: 'renewal_auto',
   NEW_REGISTRATION: 'new_registration',
-  PLATE_NUMBER: 'plate_number'
+  PLATE_NUMBER: 'plate_number',
+  DRIVER_LICENSE: 'driver_license'
 };
 
 export const SUBSCRIPTION_STATUS = {
@@ -123,7 +124,8 @@ export const ORDER_TYPE = {
   RENEWAL_MANUAL: 'renewal_manual',
   RENEWAL_AUTO: 'renewal_auto',
   NEW_REGISTRATION: 'new_registration',
-  PLATE_NUMBER: 'plate_number'
+  PLATE_NUMBER: 'plate_number',
+  DRIVER_LICENSE: 'driver_license'
 };
 
 // All values in kobo. Monicredit expects Naira — divide by 100 at API boundary.

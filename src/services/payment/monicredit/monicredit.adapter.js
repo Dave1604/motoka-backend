@@ -60,21 +60,23 @@ export class MonicreditAdapter {
     deliveryData,
     hasDeliveryDetails,
     plateType,
-    subType
+    subType,
+    licenseType
   }) {
     const profile = await this._getUserProfile(userId);
 
     const isPlateNumber = paymentType === 'plate_number';
+    const isDriverLicense = paymentType === 'driver_license';
 
     let items;
     if (isPlateNumber) {
-      // For plate number payments build a single flat line item
       items = this._buildPlateNumberItem(plateType, subType, renewalAmount);
+    } else if (isDriverLicense) {
+      items = this._buildDriverLicenseItem(licenseType, renewalAmount);
     } else {
       items = await this._buildPaymentItems(paymentScheduleIds, deliveryFee);
     }
     
-    // Validate items array is not empty
     if (!items || items.length === 0) {
       logError('[Monicredit] No payment items found', {
         transaction_reference: transaction.reference,
@@ -85,7 +87,9 @@ export class MonicreditAdapter {
       throw new MonicreditError(
         isPlateNumber
           ? 'Plate number payment amount could not be resolved. Please try again.'
-          : 'No payment items selected. Please select at least one renewal item.',
+          : isDriverLicense
+            ? 'Driver license payment amount could not be resolved. Please try again.'
+            : 'No payment items selected. Please select at least one renewal item.',
         400,
         'VALIDATION_ERROR'
       );
@@ -136,7 +140,8 @@ export class MonicreditAdapter {
       deliveryData,
       hasDeliveryDetails,
       plateType,
-      subType
+      subType,
+      licenseType
     });
 
     // Monicredit expects all monetary values in Naira. Convert items from kobo.
@@ -150,7 +155,7 @@ export class MonicreditAdapter {
     // a 200-level domain rejection. Sub-kobo differences from floating-point
     // rounding are expected and logged, not treated as errors.
     const itemsSum = itemsInNaira.reduce((sum, item) => sum + (item.unit_cost || 0), 0);
-    const totalAmountInNaira = (renewalAmount + deliveryFee) / 100;
+    const totalAmountInNaira = (renewalAmount + (deliveryFee || 0)) / 100;
     
     const difference = Math.abs(itemsSum - totalAmountInNaira);
     if (difference > 0.01) {
@@ -361,11 +366,14 @@ export class MonicreditAdapter {
     
     const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE || 'REV68dff2878cb81';
     
-    const items = selectedItems.map(item => ({
-      unit_cost: item.price,
-      item: item.name,
-      revenue_head_code: revenueHeadCode
-    }));
+    // Skip items with zero cost — Monicredit rejects line items with unit_cost = 0
+    const items = selectedItems
+      .filter(item => item.price > 0)
+      .map(item => ({
+        unit_cost: item.price,
+        item: item.name,
+        revenue_head_code: revenueHeadCode
+      }));
     
     if (deliveryFee > 0) {
       items.push({
@@ -393,6 +401,24 @@ export class MonicreditAdapter {
       ? `${plateType} Plate Number (${subType})`
       : `${plateType || 'Plate'} Number Application`;
 
+    return [{
+      unit_cost: amountKobo,
+      item: label,
+      revenue_head_code: revenueHeadCode
+    }];
+  }
+
+  /**
+   * Builds a single Monicredit line item for driver's license (new or renew).
+   * @param {string} licenseType - 'new' | 'renew'
+   * @param {number} amountKobo - Price in kobo
+   * @returns {Array}
+   */
+  static _buildDriverLicenseItem(licenseType, amountKobo) {
+    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE || 'REV68dff2878cb81';
+    const label = licenseType === 'renew'
+      ? "Driver's License Renewal"
+      : "New Driver's License Application";
     return [{
       unit_cost: amountKobo,
       item: label,
@@ -456,12 +482,13 @@ export class MonicreditAdapter {
     deliveryData, 
     hasDeliveryDetails,
     plateType,
-    subType
+    subType,
+    licenseType
   }) {
-    return {
+    const base = {
       transaction_id: transaction.id,
-      car_id: car.id,
-      car_slug: car.slug,
+      car_id: car?.id ?? null,
+      car_slug: car?.slug ?? null,
       user_id: userId,
       renewal_months: renewalMonths,
       payment_type: paymentType,
@@ -469,10 +496,12 @@ export class MonicreditAdapter {
       renewal_amount: renewalAmount,
       delivery_fee: deliveryFee,
       delivery_details: hasDeliveryDetails ? deliveryData : null,
-      vehicle: `${car.vehicle_make} ${car.vehicle_model}`,
-      registration: car.registration_no || 'N/A',
+      vehicle: car ? `${car.vehicle_make || ''} ${car.vehicle_model || ''}`.trim() || 'N/A' : 'N/A',
+      registration: car?.registration_no || 'N/A',
       ...(plateType ? { plate_type: plateType } : {}),
-      ...(subType ? { sub_type: subType } : {})
+      ...(subType ? { sub_type: subType } : {}),
+      ...(licenseType ? { license_type: licenseType } : {})
     };
+    return base;
   }
 }
