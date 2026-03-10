@@ -15,6 +15,10 @@ import { sendOrderCompletedEmail } from '../services/email/paymentEmail.service.
 import { createInAppNotification } from '../services/notification.service.js';
 import { logError, logInfo } from '../utils/logger.js';
 import {
+  sendOrderUpdateWhatsApp,
+  sendDocumentReadyWhatsApp,
+} from '../services/whatsapp/whatsapp.service.js';
+import {
   getTransactionByReference,
   updateTransactionStatus,
   processPaymentSuccess,
@@ -1099,6 +1103,15 @@ export const updateOrderStatus = async (req, res) => {
           ).catch(err => logError('Order declined notification failed', err));
         }
       }
+
+      // WhatsApp hook — fire-and-forget, isolated from email/in-app logic above
+      // Only sends when WHATSAPP_REMINDERS_ENABLED=true and user has a phone number
+      sendOrderUpdateWhatsApp({
+        phone:   profile?.phone_number || null,
+        name:    profile?.first_name   || 'User',
+        orderId: updated.order_number,
+        status:  dbStatus,
+      }).catch(err => logError('WhatsApp order update failed (non-blocking)', err));
     }
 
     return res.status(200).json({ status: true, message: 'Order status updated successfully', data: formatted });
@@ -1454,6 +1467,48 @@ export const adminUploadDocument = async (req, res) => {
 export const approveDocument = async (req, res) => {
   try {
     const doc = await updateDocumentStatus(parseInt(req.params.id, 10), 'approved');
+
+    // WhatsApp hook — fire-and-forget, does not affect the response
+    // Looks up user profile for phone number and car name, then sends notification
+    if (doc?.user_id) {
+      (async () => {
+        try {
+          const supabaseAdmin = getSupabaseAdmin();
+
+          // Fetch user phone and name
+          const { data: profile } = await supabaseAdmin
+            .from('profiles')
+            .select('first_name, phone_number')
+            .eq('id', doc.user_id)
+            .single();
+
+          // Fetch car name if this is a car document
+          let vehicleName = 'your vehicle';
+          if (doc.car_id) {
+            const { data: car } = await supabaseAdmin
+              .from('cars')
+              .select('vehicle_make, vehicle_model, vehicle_year')
+              .eq('id', doc.car_id)
+              .single();
+            if (car) {
+              vehicleName = [car.vehicle_year, car.vehicle_make, car.vehicle_model]
+                .filter(Boolean)
+                .join(' ');
+            }
+          }
+
+          await sendDocumentReadyWhatsApp({
+            phone:       profile?.phone_number || null,
+            name:        profile?.first_name   || 'User',
+            vehicleName,
+            documentUrl: doc.file_url || '',
+          });
+        } catch (err) {
+          logError('WhatsApp document ready notification failed (non-blocking)', err);
+        }
+      })();
+    }
+
     return res.status(200).json({
       status: true,
       message: 'Document approved',
