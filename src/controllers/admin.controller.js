@@ -468,20 +468,31 @@ export const deleteUser = async (req, res) => {
 export const listCars = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all' } = req.query;
-    
+    const { page = 1, per_page = 15, status = 'all', car_type = 'all', search = '' } = req.query;
+
     const limit = parseInt(per_page);
     const offset = (parseInt(page) - 1) * limit;
-    
+
     let query = supabaseAdmin
       .from('cars')
       .select('*', { count: 'exact' })
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
-    
+
     if (status !== 'all') {
       query = query.eq('status', status);
+    }
+
+    if (car_type !== 'all') {
+      query = query.eq('car_type', car_type);
+    }
+
+    if (search && search.trim()) {
+      const term = search.trim();
+      query = query.or(
+        `vehicle_make.ilike.%${term}%,vehicle_model.ilike.%${term}%,registration_no.ilike.%${term}%,name_of_owner.ilike.%${term}%`
+      );
     }
     
     const { data: cars, count, error } = await query;
