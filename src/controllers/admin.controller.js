@@ -26,6 +26,7 @@ import {
 import { getOrderById } from '../services/payment/order.service.js';
 import { PaymentSuccessService } from '../services/payment/payment-success.service.js';
 import { PAYMENT_STATUS, ORDER_TYPE } from '../constants/payment.constants.js';
+import { generateOrderNumber } from '../utils/paymentHelpers.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -49,11 +50,26 @@ function frontendStatusToDB(status) {
 
 // Format an order row into the shape the frontend expects
 function formatOrder(order, profile, userEmail, stateName, lgaName) {
+  // Extract plate/license details from transaction metadata for non-renewal orders
+  const txMeta = (() => {
+    try {
+      const raw = order.payment_transactions?.metadata;
+      return raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {};
+    } catch { return {}; }
+  })();
+
   return {
     id: order.id,
     slug: order.order_number,          // frontend navigates by this field
     order_number: order.order_number,
     order_type: order.order_type,
+    payment_type: order.payment_transactions?.payment_type || order.order_type,
+    // Plate number specific details (visible for plate_number orders)
+    plate_type: txMeta.plateType || null,
+    plate_sub_type: txMeta.subType || null,
+    // Driver license specific details
+    license_type: txMeta.licenseType || null,
+    license_duration: txMeta.licenseDuration || null,
     amount: koboToNaira(order.amount_paid),
     amount_paid: koboToNaira(order.amount_paid),
     renewal_months: order.renewal_months,
@@ -112,15 +128,19 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
 export const listUsers = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, limit = 20, search, status } = req.query;
-    
+    const { page = 1, limit = 20, search, status, sort = 'recently_added' } = req.query;
+
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    
+
+    // sort: recently_added (default) | a_z (by first_name asc)
+    const sortAscending = sort === 'a_z';
+    const sortColumn = sort === 'a_z' ? 'first_name' : 'created_at';
+
     let query = supabaseAdmin
       .from('profiles')
       .select('*', { count: 'exact' })
       .is('deleted_at', null)
-      .order('created_at', { ascending: false })
+      .order(sortColumn, { ascending: sortAscending })
       .range(offset, offset + parseInt(limit) - 1);
     
     if (search) {
@@ -468,16 +488,20 @@ export const deleteUser = async (req, res) => {
 export const listCars = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all', car_type = 'all', search = '' } = req.query;
+    const { page = 1, per_page = 15, status = 'all', car_type = 'all', search = '', sort = 'recently_added' } = req.query;
 
     const limit = parseInt(per_page);
     const offset = (parseInt(page) - 1) * limit;
+
+    // sort: recently_added (default) | a_z (by vehicle_make asc)
+    const sortAscending = sort === 'a_z';
+    const sortColumn = sort === 'a_z' ? 'vehicle_make' : 'created_at';
 
     let query = supabaseAdmin
       .from('cars')
       .select('*', { count: 'exact' })
       .is('deleted_at', null)
-      .order('created_at', { ascending: false })
+      .order(sortColumn, { ascending: sortAscending })
       .range(offset, offset + limit - 1);
 
     if (status !== 'all') {
@@ -883,7 +907,7 @@ export const listOrders = async (req, res) => {
         delivery_address, delivery_state, delivery_lga, delivery_contact,
         created_at, updated_at,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
-        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway )
+        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -956,7 +980,7 @@ export const getOrderDetails = async (req, res) => {
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
                       registration_no, chasis_no, engine_no, expiry_date ),
-        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel, payment_gateway )
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel, payment_gateway, payment_type, metadata )
       `)
       .eq('order_number', orderNumber)
       .single();
@@ -1073,7 +1097,7 @@ export const updateOrderStatus = async (req, res) => {
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
                       registration_no, chasis_no, engine_no, expiry_date ),
-        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway )
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway, payment_type, metadata )
       `)
       .single();
 
@@ -1145,6 +1169,7 @@ export const listTransactions = async (req, res) => {
     const dbStatus = status === 'success' ? 'successful'
       : status === 'failed' ? 'failed'
       : status === 'pending' ? 'pending'
+      : status === 'abandoned' ? 'abandoned'
       : null;
 
     let query = supabaseAdmin
@@ -1298,6 +1323,14 @@ export const getTransactionDetails = async (req, res) => {
       ? await supabaseAdmin.from('cars').select('id, slug, vehicle_make, vehicle_model, registration_no').eq('id', tx.car_id).single()
       : { data: null };
 
+    // Parse metadata so we can surface form details (plate type, license type, etc.)
+    let txMeta = {};
+    try {
+      txMeta = tx.metadata
+        ? (typeof tx.metadata === 'string' ? JSON.parse(tx.metadata) : tx.metadata)
+        : {};
+    } catch { txMeta = {}; }
+
     return res.status(200).json({
       status: true,
       message: 'Transaction retrieved',
@@ -1307,13 +1340,20 @@ export const getTransactionDetails = async (req, res) => {
         gateway_reference: tx.paystack_reference || tx.monicredit_order_id || tx.reference,
         payment_gateway: tx.payment_gateway || 'paystack',
         amount: koboToNaira(tx.amount),
-        status: tx.status === 'successful' ? 'approved' : tx.status,
+        status: tx.status,
         payment_type: tx.payment_type,
         payment_description: tx.payment_type?.replace(/_/g, ' '),
         channel: tx.channel,
         created_at: tx.created_at,
         paid_at: tx.paid_at,
         updated_at: tx.updated_at,
+        // Form details — what the user actually filled in
+        plate_type: txMeta.plateType || null,
+        plate_sub_type: txMeta.subType || null,
+        license_type: txMeta.licenseType || null,
+        license_duration: txMeta.licenseDuration || null,
+        renewal_months: txMeta.renewal_months || null,
+        delivery_details: txMeta.delivery_details || null,
         user: profile ? {
           id: profile.id,
           name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
@@ -1671,6 +1711,17 @@ export const markTransactionPaid = async (req, res) => {
     const alreadySuccessful = transaction.status === PAYMENT_STATUS.SUCCESSFUL;
 
     if (!alreadySuccessful) {
+      // For abandoned transactions: reset to pending first so the RPC can run its
+      // normal flow (which expects status = 'pending' before creating the order)
+      if (transaction.status === PAYMENT_STATUS.ABANDONED) {
+        logInfo('[markTransactionPaid] Recovering abandoned transaction', { reference });
+        await updateTransactionStatus(reference, {
+          status: PAYMENT_STATUS.PENDING,
+          channel: null,
+          authorization_code: null,
+          paid_at: null,
+        });
+      }
       await updateTransactionStatus(reference, {
         status: PAYMENT_STATUS.SUCCESSFUL,
         channel: 'manual',
@@ -1697,15 +1748,16 @@ export const markTransactionPaid = async (req, res) => {
       metadata,
     });
 
-    // If the RPC returned alreadyProcessed (transaction was already successful),
-    // insert the order directly since the RPC guard skipped it.
+    // If the RPC returned alreadyProcessed OR returned no orderId (can happen when the
+    // transaction status was updated to successful before the RPC ran, e.g. for
+    // abandoned transactions that were recovered), create the order directly.
     let finalOrderId = processResult.orderId;
-    if (alreadySuccessful && processResult.alreadyProcessed && !finalOrderId) {
+    if (processResult.alreadyProcessed && !finalOrderId) {
       const supabaseAdmin = getSupabaseAdmin();
       const { data: directOrder, error: orderInsertError } = await supabaseAdmin
         .from('renewal_orders')
         .insert({
-          order_number: `ORD-MANUAL-${Date.now()}`,
+          order_number: generateOrderNumber(),
           user_id: transaction.user_id,
           car_id: transaction.car_id || null,
           transaction_id: transaction.id,
@@ -1739,11 +1791,11 @@ export const markTransactionPaid = async (req, res) => {
     const updatedTransaction = await getTransactionByReference(reference);
     const createdOrder = finalOrderId ? await getOrderById(finalOrderId).catch(() => null) : null;
 
-    if (!processResult.alreadyProcessed || alreadySuccessful) {
+    if (finalOrderId) {
       try {
         await PaymentSuccessService.processPaymentSuccessSideEffects({
           transaction: updatedTransaction,
-          gatewayData: { channel: alreadySuccessful ? transaction.channel || 'manual' : 'manual' },
+          gatewayData: { channel: transaction.channel || 'manual' },
           order: createdOrder,
         });
       } catch (notifyError) {
