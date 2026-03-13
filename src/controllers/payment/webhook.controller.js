@@ -172,7 +172,15 @@ async function handleChargeSuccess(data, eventId) {
     logDebug('[Webhook] Transaction already processed', { reference });
     return;
   }
-  
+
+  // If the transaction was abandoned (user re-initiated payment) but the user still
+  // completed payment on the original link, recover it so the RPC can create the order
+  if (transaction.status === PAYMENT_STATUS.ABANDONED) {
+    logWarn('[Webhook] Payment received for abandoned transaction — recovering', { reference });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.PENDING });
+    transaction = await getTransactionByReference(reference);
+  }
+
   // Store event ID before processing — prevents race conditions where two
   // concurrent webhooks both pass the duplicate check above
   if (eventId) {
@@ -434,7 +442,15 @@ async function handleMonicreditPaymentSuccess(data) {
     logDebug('[Monicredit Webhook] Transaction already processed', { reference: transaction.reference });
     return;
   }
-  
+
+  // If the transaction was abandoned (user re-initiated payment) but the user still
+  // paid on the original virtual account, recover it so the RPC can create the order
+  if (transaction.status === PAYMENT_STATUS.ABANDONED) {
+    logWarn('[Monicredit Webhook] Payment received for abandoned transaction — recovering', { reference: transaction.reference });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.PENDING });
+    transaction = await getTransactionByMonicreditOrderId(orderId);
+  }
+
   // Store event ID before processing — prevents race conditions on concurrent webhooks
   try {
     await updateTransactionWebhookEventId(transaction.reference, eventId);
