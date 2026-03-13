@@ -31,8 +31,12 @@ async function getPendingOrdersForCars(carIds) {
     return new Map();
   }
   
+  const orderMap = new Map();
+  
   try {
     const supabaseAdmin = getSupabaseAdmin();
+
+    // 1) Normal authenticated renewal orders
     const { data: orders, error } = await supabaseAdmin
       .from('renewal_orders')
       .select('id, car_id, order_number, status, order_type, created_at')
@@ -43,17 +47,41 @@ async function getPendingOrdersForCars(carIds) {
     
     if (error) throw error;
     
-    const orderMap = new Map();
     (orders || []).forEach(order => {
       if (!orderMap.has(order.car_id)) {
         orderMap.set(order.car_id, order);
       }
     });
+
+    // 2) Successful guest renewals that have been linked to these cars.
+    // Treat them as "pending" from the user's point of view so the UI shows
+    // "Renewal in progress" even if the order originated from the guest flow.
+    const { data: guestOrders, error: guestError } = await supabaseAdmin
+      .from('guest_renewal_orders')
+      .select('id, car_id, payment_status, created_at, payment_reference')
+      .in('car_id', carIds)
+      .eq('payment_status', 'payment_success')
+      .order('created_at', { ascending: false });
+
+    if (guestError) throw guestError;
+
+    (guestOrders || []).forEach(order => {
+      if (!order.car_id) return;
+      if (orderMap.has(order.car_id)) return; // Auth order takes precedence
+      orderMap.set(order.car_id, {
+        id: order.id,
+        car_id: order.car_id,
+        order_number: order.payment_reference || order.id,
+        status: 'guest_payment_success',
+        order_type: 'guest_renewal',
+        created_at: order.created_at
+      });
+    });
     
     return orderMap;
   } catch (error) {
     logError('Failed to fetch pending orders', error);
-    return new Map();
+    return orderMap;
   }
 }
 
@@ -166,8 +194,84 @@ export const addCar = async (req, res) => {
       // Non-blocking error for notifications - don't interrupt car creation response
     }
     
-    // Build expiry status for the created car
-    const expiryStatus = buildExpiryStatus(car.expiry_date);
+    // Link any successful guest renewals for this user to the new car.
+    // We normalise plate numbers (strip non-alphanumerics and upper-case) so that
+    // values entered with or without dashes still match.
+    //
+    // Two cases are handled:
+    //   1. Orders already linked to this user (via receipt CTA or auto-link at payment time).
+    //   2. Orders where the guest email matches this account but linked_user_id is still null
+    //      (user paid as guest before they had an account, then registered via normal flow).
+    try {
+      const supabaseAdmin = getSupabaseAdmin();
+      const normalizePlate = (value) =>
+        (value || '')
+          .replace(/[^A-Za-z0-9]/g, '')
+          .toUpperCase();
+
+      const targetPlate = normalizePlate(car.registration_no);
+
+      // Case 1: orders already linked to this user account
+      const { data: linkedOrders, error: guestErr } = await supabaseAdmin
+        .from('guest_renewal_orders')
+        .select('id, plate_number')
+        .eq('linked_user_id', userId)
+        .eq('payment_status', 'payment_success')
+        .is('car_id', null);
+
+      if (guestErr) throw guestErr;
+
+      // Case 2: orders with matching guest_email that were never linked
+      // (user registered after paying as a guest)
+      const { data: userProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('email')
+        .eq('id', userId)
+        .maybeSingle();
+
+      let unlinkedOrders = [];
+      if (userProfile?.email) {
+        const { data: emailOrders } = await supabaseAdmin
+          .from('guest_renewal_orders')
+          .select('id, plate_number')
+          .eq('guest_email', userProfile.email.toLowerCase())
+          .eq('payment_status', 'payment_success')
+          .is('linked_user_id', null)
+          .is('car_id', null);
+        unlinkedOrders = emailOrders || [];
+      }
+
+      const linkedMatchIds = (linkedOrders || [])
+        .filter((o) => normalizePlate(o.plate_number) === targetPlate)
+        .map((o) => o.id);
+
+      const unlinkedMatchIds = unlinkedOrders
+        .filter((o) => normalizePlate(o.plate_number) === targetPlate)
+        .map((o) => o.id);
+
+      if (linkedMatchIds.length > 0) {
+        await supabaseAdmin
+          .from('guest_renewal_orders')
+          .update({ car_id: car.id, updated_at: new Date().toISOString() })
+          .in('id', linkedMatchIds);
+      }
+
+      if (unlinkedMatchIds.length > 0) {
+        // Also back-fill linked_user_id so the order appears on the user's dashboard
+        await supabaseAdmin
+          .from('guest_renewal_orders')
+          .update({ linked_user_id: userId, car_id: car.id, updated_at: new Date().toISOString() })
+          .in('id', unlinkedMatchIds);
+      }
+    } catch (linkErr) {
+      logError('Failed to link guest renewal orders to car', linkErr);
+    }
+
+    // Build expiry status AFTER linking so the add-car response already reflects
+    // "Renewal in progress" when the guest order was just linked above.
+    const pendingOrdersMap = await getPendingOrdersForCars([car.id]).catch(() => new Map());
+    const pendingOrder = pendingOrdersMap.get(car.id) || null;
+    const expiryStatus = buildExpiryStatus(car.expiry_date, new Date(), pendingOrder);
     const carWithExpiry = {
       ...car,
       reminder: expiryStatus,

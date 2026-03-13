@@ -476,6 +476,127 @@ You can reactivate auto-renewal anytime from your account.
 }
 
 /**
+ * Send payment confirmation email to a guest (unauthenticated) customer.
+ *
+ * @param {Object} options
+ * @param {string} options.to           - Guest email
+ * @param {string} options.guestName    - Guest full name
+ * @param {string} options.reference    - Payment reference
+ * @param {number} options.amount       - Total amount paid (kobo)
+ * @param {string} options.plateNumber  - Vehicle plate number
+ * @param {string[]} options.documentNames - List of renewed document names
+ * @param {string} options.receiptUrl   - Direct link to the receipt page
+ */
+export async function sendGuestPaymentConfirmationEmail({
+  to, guestName, reference, amount, plateNumber, documentNames = [], receiptUrl
+}) {
+  const subject = 'Payment Confirmed – Your Motoka Renewal';
+  const firstName = guestName?.split(' ')[0] || 'there';
+  const docList = documentNames.length > 0
+    ? documentNames.map(d => `<li style="padding:4px 0;">${d}</li>`).join('')
+    : '<li>Vehicle Document Renewal</li>';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f5fc; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background-color: #104675; color: #ffffff; padding: 32px 24px; text-align: center; }
+        .header h1 { margin: 0 0 6px; font-size: 22px; }
+        .header p { margin: 0; font-size: 14px; opacity: 0.75; }
+        .badge { display: inline-block; background: #ffffff22; border-radius: 50%; width: 56px; height: 56px; line-height: 56px; font-size: 28px; margin-bottom: 14px; }
+        .content { padding: 36px 28px; }
+        .amount-box { background-color: #eef6ff; border: 2px solid #2389E3; border-radius: 10px; padding: 20px; text-align: center; margin: 24px 0; }
+        .amount { font-size: 34px; font-weight: 700; color: #104675; }
+        .details { background-color: #f9fafc; border-radius: 10px; padding: 20px; margin: 20px 0; }
+        .detail-row { display: flex; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid #e8eaf0; font-size: 14px; }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-label { color: #697c8c; }
+        .detail-value { font-weight: 600; color: #05243f; text-align: right; }
+        .doc-list { margin: 0; padding-left: 20px; color: #05243f; font-size: 14px; }
+        .cta-button { display: inline-block; background-color: #2389E3; color: #ffffff; padding: 13px 28px; border-radius: 50px; text-decoration: none; font-weight: 600; font-size: 14px; margin-top: 20px; }
+        .tip-box { background-color: #fffbeb; border-left: 4px solid #f59e0b; padding: 14px 16px; border-radius: 4px; margin: 20px 0; font-size: 13px; color: #78350f; }
+        .footer { background-color: #f4f5fc; padding: 20px; text-align: center; font-size: 12px; color: #9ca3af; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <div class="badge">✓</div>
+          <h1>Payment Confirmed!</h1>
+          <p>Your vehicle document renewal has been received</p>
+        </div>
+        <div class="content">
+          <p>Hello ${firstName},</p>
+          <p>We've received your payment and your renewal request is now being processed. Here's a summary of your transaction:</p>
+
+          <div class="amount-box">
+            <div class="amount">${formatAmount(amount)}</div>
+            <div style="color:#697c8c;margin-top:6px;font-size:13px;">Total Paid</div>
+          </div>
+
+          <div class="details">
+            <div class="detail-row">
+              <span class="detail-label">Reference</span>
+              <span class="detail-value" style="font-family:monospace;">${reference}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Plate Number</span>
+              <span class="detail-value">${plateNumber}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Documents</span>
+              <span class="detail-value">
+                <ul class="doc-list">${docList}</ul>
+              </span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Status</span>
+              <span class="detail-value" style="color:#22c55e;">Payment Received ✓</span>
+            </div>
+          </div>
+
+          <div class="tip-box">
+            💡 <strong>Tip:</strong> Create a free Motoka account to track your documents, get expiry reminders, and manage renewals in one place.
+          </div>
+
+          ${receiptUrl ? `<center><a href="${receiptUrl}" class="cta-button">View Your Receipt</a></center>` : ''}
+        </div>
+        <div class="footer">
+          <p>Thank you for using Motoka!</p>
+          <p>If you have any questions, reply to this email or contact our support team.</p>
+          <p style="margin-top:12px;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Payment Confirmed – Motoka
+
+Hello ${firstName},
+
+Your payment of ${formatAmount(amount)} has been received.
+
+Reference   : ${reference}
+Plate Number: ${plateNumber}
+Documents   : ${documentNames.join(', ') || 'Vehicle Document Renewal'}
+Status      : Payment Received
+
+${receiptUrl ? `View your receipt: ${receiptUrl}` : ''}
+
+Thank you for using Motoka!
+  `.trim();
+
+  return sendEmail({ to, subject, html, text });
+}
+
+/**
  * Send order completed email (when admin finishes processing)
  * 
  * @param {Object} options

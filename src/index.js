@@ -18,6 +18,8 @@ import adminRoutes from './routes/admin.routes.js';
 import adminAuthRoutes from './routes/adminAuth.routes.js';
 import notificationRoutes from './routes/notifications.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
+import publicRoutes from './routes/public.routes.js';
+import guestRoutes from './routes/guest.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { getCorsConfig } from './config/cors.config.js';
 import paymentMetrics from './services/payment/metrics.service.js';
@@ -128,6 +130,8 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.use('/api', publicRoutes);
+app.use('/api', guestRoutes);
 app.use('/api', authRoutes);
 app.use('/api', carRoutes);
 app.use('/api', documentRoutes);

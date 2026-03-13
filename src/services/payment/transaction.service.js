@@ -462,7 +462,7 @@ export async function getUserTransactions(userId, options = {}) {
     throw new TransactionError('Failed to retrieve transactions', HTTP_STATUS.SERVER_ERROR);
   }
   
-  // Batch-fetch all orders for these transactions in one query (avoids N+1)
+  // ── Enrich normal authenticated transactions with their renewal orders ──
   const txIds = (transactions || []).map(tx => tx.id);
   const { data: allOrders } = txIds.length > 0
     ? await supabaseAdmin
@@ -493,14 +493,79 @@ export async function getUserTransactions(userId, options = {}) {
           .filter(Boolean)
           .map(item => ({ name: item.name, price: item.price, quantity: 1 }))
       : [];
-    return { ...tx, order: order || null, items };
+    return {
+      source: 'normal',
+      ...tx,
+      order: order || null,
+      items
+    };
+  });
+
+  // ── Guest renewals linked to this user (upgraded from guest flow) ─────────
+  const { data: guestOrders, error: guestError } = await supabaseAdmin
+    .from('guest_renewal_orders')
+    .select('id, total_amount, payment_status, payment_gateway, plate_number, created_at, selected_items, receipt_token')
+    .eq('linked_user_id', userId)
+    .eq('payment_status', 'payment_success')
+    .order('created_at', { ascending: false });
+
+  if (guestError) {
+    logError('Get guest renewal transactions error', { error: guestError, userId });
+  }
+
+  const guestItemKeys = [...new Set(
+    (guestOrders || []).flatMap(o => o.selected_items || [])
+  )];
+  const { data: guestRenewalItems } = guestItemKeys.length > 0
+    ? await supabaseAdmin
+        .from('renewal_items')
+        .select('item_key, name, price')
+        .in('item_key', guestItemKeys)
+    : { data: [] };
+
+  const guestItemByKey = Object.fromEntries((guestRenewalItems || []).map(i => [i.item_key, i]));
+
+  const guestTransactions = (guestOrders || []).map(order => {
+    const items = order.selected_items?.length > 0
+      ? order.selected_items
+          .map(key => guestItemByKey[key])
+          .filter(Boolean)
+          .map(item => ({ name: item.name, price: item.price, quantity: 1 }))
+      : [];
+    return {
+      source: 'guest',
+      id: `guest-${order.id}`,
+      reference: order.payment_reference || order.id,
+      user_id: userId,
+      car_id: order.car_id || null,
+      amount: order.total_amount,
+      currency: 'NGN',
+      payment_type: 'guest_renewal',
+      payment_gateway: order.payment_gateway,
+      status: order.payment_status === 'payment_success'
+        ? PAYMENT_STATUS.SUCCESSFUL
+        : PAYMENT_STATUS.FAILED,
+      created_at: order.created_at,
+      order: {
+        id: order.id,
+        order_number: order.payment_reference || order.id,
+        status: order.payment_status,
+        selected_items: order.selected_items
+      },
+      items,
+      receipt_token: order.receipt_token
+    };
   });
   
-  const totalTransactions = count || 0;
+  const combined = [...enrichedTransactions, ...guestTransactions].sort(
+    (a, b) => new Date(b.created_at) - new Date(a.created_at)
+  );
+
+  const totalTransactions = (count || 0) + (guestOrders?.length || 0);
   const totalPages = Math.ceil(totalTransactions / limit);
   
   return {
-    transactions: enrichedTransactions,
+    transactions: combined,
     pagination: {
       current_page: page,
       limit,
