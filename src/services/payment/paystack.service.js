@@ -359,7 +359,12 @@ export function verifyWebhookSignature(payload, signature) {
  * @returns {Object} Parsed event data with event ID
  */
 export function parseWebhookEvent(payload) {
-  if (!payload || !payload.event || !payload.data) {
+  // express.raw() gives us a Buffer — parse it before accessing properties
+  const body = Buffer.isBuffer(payload)
+    ? JSON.parse(payload.toString('utf8'))
+    : payload;
+
+  if (!body || !body.event || !body.data) {
     throw new PaystackError('Invalid webhook payload', 400, 'INVALID_PAYLOAD');
   }
   
@@ -367,19 +372,19 @@ export function parseWebhookEvent(payload) {
   // Paystack may include event ID in payload.id, but if not, generate deterministic ID
   // Use reference + event type as composite key (Paystack may send same event multiple times)
   // Adding timestamp ensures uniqueness while still allowing detection of exact duplicates
-  let eventId = payload.id;
+  let eventId = body.id;
   
-  if (!eventId && payload.data?.reference) {
+  if (!eventId && body.data?.reference) {
     // Generate deterministic event ID from reference + event type
     // This allows us to detect duplicate webhooks even if Paystack doesn't provide event ID
     // Using hash ensures same reference + event always generates same ID for replay detection
-    const eventData = `${payload.data.reference}-${payload.event}`;
+    const eventData = `${body.data.reference}-${body.event}`;
     eventId = `evt_${crypto.createHash('sha256').update(eventData).digest('hex').substring(0, 16)}`;
   }
   
   return {
-    event: payload.event,
-    data: payload.data,
+    event: body.event,
+    data: body.data,
     eventId: eventId
   };
 }

@@ -15,3 +15,4 @@ export const listDriverLicensePrices = async (req, res) => {
     return response.serverError(res, 'Failed to retrieve driver license prices');
   }
 };
+   

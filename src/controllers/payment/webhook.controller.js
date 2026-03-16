@@ -38,6 +38,7 @@ import { parseWebhookEvent, verifyTransaction as paystackVerifyTransaction } fro
 import { generateMonicreditEventId } from '../../services/payment/monicredit/monicredit.service.js';
 import { MonicreditAdapter } from '../../services/payment/monicredit/index.js';
 import { logPaymentAudit } from '../../services/payment/audit.service.js';
+import { markGuestOrderPaid, markGuestOrderFailed } from '../../services/guest/guestRenewal.service.js';
 
 // POST /api/webhooks/paystack
 export const handlePaystackWebhook = async (req, res) => {
@@ -77,8 +78,16 @@ export const handleMonicreditWebhook = async (req, res) => {
   let signatureVerified = false;
   
   try {
-    const webhookData = req.body;
-    
+    // express.raw() gives us a Buffer — parse to JSON before reading fields
+    let webhookData;
+    try {
+      const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : JSON.stringify(req.body);
+      webhookData = JSON.parse(raw);
+    } catch {
+      logError('[Monicredit Webhook] Failed to parse JSON body');
+      return res.status(400).json({ received: false, error: 'Invalid JSON payload' });
+    }
+
     // Support both event-keyed { event, data } and flat { status, order_id } payload shapes
     const event = webhookData.event || webhookData.type;
     const data = webhookData.data || webhookData;
@@ -149,6 +158,12 @@ async function handleChargeSuccess(data, eventId) {
   if (!transaction) transaction = await getTransactionByReference(reference);
   
   if (!transaction) {
+    // Check if this is a guest renewal order before giving up
+    const guestOrder = await markGuestOrderPaid(reference);
+    if (guestOrder) {
+      logInfo('[Paystack Webhook] Guest order marked as paid', { reference, orderId: guestOrder.id });
+      return;
+    }
     logError('Transaction not found for webhook', { reference });
     return;
   }
@@ -329,7 +344,9 @@ async function handleChargeFailed(data, eventId) {
   const transaction = await getTransactionByPaystackReference(reference);
   
   if (!transaction) {
-    logError('Transaction not found for webhook', { reference });
+    // Check if this is a guest renewal order before giving up
+    await markGuestOrderFailed(reference);
+    logError('Transaction not found for webhook (charge failed)', { reference });
     return;
   }
   
@@ -411,6 +428,12 @@ async function handleMonicreditPaymentSuccess(data) {
   let transaction = await getTransactionByMonicreditOrderId(orderId);
   
   if (!transaction) {
+    // orderId for Monicredit is our internal payment reference — check guest orders
+    const guestOrder = await markGuestOrderPaid(orderId);
+    if (guestOrder) {
+      logInfo('[Monicredit Webhook] Guest order marked as paid', { orderId, guestOrderId: guestOrder.id });
+      return;
+    }
     logError('Transaction not found for Monicredit webhook', { orderId });
     return;
   }
@@ -593,7 +616,8 @@ async function handleMonicreditPaymentFailed(data) {
   const transaction = await getTransactionByMonicreditOrderId(orderId);
   
   if (!transaction) {
-    logError('Transaction not found for Monicredit webhook', { orderId });
+    await markGuestOrderFailed(orderId);
+    logError('Transaction not found for Monicredit webhook (failed)', { orderId });
     return;
   }
   

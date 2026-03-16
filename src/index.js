@@ -18,6 +18,8 @@ import adminRoutes from './routes/admin.routes.js';
 import adminAuthRoutes from './routes/adminAuth.routes.js';
 import notificationRoutes from './routes/notifications.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
+import publicRoutes from './routes/public.routes.js';
+import guestRoutes from './routes/guest.routes.js';
 // DEV-ONLY: WhatsApp sandbox webhook route — not loaded in production
 import whatsappRoutes from './routes/whatsapp.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
@@ -130,6 +132,8 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.use('/api', publicRoutes);
+app.use('/api', guestRoutes);
 app.use('/api', authRoutes);
 app.use('/api', carRoutes);
 app.use('/api', documentRoutes);
