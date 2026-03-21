@@ -145,13 +145,10 @@ app.use('/api/admin', adminRoutes);
 app.use('/api', notificationRoutes);
 app.use('/api', paymentRoutes);
 
-// DEV-ONLY: WhatsApp Sandbox inbound webhook
-// Receives replies from Twilio Sandbox during development/testing only.
-// Has zero effect on production business logic.
-// TODO: production migration — remove this route or add proper signature validation before going live
-if (process.env.NODE_ENV !== 'production') {
-  app.use('/api/v1/whatsapp', whatsappRoutes);
-}
+// WhatsApp inbound webhook — receives replies from users via Twilio
+// Sandbox mode: no signature validation (dev/testing)
+// Production mode: Twilio request signature validated inside whatsapp.routes.js
+app.use('/api/v1/whatsapp', whatsappRoutes);
 
 app.get('/api/docs', (req, res) => {
   const baseUrl = `${req.protocol}://${req.get('host')}/api`;

@@ -11,12 +11,13 @@ import { uploadFile } from '../services/fileUpload.service.js';
 import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
 import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
-import { sendOrderCompletedEmail } from '../services/email/paymentEmail.service.js';
+import { sendOrderCompletedEmail, sendOrderInProgressEmail } from '../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../services/notification.service.js';
 import { logError, logInfo } from '../utils/logger.js';
 import {
   sendOrderUpdateWhatsApp,
   sendDocumentReadyWhatsApp,
+  sendAddCarReminderWhatsApp,
 } from '../services/whatsapp/whatsapp.service.js';
 import {
   getTransactionByReference,
@@ -114,6 +115,8 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
       chasis_no: order.cars.chasis_no,
       engine_no: order.cars.engine_no,
       expiry_date: order.cars.expiry_date,
+      preferred_name: order.cars.preferred_name || null,
+      plate_type: order.cars.type || null,
     } : null,
     payment: order.payment_transactions ? {
       transaction_id: order.payment_transactions.reference,
@@ -979,11 +982,11 @@ export const getOrderDetails = async (req, res) => {
       .select(`
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
-                      registration_no, chasis_no, engine_no, expiry_date ),
+                      registration_no, chasis_no, engine_no, expiry_date, preferred_name, type ),
         payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel, payment_gateway, payment_type, metadata )
       `)
       .eq('order_number', orderNumber)
-      .single();
+      .maybeSingle();
 
     if (error || !order) {
       return res.status(404).json({ status: false, message: 'Order not found' });
@@ -1108,6 +1111,26 @@ export const updateOrderStatus = async (req, res) => {
 
     const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, [updated.user_id]);
     const formatted = formatOrder(updated, profileMap.get(updated.user_id), emailMap.get(updated.user_id), null, updated.delivery_lga);
+
+    // Fire-and-forget: notify user when admin starts processing their order
+    if (dbStatus === 'processing') {
+      const userEmail = emailMap.get(updated.user_id);
+      const profile = profileMap.get(updated.user_id);
+      if (userEmail) {
+        sendOrderInProgressEmail({
+          to: userEmail,
+          firstName: profile?.first_name || 'User',
+          orderNumber: updated.order_number,
+          orderType: updated.order_type,
+        }).catch(err => logError('Order in-progress email failed', err));
+      }
+      createInAppNotification(
+        updated.user_id,
+        'order',
+        'order_in_progress',
+        `Your order ${updated.order_number} is now being processed by our team.`
+      ).catch(err => logError('Order in-progress notification failed', err));
+    }
 
     // Fire-and-forget: notify user when admin completes or declines their order
     if (dbStatus === 'completed' || dbStatus === 'cancelled') {
@@ -1819,5 +1842,247 @@ export const markTransactionPaid = async (req, res) => {
   } catch (error) {
     logError('Admin mark transaction paid', error);
     return res.status(500).json({ status: false, message: 'Failed to process transaction' });
+  }
+};
+
+// PUT /admin/transactions/:reference/mark-failed — manually mark a transaction as failed
+// Used when admin confirms with the payment gateway that no money was received.
+export const markTransactionFailed = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const transaction = await getTransactionByReference(reference);
+
+    if (!transaction) {
+      return res.status(404).json({ status: false, message: 'Transaction not found' });
+    }
+
+    if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
+      // Check if there's already an order — can't mark as failed if order exists
+      const supabaseAdmin = getSupabaseAdmin();
+      const { data: existingOrder } = await supabaseAdmin
+        .from('renewal_orders')
+        .select('id, order_number')
+        .eq('transaction_id', transaction.id)
+        .maybeSingle();
+
+      if (existingOrder) {
+        return res.status(400).json({
+          status: false,
+          message: 'Cannot mark as failed — this transaction already has a linked order',
+          data: { orderNumber: existingOrder.order_number },
+        });
+      }
+    }
+
+    if (transaction.status === 'failed') {
+      return res.status(400).json({ status: false, message: 'Transaction is already marked as failed' });
+    }
+
+    await updateTransactionStatus(reference, { status: 'failed' });
+
+    logInfo('[markTransactionFailed] Transaction manually marked as failed', { reference });
+
+    return res.status(200).json({
+      status: true,
+      message: 'Transaction marked as failed',
+      data: { reference },
+    });
+  } catch (error) {
+    logError('Admin mark transaction failed', error);
+    return res.status(500).json({ status: false, message: 'Failed to update transaction' });
+  }
+};
+
+// ─── WhatsApp Broadcast ───────────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/notifications/add-car-reminder
+ *
+ * Sends a WhatsApp message to every user who has no cars on the platform.
+ * Only targets users with a phone number.
+ *
+ * Query params:
+ *   ?dry_run=true  — preview the count without sending anything
+ *
+ * Processed in batches of 10 with a 1 s delay between batches to stay
+ * well within Twilio's WhatsApp throughput limits.
+ */
+export async function broadcastAddCarReminder(req, res) {
+  const supabase = getSupabaseAdmin();
+  const dryRun = req.query.dry_run === 'true';
+
+  try {
+    if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') {
+      return response.error(
+        res,
+        'WhatsApp notifications are disabled. Set WHATSAPP_REMINDERS_ENABLED=true to enable.',
+        400,
+      );
+    }
+
+    // Step 1: collect user_ids that already have at least one active car
+    const { data: carsData, error: carsError } = await supabase
+      .from('cars')
+      .select('user_id')
+      .eq('is_deleted', false);
+
+    if (carsError) {
+      logError('[Broadcast] Failed to query cars', { error: carsError.message });
+      return response.serverError(res, 'Failed to query cars');
+    }
+
+    const userIdsWithCars = [...new Set((carsData || []).map(c => c.user_id))];
+
+    // Step 2: profiles without cars that have a phone number and are not suspended
+    let profilesQuery = supabase
+      .from('profiles')
+      .select('user_id, first_name, phone_number')
+      .not('phone_number', 'is', null)
+      .neq('is_suspended', true);
+
+    if (userIdsWithCars.length > 0) {
+      profilesQuery = profilesQuery.not('user_id', 'in', `(${userIdsWithCars.join(',')})`);
+    }
+
+    const { data: users, error: profilesError } = await profilesQuery;
+
+    if (profilesError) {
+      logError('[Broadcast] Failed to query users without cars', { error: profilesError.message });
+      return response.serverError(res, 'Failed to query users');
+    }
+
+    const total = (users || []).length;
+
+    if (dryRun) {
+      logInfo('[Broadcast] Dry run — add-car reminder', { total });
+      return response.success(res, {
+        dry_run: true,
+        total_users_without_cars: total,
+        message: `${total} user(s) would receive a notification. Remove dry_run=true to send.`,
+      });
+    }
+
+    if (total === 0) {
+      return response.success(res, {
+        message: 'No users without cars to notify',
+        total_users_without_cars: 0,
+        attempted: 0,
+      });
+    }
+
+    const appUrl = `${process.env.FRONTEND_URL || 'https://app.motoka.ng'}/dashboard`;
+    const BATCH_SIZE = 10;
+    const BATCH_DELAY_MS = 1000;
+
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+      const batch = users.slice(i, i + BATCH_SIZE);
+
+      await Promise.allSettled(
+        batch.map(user =>
+          sendAddCarReminderWhatsApp({
+            phone: user.phone_number,
+            name: user.first_name || 'there',
+            appUrl,
+          }),
+        ),
+      );
+
+      if (i + BATCH_SIZE < users.length) {
+        await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
+      }
+    }
+
+    logInfo('[Broadcast] Add-car reminder broadcast complete', { total, attempted: total });
+
+    return response.success(res, {
+      message: 'Broadcast complete',
+      total_users_without_cars: total,
+      attempted: total,
+    });
+  } catch (err) {
+    logError('[Broadcast] Unexpected error in broadcastAddCarReminder', { error: err.message });
+    return response.serverError(res, 'Broadcast failed');
+  }
+}
+
+// ─── Guest Orders ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/guest-orders
+ *
+ * Lists all guest renewal orders with optional filters.
+ *
+ * Query params:
+ *   ?page=1 &limit=20 &status=pending_payment|payment_success|payment_failed
+ *   &search=<plate or email>
+ */
+export const listGuestOrders = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const { status, search } = req.query;
+
+    let query = supabase
+      .from('guest_renewal_orders')
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (status) query = query.eq('payment_status', status);
+    if (search) {
+      query = query.or(`plate_number.ilike.%${search}%,guest_email.ilike.%${search}%,guest_name.ilike.%${search}%`);
+    }
+
+    const { data: orders, count, error } = await query;
+    if (error) {
+      logError('[Admin] listGuestOrders query error', error);
+      return response.serverError(res, 'Failed to retrieve guest orders');
+    }
+
+    return response.success(res, {
+      orders: orders || [],
+      pagination: {
+        current_page: page,
+        limit,
+        total: count || 0,
+        total_pages: Math.ceil((count || 0) / limit),
+        has_next: page < Math.ceil((count || 0) / limit),
+        has_prev: page > 1
+      }
+    }, 'Guest orders retrieved');
+  } catch (err) {
+    logError('[Admin] listGuestOrders error', err);
+    return response.serverError(res, 'Failed to retrieve guest orders');
+  }
+};
+
+/**
+ * GET /api/admin/guest-orders/:orderId
+ *
+ * Returns full details of a single guest renewal order including
+ * delivery info, selected items, and linked user.
+ */
+export const getGuestOrderDetails = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const supabase = getSupabaseAdmin();
+
+    const { data: order, error } = await supabase
+      .from('guest_renewal_orders')
+      .select('*, guest_customers(name, email, phone)')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (error || !order) {
+      return response.notFound(res, 'Guest order not found');
+    }
+
+    return response.success(res, order, 'Guest order retrieved');
+  } catch (err) {
+    logError('[Admin] getGuestOrderDetails error', err);
+    return response.serverError(res, 'Failed to retrieve guest order');
   }
 };

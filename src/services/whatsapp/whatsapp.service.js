@@ -1,35 +1,26 @@
 /**
- * WHATSAPP SERVICE — DEVELOPMENT / SANDBOX ONLY
+ * WHATSAPP SERVICE — Production (Meta-approved Content Templates)
  *
- * Sends WhatsApp messages via Twilio Sandbox for development and testing.
- * This module is intentionally isolated from all other notification flows.
+ * All messages are sent via Twilio's Content Template API using pre-approved
+ * templates rather than freeform text. This works for both sandbox and
+ * production WhatsApp Business numbers.
+ *
+ * Template SIDs are read from env vars (TWILIO_TEMPLATE_*) so they can be
+ * updated without a code deploy.
  *
  * FEATURE FLAG: All sends are gated behind WHATSAPP_REMINDERS_ENABLED=true.
- * The default is false — this service is a no-op unless explicitly enabled.
- *
- * SANDBOX ASSUMPTIONS (flagged with TODO: production migration):
- *  - Sender number is a Twilio Sandbox number, not a verified WA Business number
- *  - Message templates are freeform (not pre-approved by Meta)
- *  - Recipients must have joined the sandbox by texting "join <keyword>" first
- *
- * DO NOT modify any existing email or notification logic in this file.
+ * Omitting that env var is a safe default — this service is a no-op unless
+ * explicitly enabled.
  */
 
 import twilio from 'twilio';
 import { logInfo, logError } from '../../utils/logger.js';
 
-// ─── Feature flags (read once at module load) ────────────────────────────────
-const WHATSAPP_ENABLED = process.env.WHATSAPP_REMINDERS_ENABLED === 'true';
-const SANDBOX_MODE     = process.env.WHATSAPP_SANDBOX_MODE !== 'false'; // default true
-
-// ─── Lazy singleton Twilio client ────────────────────────────────────────────
+// ─── Lazy singleton Twilio client ─────────────────────────────────────────────
+// Initialised on first send so TWILIO_* vars don't need to be set at startup
+// if WhatsApp is disabled.
 let _client = null;
 
-/**
- * Returns the Twilio client, initialising it on first call.
- * Throws only if credentials are missing — caller must handle.
- * @returns {import('twilio').Twilio}
- */
 function getClient() {
   if (_client) return _client;
 
@@ -38,7 +29,7 @@ function getClient() {
 
   if (!sid || !token) {
     throw new Error(
-      '[WhatsApp] TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be set to send WhatsApp messages'
+      '[WhatsApp] TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN must be set'
     );
   }
 
@@ -46,71 +37,110 @@ function getClient() {
   return _client;
 }
 
+// ─── Phone number helpers ──────────────────────────────────────────────────────
+
 /**
- * Returns the WhatsApp sender number from env.
- * TODO: production migration — replace sandbox sender with live Twilio WhatsApp Business number
- * @returns {string|undefined}
+ * Normalises any common Nigerian phone format to E.164 (+country + digits).
+ *
+ *   "08012345678"    → "+2348012345678"
+ *   "2348012345678"  → "+2348012345678"
+ *   "+2348012345678" → "+2348012345678"
+ *
+ * Returns null for empty / clearly invalid input.
  */
-function getFromNumber() {
-  return process.env.TWILIO_WHATSAPP_FROM;
+function normalizePhone(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+
+  let cleaned = raw.startsWith('whatsapp:') ? raw.slice('whatsapp:'.length) : raw;
+  let digits  = cleaned.replace(/[\s\-().]/g, '');
+
+  if (digits.startsWith('+')) return digits.length >= 8 ? digits : null;
+  if (digits.startsWith('0')   && digits.length === 11) return `+234${digits.slice(1)}`;
+  if (digits.startsWith('234') && digits.length === 13) return `+${digits}`;
+  if (digits.length >= 7) return `+${digits}`;
+
+  return null;
 }
 
-// ─── Internal send helper ────────────────────────────────────────────────────
+function toWhatsAppUri(e164) {
+  return `whatsapp:${e164}`;
+}
+
+// ─── Core send helper ──────────────────────────────────────────────────────────
 
 /**
- * Sends a single WhatsApp message via Twilio.
- * Prefixes `whatsapp:` to both from/to as required by Twilio's WA API.
+ * Sends a single WhatsApp message using a pre-approved Twilio Content Template.
  *
- * @param {string} to   - Recipient phone number (E.164 format, e.g. +2348012345678)
- * @param {string} body - Message text
- * @returns {Promise<import('twilio/lib/rest/api/v2010/account/message').MessageInstance>}
+ * @param {string} rawTo       - Recipient phone (any common Nigerian format)
+ * @param {string} contentSid  - Twilio Content Template SID (HXxxx…)
+ * @param {Object} variables   - Template variable values keyed by position string
+ *                               e.g. { '1': 'John', '2': 'ABC-123' }
+ * @returns {Promise<MessageInstance|null>}
  */
-async function _send(to, body) {
-  const from = getFromNumber();
+async function _sendTemplate(rawTo, contentSid, variables) {
+  const rawFrom = process.env.TWILIO_WHATSAPP_FROM;
 
-  if (!from) {
-    // Treat missing sender as a misconfiguration — log and bail safely
-    logError('[WhatsApp] TWILIO_WHATSAPP_FROM is not set; cannot send message', { to });
+  if (!rawFrom) {
+    logError('[WhatsApp] TWILIO_WHATSAPP_FROM is not set');
+    return null;
+  }
+  if (!contentSid) {
+    logError('[WhatsApp] contentSid is required');
     return null;
   }
 
+  const fromE164 = normalizePhone(rawFrom);
+  const toE164   = normalizePhone(rawTo);
+
+  if (!fromE164) {
+    logError('[WhatsApp] TWILIO_WHATSAPP_FROM is not a valid phone number', { rawFrom });
+    return null;
+  }
+  if (!toE164) {
+    logError('[WhatsApp] Recipient phone is not valid — skipping', { rawTo });
+    return null;
+  }
+
+  const from = toWhatsAppUri(fromE164);
+  const to   = toWhatsAppUri(toE164);
+
   const client = getClient();
 
-  // TODO: production migration — `from` must be a verified Twilio WhatsApp Business number,
-  // not the sandbox shared number. Update TWILIO_WHATSAPP_FROM in production env.
   const message = await client.messages.create({
-    from: `whatsapp:${from}`,
-    to:   `whatsapp:${to}`,
-    body,
+    from,
+    to,
+    contentSid,
+    contentVariables: JSON.stringify(variables),
   });
 
-  if (SANDBOX_MODE) {
-    // TODO: production migration — remove this verbose log or reduce to debug level
-    logInfo('[WhatsApp][SANDBOX] Message dispatched', {
-      to,
-      sid:    message.sid,
-      status: message.status,
-    });
-  }
+  logInfo('[WhatsApp] Template message sent', {
+    to:         toE164,
+    sid:        message.sid,
+    status:     message.status,
+    contentSid,
+  });
 
   return message;
 }
 
-// ─── Public API ──────────────────────────────────────────────────────────────
+// ─── Public API ───────────────────────────────────────────────────────────────
 
 /**
  * Sends a vehicle document expiry reminder via WhatsApp.
  *
- * Integration point: supabase/functions/expiry-notifications/ (Deno Edge Function)
- * Called alongside the existing Resend email — does NOT replace it.
+ * Template: motoka_expiry_reminder (HXa64931d606dd7d4f7c2b49b1d33864a9)
+ * Body: "Motoka Reminder 🚗 Hi {{1}}, your vehicle licence for {{2}} expires in
+ *        {{3}} days ({{4}}). Renew here: {{5}} — Motoka"
+ *
+ * Integration: supabase/functions/expiry-notifications/ (Deno Edge Function)
  *
  * @param {object} params
- * @param {string} params.phone          - Recipient phone (E.164)
+ * @param {string} params.phone          - Recipient phone
  * @param {string} params.name           - User's first name
- * @param {string} params.registrationNo - Vehicle registration number
- * @param {string} params.expiryDate     - Formatted expiry date string
+ * @param {string} params.registrationNo - Vehicle plate / reg number
+ * @param {string} params.expiryDate     - Formatted date string (YYYY-MM-DD)
  * @param {number} params.daysRemaining  - Days until expiry
- * @param {string} params.renewalUrl     - Direct link to renewal page
+ * @param {string} params.renewalUrl     - Direct link to the renewal page
  */
 export async function sendExpiryReminderWhatsApp({
   phone,
@@ -120,27 +150,31 @@ export async function sendExpiryReminderWhatsApp({
   daysRemaining,
   renewalUrl,
 }) {
-  if (!WHATSAPP_ENABLED) return;
-
-  // TODO: implement opt-in field check — only send to users with `whatsapp_opt_in = true`
-  // once the `profiles` table has that column. Currently sending to all users with a phone number.
-
+  if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') return;
   if (!phone) {
-    logInfo('[WhatsApp] Skipping expiry reminder — user has no phone number', { registrationNo });
+    logInfo('[WhatsApp] Skipping expiry reminder — no phone number', { registrationNo });
+    return;
+  }
+
+  const contentSid = process.env.TWILIO_TEMPLATE_EXPIRY_REMINDER;
+  if (!contentSid) {
+    logError('[WhatsApp] TWILIO_TEMPLATE_EXPIRY_REMINDER is not set');
     return;
   }
 
   try {
-    const body =
-      `Motoka Reminder 🚗 Hi ${name}, your vehicle licence for ${registrationNo} ` +
-      `expires in ${daysRemaining} days (${expiryDate}). Renew here: ${renewalUrl}`;
-
-    await _send(phone, body);
+    await _sendTemplate(phone, contentSid, {
+      '1': String(name),
+      '2': String(registrationNo),
+      '3': String(daysRemaining),
+      '4': String(expiryDate),
+      '5': String(renewalUrl),
+    });
     logInfo('[WhatsApp] Expiry reminder sent', { phone, registrationNo, daysRemaining });
   } catch (error) {
     // Never propagate — WhatsApp failure must never break the email/cron flow
     logError('[WhatsApp] Failed to send expiry reminder', {
-      error:         error.message,
+      error: error.message,
       phone,
       registrationNo,
     });
@@ -150,33 +184,41 @@ export async function sendExpiryReminderWhatsApp({
 /**
  * Sends an order status update via WhatsApp.
  *
- * Integration point: src/controllers/admin.controller.js → updateOrderStatus handler
- * Called fire-and-forget alongside the existing email and in-app notification.
+ * Template: motoka_order_update (HX9ad81618bef89cf4b1f4a89428e42611)
+ * Body: "Motoka Update 🚗 Hi {{1}}, your order #{{2}} has been updated to: {{3}}.
+ *        Thank you for choosing Motoka."
+ *
+ * Integration: src/controllers/admin.controller.js → updateOrderStatus
  *
  * @param {object} params
- * @param {string} params.phone   - Recipient phone (E.164)
+ * @param {string} params.phone   - Recipient phone
  * @param {string} params.name    - User's first name
  * @param {string} params.orderId - Order number (e.g. "ORD-ABC123")
  * @param {string} params.status  - Human-readable status ("completed" | "cancelled" | etc.)
  */
 export async function sendOrderUpdateWhatsApp({ phone, name, orderId, status }) {
-  if (!WHATSAPP_ENABLED) return;
-
-  // TODO: implement opt-in field check — check `whatsapp_opt_in` on profiles table
-
+  if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') return;
   if (!phone) {
-    logInfo('[WhatsApp] Skipping order update — user has no phone number', { orderId });
+    logInfo('[WhatsApp] Skipping order update — no phone number', { orderId });
+    return;
+  }
+
+  const contentSid = process.env.TWILIO_TEMPLATE_ORDER_UPDATE;
+  if (!contentSid) {
+    logError('[WhatsApp] TWILIO_TEMPLATE_ORDER_UPDATE is not set');
     return;
   }
 
   try {
-    const body = `Motoka Update 🚗 Hi ${name}, your order #${orderId} status is: ${status}.`;
-
-    await _send(phone, body);
+    await _sendTemplate(phone, contentSid, {
+      '1': String(name),
+      '2': String(orderId),
+      '3': String(status),
+    });
     logInfo('[WhatsApp] Order update sent', { phone, orderId, status });
   } catch (error) {
     logError('[WhatsApp] Failed to send order update', {
-      error:   error.message,
+      error: error.message,
       phone,
       orderId,
     });
@@ -186,37 +228,82 @@ export async function sendOrderUpdateWhatsApp({ phone, name, orderId, status }) 
 /**
  * Sends a document-ready notification via WhatsApp.
  *
- * Integration point: src/controllers/admin.controller.js → approveDocument handler
- * Called fire-and-forget alongside any existing in-app notification.
+ * Template: motoka_document_ready (HX1c2a4ff508a6aa45a71b026372439889)
+ * Body: "Motoka Update 🚗 Hi {{1}}, your documents for {{2}} are ready.
+ *        Download here: {{3}} — Motoka"
+ *
+ * Integration: src/controllers/admin.controller.js → approveDocument
  *
  * @param {object} params
- * @param {string} params.phone        - Recipient phone (E.164)
+ * @param {string} params.phone        - Recipient phone
  * @param {string} params.name         - User's first name
- * @param {string} params.vehicleName  - Human-readable vehicle label (e.g. "Toyota Camry")
+ * @param {string} params.vehicleName  - e.g. "Toyota Camry"
  * @param {string} params.documentUrl  - Direct URL to the approved document
  */
 export async function sendDocumentReadyWhatsApp({ phone, name, vehicleName, documentUrl }) {
-  if (!WHATSAPP_ENABLED) return;
-
-  // TODO: implement opt-in field check — check `whatsapp_opt_in` on profiles table
-
+  if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') return;
   if (!phone) {
-    logInfo('[WhatsApp] Skipping document ready — user has no phone number', { vehicleName });
+    logInfo('[WhatsApp] Skipping document ready — no phone number', { vehicleName });
+    return;
+  }
+
+  const contentSid = process.env.TWILIO_TEMPLATE_DOCUMENT_READY;
+  if (!contentSid) {
+    logError('[WhatsApp] TWILIO_TEMPLATE_DOCUMENT_READY is not set');
     return;
   }
 
   try {
-    const body =
-      `Motoka Update 🚗 Hi ${name}, your documents for ${vehicleName} are ready. ` +
-      `Download here: ${documentUrl}`;
-
-    await _send(phone, body);
+    await _sendTemplate(phone, contentSid, {
+      '1': String(name),
+      '2': String(vehicleName),
+      '3': String(documentUrl),
+    });
     logInfo('[WhatsApp] Document ready notification sent', { phone, vehicleName });
   } catch (error) {
     logError('[WhatsApp] Failed to send document ready notification', {
-      error:       error.message,
+      error: error.message,
       phone,
       vehicleName,
+    });
+  }
+}
+
+/**
+ * Sends an "add your car" prompt via WhatsApp to users without any registered vehicles.
+ *
+ * Template: motoka_add_car_reminder (HX7dd524df72e89295bc5cbcd8f6338f49)
+ * Body: "Motoka 🚗 Hi {{1}}, you haven't added a vehicle to your Motoka account yet.
+ *        Add your car today to track renewals and never miss an expiry date.
+ *        Get started here: {{2}} — Motoka"
+ *
+ * Integration: src/controllers/admin.controller.js → broadcastAddCarReminder
+ *
+ * @param {object} params
+ * @param {string} params.phone   - Recipient phone
+ * @param {string} params.name    - User's first name
+ * @param {string} params.appUrl  - Dashboard / car registration URL
+ */
+export async function sendAddCarReminderWhatsApp({ phone, name, appUrl }) {
+  if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') return;
+  if (!phone) return;
+
+  const contentSid = process.env.TWILIO_TEMPLATE_ADD_CAR_REMINDER;
+  if (!contentSid) {
+    logError('[WhatsApp] TWILIO_TEMPLATE_ADD_CAR_REMINDER is not set');
+    return;
+  }
+
+  try {
+    await _sendTemplate(phone, contentSid, {
+      '1': String(name),
+      '2': String(appUrl),
+    });
+    logInfo('[WhatsApp] Add-car reminder sent', { phone });
+  } catch (error) {
+    logError('[WhatsApp] Failed to send add-car reminder', {
+      error: error.message,
+      phone,
     });
   }
 }

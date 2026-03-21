@@ -285,13 +285,21 @@ async function processBatches(
 }
 
 // ─── WhatsApp helper (Deno-native, no npm) ───────────────────────────────────
-//
-// SANDBOX ASSUMPTION: uses Twilio REST API directly via fetch (no Node SDK available in Deno).
-// Reads the same env vars as the Node.js whatsapp.service.js so a single set of credentials
-// covers both contexts.
-//
-// TODO: production migration — replace sandbox sender number (TWILIO_WHATSAPP_FROM)
-// with a verified Twilio WhatsApp Business number before going live.
+/**
+ * Sends the motoka_expiry_reminder WhatsApp template via Twilio REST API.
+ *
+ * Uses Twilio's Content Template API (ContentSid + ContentVariables) — the same
+ * Meta-approved template used by the Node.js whatsapp.service.js. Calls the
+ * Twilio Messages REST API directly via fetch because the Node.js Twilio SDK is
+ * not available in Deno Edge Functions.
+ *
+ * Template: motoka_expiry_reminder
+ * {{1}} name · {{2}} registrationNo · {{3}} daysRemaining · {{4}} expiryDate · {{5}} renewalUrl
+ *
+ * This function is intentionally fire-and-forget (not awaited at call site) and
+ * must never propagate errors — a WhatsApp failure must never block the main
+ * email/cron notification flow.
+ */
 async function sendExpiryReminderWhatsApp(
   phone: string,
   name: string,
@@ -300,43 +308,48 @@ async function sendExpiryReminderWhatsApp(
   expiryDate: Date,
   renewalUrl: string
 ): Promise<void> {
-  const enabled    = Deno.env.get('WHATSAPP_REMINDERS_ENABLED') === 'true';
-  const accountSid = Deno.env.get('TWILIO_ACCOUNT_SID');
-  const authToken  = Deno.env.get('TWILIO_AUTH_TOKEN');
-  const fromNumber = Deno.env.get('TWILIO_WHATSAPP_FROM');
+  const enabled     = Deno.env.get('WHATSAPP_REMINDERS_ENABLED') === 'true';
+  const accountSid  = Deno.env.get('TWILIO_ACCOUNT_SID');
+  const authToken   = Deno.env.get('TWILIO_AUTH_TOKEN');
+  const fromNumber  = Deno.env.get('TWILIO_WHATSAPP_FROM');
+  const contentSid  = Deno.env.get('TWILIO_TEMPLATE_EXPIRY_REMINDER');
 
   if (!enabled) return;
 
-  // TODO: implement opt-in field check — only send to users with `whatsapp_opt_in = true`
-  // once that column is added to the `profiles` table.
-
-  if (!phone || !accountSid || !authToken || !fromNumber) {
-    logger.info('[WhatsApp] Skipping expiry reminder — missing credentials or phone number', {
-      hasPhone: Boolean(phone),
+  if (!phone || !accountSid || !authToken || !fromNumber || !contentSid) {
+    logger.info('[WhatsApp] Skipping expiry reminder — missing credentials, phone, or template SID', {
+      hasPhone:       Boolean(phone),
       hasCredentials: Boolean(accountSid && authToken && fromNumber),
+      hasTemplate:    Boolean(contentSid),
     });
     return;
   }
 
   try {
     const expiryDateStr = expiryDate.toISOString().split('T')[0];
-    const body =
-      `Motoka Reminder 🚗 Hi ${name}, your vehicle licence for ${registrationNo} ` +
-      `expires in ${daysUntilExpiry} days (${expiryDateStr}). Renew here: ${renewalUrl}`;
 
-    const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+    const url         = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
     const credentials = btoa(`${accountSid}:${authToken}`);
 
+    const contentVariables = JSON.stringify({
+      '1': name,
+      '2': registrationNo,
+      '3': String(daysUntilExpiry),
+      '4': expiryDateStr,
+      '5': renewalUrl,
+    });
+
     const formData = new URLSearchParams({
-      From: `whatsapp:${fromNumber}`,
-      To:   `whatsapp:${phone}`,
-      Body: body,
+      From:             `whatsapp:${fromNumber}`,
+      To:               `whatsapp:${phone}`,
+      ContentSid:       contentSid,
+      ContentVariables: contentVariables,
     });
 
     const resp = await fetch(url, {
       method: 'POST',
       headers: {
-        Authorization: `Basic ${credentials}`,
+        Authorization:  `Basic ${credentials}`,
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: formData.toString(),
@@ -344,7 +357,6 @@ async function sendExpiryReminderWhatsApp(
 
     if (!resp.ok) {
       const errText = await resp.text();
-      // Non-fatal: log and continue — email was already sent
       logger.warn('[WhatsApp] Twilio API returned error (non-blocking)', {
         status: resp.status,
         body:   errText,
@@ -352,7 +364,7 @@ async function sendExpiryReminderWhatsApp(
         registrationNo,
       });
     } else {
-      logger.info('[WhatsApp][SANDBOX] Expiry reminder sent', { phone, registrationNo, daysUntilExpiry });
+      logger.info('[WhatsApp] Expiry reminder sent', { phone, registrationNo, daysUntilExpiry });
     }
   } catch (err) {
     // Never propagate — WhatsApp failure must never break the email/cron flow
@@ -400,7 +412,10 @@ async function processTask(
 
     // WhatsApp expiry reminder — fire alongside email, does NOT replace it
     // Uses the profile.phone field; silently skips if missing or feature-flagged off
-    const renewalUrl = `${Deno.env.get('FRONTEND_URL') || 'https://app.motoka.ng'}/licenses/renew`;
+    // PAYMENT_CANCEL_URL already points to the renewal page (e.g. https://app.motoka.ng/licenses/renew)
+    const renewalUrl =
+      Deno.env.get('PAYMENT_CANCEL_URL') ||
+      `${Deno.env.get('FRONTEND_URL') || 'https://app.motoka.ng'}/licenses/renew`;
     sendExpiryReminderWhatsApp(
       (task.profile as any).phone_number || '',
       task.profile.firstName || 'User',
