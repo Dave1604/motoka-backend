@@ -22,13 +22,34 @@ export const getMyApplication = async (req, res) => {
   }
 };
 
+// Minimum fields that must be present for an application to move to 'submitted'.
+// We check the merged state (existing + new updates) so partial saves stay as 'draft'.
+const SUBMIT_REQUIRED_NEW    = ['full_name', 'phone', 'passport_photo_url'];
+const SUBMIT_REQUIRED_RENEW  = ['license_number', 'date_of_birth', 'date_of_expiry', 'license_document_url'];
+
 export const upsertApplication = async (req, res) => {
   try {
     const userId = req.user.id;
     const { application_type = 'new', ...updates } = req.body;
     const appType = application_type === 'renew' ? 'renew' : 'new';
-    await getOrCreateApplication(userId, appType);
-    const app = await updateApplication(userId, appType, updates);
+
+    // Ensure the row exists (creates a 'draft' if first time)
+    const existing = await getOrCreateApplication(userId, appType);
+
+    // Merge existing data with incoming updates to evaluate completeness
+    const merged = { ...existing, ...updates };
+    const required = appType === 'renew' ? SUBMIT_REQUIRED_RENEW : SUBMIT_REQUIRED_NEW;
+    const isComplete = required.every(f => merged[f]);
+
+    // Only advance to 'submitted' — never allow downgrade via this endpoint.
+    // Approved/expired status is managed server-side only.
+    const currentStatus = existing.status || 'draft';
+    const serverFields = {};
+    if (isComplete && currentStatus === 'draft') {
+      serverFields.status = 'submitted';
+    }
+
+    const app = await updateApplication(userId, appType, updates, serverFields);
     return res.status(200).json({
       status: true,
       message: 'Application saved',

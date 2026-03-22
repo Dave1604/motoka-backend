@@ -1,6 +1,7 @@
 /**
  * MOTOKA FULL TEST SUITE
- * Tests: Twilio WhatsApp (all 4 templates), Guest Renewal flow, Admin endpoints
+ * Tests: Twilio WhatsApp (all 4 templates), Guest Renewal flow, Admin endpoints,
+ *        Driver's License (prices, application upsert, payment init validation)
  *
  * Run: node scripts/test-all.js
  */
@@ -233,6 +234,47 @@ async function testPublic() {
   if (statesRes.status === 200) { ok('GET /public/states'); } else { fail('GET /public/states'); }
 }
 
+// ─── 5. Driver's License ──────────────────────────────────────────────────────
+
+async function testDriverLicense() {
+  console.log('\n━━━ 5. Driver\'s License ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+
+  // 5a. Price list requires auth (uses Supabase user auth — validated by 401 response)
+  const unauthPricesRes = await api('GET', '/driver-license-prices');
+  if (unauthPricesRes.status === 401) {
+    ok('GET /driver-license-prices requires auth (401)');
+  } else {
+    fail('GET /driver-license-prices auth guard', `expected 401, got ${unauthPricesRes.status}`);
+  }
+
+  // 5b. Payment init requires auth (uses Supabase user auth)
+  const unauthInitRes = await api('POST', '/payments/initialize', {
+    payment_type: 'driver_license',
+    license_type: 'new',
+    payment_gateway: 'paystack',
+  });
+  if (unauthInitRes.status === 401) {
+    ok('POST /payments/initialize requires auth (401)');
+  } else {
+    fail('POST /payments/initialize auth guard', `expected 401, got ${unauthInitRes.status}`);
+  }
+
+  // 5d. Application routes require auth (correct path: /driver-license-applications/me)
+  const unauthGetRes = await api('GET', '/driver-license-applications/me');
+  if (unauthGetRes.status === 401) {
+    ok('GET /driver-license-applications/me requires auth (401)');
+  } else {
+    fail('GET /driver-license-applications/me auth guard', `expected 401, got ${unauthGetRes.status}`);
+  }
+
+  const unauthPutRes = await api('PUT', '/driver-license-applications/me', { full_name: 'Test' });
+  if (unauthPutRes.status === 401) {
+    ok('PUT /driver-license-applications/me requires auth (401)');
+  } else {
+    fail('PUT /driver-license-applications/me auth guard', `expected 401, got ${unauthPutRes.status}`);
+  }
+}
+
 // ─── Runner ───────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -244,6 +286,7 @@ async function main() {
   await testGuest();
   await testAdmin();
   await testPublic();
+  await testDriverLicense();
 
   console.log('\n═══════════════════════════════════════════════════════');
   console.log(`  RESULTS: ${passed} passed, ${failed} failed`);

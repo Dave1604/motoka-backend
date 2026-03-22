@@ -342,8 +342,16 @@ export const initializePayment = async (req, res) => {
           HTTP_STATUS.BAD_REQUEST
         );
       }
-      const normDuration = duration ? String(duration).toLowerCase() : null;
-      if (normDuration && !validDurations.includes(normDuration)) {
+      // duration is required — all price rows have a non-null duration after migration 040
+      if (!duration) {
+        return paymentResponse.error(
+          res,
+          `duration is required for driver license payments. Must be one of: ${validDurations.join(', ')}`,
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      const normDuration = String(duration).toLowerCase();
+      if (!validDurations.includes(normDuration)) {
         return paymentResponse.error(
           res,
           `duration must be one of: ${validDurations.join(', ')}`,
@@ -351,17 +359,12 @@ export const initializePayment = async (req, res) => {
         );
       }
       const supabaseAdmin = getSupabaseAdmin();
-      let priceQuery = supabaseAdmin
+      const priceQuery = supabaseAdmin
         .from('driver_license_prices')
         .select('*')
         .eq('license_type', String(license_type).toLowerCase())
+        .eq('duration', normDuration)
         .eq('is_active', true);
-      if (normDuration) {
-        priceQuery = priceQuery.eq('duration', normDuration);
-      } else {
-        // Legacy: no duration provided – pick the first available price for this type
-        priceQuery = priceQuery.is('duration', null);
-      }
       const { data: priceData, error: priceError } = await priceQuery.single();
 
       if (priceError || !priceData) {

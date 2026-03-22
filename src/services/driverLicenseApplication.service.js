@@ -33,19 +33,28 @@ export async function getOrCreateApplication(userId, applicationType = 'new') {
   return created;
 }
 
-export async function updateApplication(userId, applicationType, updates) {
+/**
+ * Update a driver license application for a given user.
+ *
+ * Only user-supplied fields in the allowlist can be written from this function.
+ * Privileged fields (status, order_id) can be passed via the `_serverFields`
+ * argument so server-side code (controllers, webhooks) can set them without
+ * opening them up to user input.
+ */
+export async function updateApplication(userId, applicationType, updates, _serverFields = {}) {
   const supabase = getSupabaseAdmin();
   const allowed = [
     'passport_photo_url', 'license_document_url', 'full_name', 'phone', 'address',
     'date_of_birth', 'place_of_birth', 'home_of_origin', 'local_government',
     'blood_group', 'height', 'occupation', 'next_of_kin_name', 'next_of_kin_phone',
     'mother_maiden_name', 'license_years', 'license_number', 'date_of_expiry',
-    'status', 'order_id',
   ];
   const sanitized = {};
   for (const k of Object.keys(updates || {})) {
     if (allowed.includes(k) && updates[k] !== undefined) sanitized[k] = updates[k];
   }
+  // Merge server-controlled fields (status, order_id) without exposing them to user input
+  Object.assign(sanitized, _serverFields);
   sanitized.updated_at = new Date().toISOString();
 
   const { data, error } = await supabase
