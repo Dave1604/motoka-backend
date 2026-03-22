@@ -72,4 +72,9 @@ router.post('/notifications/add-car-reminder', authenticateAdmin, admin.broadcas
 router.get('/guest-orders', authenticateAdmin, admin.listGuestOrders);
 router.get('/guest-orders/:orderId', authenticateAdmin, admin.getGuestOrderDetails);
 
+// ── Driver license applications ───────────────────────────────────────────────
+router.get('/driver-license-applications', authenticateAdmin, admin.listDriverLicenseApplications);
+router.get('/driver-license-applications/:id', authenticateAdmin, admin.getDriverLicenseApplicationDetails);
+router.patch('/driver-license-applications/:id/status', authenticateAdmin, admin.updateDriverLicenseApplicationStatus);
+
 export default router;

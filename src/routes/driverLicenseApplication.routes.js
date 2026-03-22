@@ -8,5 +8,6 @@ const router = Router();
 
 router.get('/driver-license-applications/me', authenticate, checkEmailVerified, apiLimiter, controller.getMyApplication);
 router.put('/driver-license-applications/me', authenticate, checkEmailVerified, apiLimiter, controller.upsertApplication);
+router.post('/driver-license-applications/me/restart', authenticate, checkEmailVerified, apiLimiter, controller.restartApplication);
 
 export default router;

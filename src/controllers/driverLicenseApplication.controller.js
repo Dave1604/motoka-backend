@@ -2,6 +2,7 @@ import {
   getOrCreateApplication,
   updateApplication,
   getApplicationByUserId,
+  renewApplicationCycle,
 } from '../services/driverLicenseApplication.service.js';
 import { logError } from '../utils/logger.js';
 
@@ -58,5 +59,39 @@ export const upsertApplication = async (req, res) => {
   } catch (error) {
     logError('Upsert driver license application', error);
     return res.status(500).json({ status: false, message: 'Failed to save application' });
+  }
+};
+
+/**
+ * POST /driver-license-applications/me/restart
+ * Archives the current approved/rejected application and starts a fresh draft.
+ * Only allowed when the current application is approved or rejected.
+ */
+export const restartApplication = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { application_type = 'new' } = req.body;
+    const appType = application_type === 'renew' ? 'renew' : 'new';
+
+    const current = await getApplicationByUserId(userId, appType);
+    if (!current) {
+      // No existing application — just create a fresh draft
+      const app = await getOrCreateApplication(userId, appType);
+      return res.status(200).json({ status: true, message: 'Fresh application started', data: app });
+    }
+
+    const allowedStatuses = ['approved', 'rejected'];
+    if (!allowedStatuses.includes(current.status)) {
+      return res.status(409).json({
+        status: false,
+        message: `Cannot restart an application with status "${current.status}". Only approved or rejected applications can be restarted.`,
+      });
+    }
+
+    const app = await renewApplicationCycle(userId, appType);
+    return res.status(200).json({ status: true, message: 'Application restarted', data: app });
+  } catch (error) {
+    logError('Restart driver license application', error);
+    return res.status(500).json({ status: false, message: 'Failed to restart application' });
   }
 };

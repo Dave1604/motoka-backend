@@ -1,20 +1,36 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { logError } from '../utils/logger.js';
 
+/**
+ * Get the current active application for a user, or create a fresh draft.
+ *
+ * When creating a new draft we first archive any previous current row for the
+ * same (user_id, application_type) by setting is_current = false. This gives
+ * the user a clean slate while preserving history.
+ */
 export async function getOrCreateApplication(userId, applicationType = 'new') {
   const supabase = getSupabaseAdmin();
+
   const { data: existing, error: fetchError } = await supabase
     .from('driver_license_applications')
     .select('*')
     .eq('user_id', userId)
     .eq('application_type', applicationType)
-    .single();
+    .eq('is_current', true)
+    .maybeSingle();
 
-  if (fetchError && fetchError.code !== 'PGRST116') {
+  if (fetchError) {
     logError('Get driver license application error', { error: fetchError, userId });
     throw fetchError;
   }
   if (existing) return existing;
+
+  // Archive any previous rows (safety net — should already be false)
+  await supabase
+    .from('driver_license_applications')
+    .update({ is_current: false })
+    .eq('user_id', userId)
+    .eq('application_type', applicationType);
 
   const { data: created, error: insertError } = await supabase
     .from('driver_license_applications')
@@ -22,6 +38,7 @@ export async function getOrCreateApplication(userId, applicationType = 'new') {
       user_id: userId,
       application_type: applicationType,
       status: 'draft',
+      is_current: true,
     })
     .select('*')
     .single();
@@ -34,7 +51,7 @@ export async function getOrCreateApplication(userId, applicationType = 'new') {
 }
 
 /**
- * Update a driver license application for a given user.
+ * Update the current active application for a user.
  *
  * Only user-supplied fields in the allowlist can be written from this function.
  * Privileged fields (status, order_id) can be passed via the `_serverFields`
@@ -62,6 +79,7 @@ export async function updateApplication(userId, applicationType, updates, _serve
     .update(sanitized)
     .eq('user_id', userId)
     .eq('application_type', applicationType)
+    .eq('is_current', true)
     .select('*')
     .single();
 
@@ -72,12 +90,17 @@ export async function updateApplication(userId, applicationType, updates, _serve
   return data;
 }
 
+/**
+ * Get the current active application(s) for a user.
+ * Returns an array when applicationType is null, a single object or null otherwise.
+ */
 export async function getApplicationByUserId(userId, applicationType = null) {
   const supabase = getSupabaseAdmin();
   let query = supabase
     .from('driver_license_applications')
     .select('*')
     .eq('user_id', userId)
+    .eq('is_current', true)
     .order('updated_at', { ascending: false });
 
   if (applicationType) query = query.eq('application_type', applicationType);
@@ -88,4 +111,27 @@ export async function getApplicationByUserId(userId, applicationType = null) {
     throw error;
   }
   return applicationType ? (data?.[0] || null) : (data || []);
+}
+
+/**
+ * Start a fresh application cycle for a user (e.g. after approval they want to apply again).
+ * Archives the current row and returns a new draft.
+ */
+export async function renewApplicationCycle(userId, applicationType) {
+  const supabase = getSupabaseAdmin();
+
+  // Archive the current row
+  const { error: archiveError } = await supabase
+    .from('driver_license_applications')
+    .update({ is_current: false, updated_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .eq('application_type', applicationType)
+    .eq('is_current', true);
+
+  if (archiveError) {
+    logError('Archive driver license application error', { error: archiveError, userId });
+    throw archiveError;
+  }
+
+  return getOrCreateApplication(userId, applicationType);
 }

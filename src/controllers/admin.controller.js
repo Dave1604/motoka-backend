@@ -2086,3 +2086,153 @@ export const getGuestOrderDetails = async (req, res) => {
     return response.serverError(res, 'Failed to retrieve guest order');
   }
 };
+
+// ─── Driver License Applications ───────────────────────────────────────────────
+
+/**
+ * GET /admin/driver-license-applications
+ * Paginated list with optional filters: status, application_type, search (name/email)
+ */
+export const listDriverLicenseApplications = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      application_type,
+      search,
+    } = req.query;
+
+    const offset = (Number(page) - 1) * Number(limit);
+
+    let query = supabase
+      .from('driver_license_applications')
+      .select(`
+        id, user_id, application_type, status, is_current,
+        full_name, phone, license_number,
+        order_id, created_at, updated_at,
+        renewal_orders!driver_license_applications_order_id_fkey(id, status, created_at)
+      `, { count: 'exact' })
+      .eq('is_current', true)
+      .order('updated_at', { ascending: false })
+      .range(offset, offset + Number(limit) - 1);
+
+    if (status) query = query.eq('status', status);
+    if (application_type) query = query.eq('application_type', application_type);
+    if (search) query = query.ilike('full_name', `%${search}%`);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      logError('[Admin] listDriverLicenseApplications error', error);
+      return response.serverError(res, 'Failed to list driver license applications');
+    }
+
+    return response.success(res, {
+      applications: data || [],
+      pagination: {
+        total: count || 0,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil((count || 0) / Number(limit)),
+      },
+    });
+  } catch (err) {
+    logError('[Admin] listDriverLicenseApplications error', err);
+    return response.serverError(res, 'Failed to list driver license applications');
+  }
+};
+
+/**
+ * GET /admin/driver-license-applications/:id
+ * Full detail including all form fields, linked order, and user info from auth.users
+ */
+export const getDriverLicenseApplicationDetails = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { id } = req.params;
+
+    const { data: application, error } = await supabase
+      .from('driver_license_applications')
+      .select(`
+        *,
+        renewal_orders!driver_license_applications_order_id_fkey(
+          id, status, created_at, completed_at, order_type
+        )
+      `)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !application) {
+      return response.notFound(res, 'Driver license application not found');
+    }
+
+    // Fetch user email from auth.users (service role can do this)
+    const { data: authUser } = await supabase.auth.admin.getUserById(application.user_id);
+
+    return response.success(res, {
+      ...application,
+      user_email: authUser?.user?.email || null,
+    }, 'Application retrieved');
+  } catch (err) {
+    logError('[Admin] getDriverLicenseApplicationDetails error', err);
+    return response.serverError(res, 'Failed to retrieve application');
+  }
+};
+
+const VALID_ADMIN_STATUSES = ['submitted', 'approved', 'rejected', 'expired'];
+
+/**
+ * PATCH /admin/driver-license-applications/:id/status
+ * Update status with optional rejection notes.
+ * Allowed transitions: submitted → approved | rejected; any → expired
+ */
+export const updateDriverLicenseApplicationStatus = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { id } = req.params;
+    const { status, notes } = req.body;
+
+    if (!status || !VALID_ADMIN_STATUSES.includes(status)) {
+      return response.error(res, `status must be one of: ${VALID_ADMIN_STATUSES.join(', ')}`, 400);
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('driver_license_applications')
+      .select('id, status, user_id, application_type, full_name')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return response.notFound(res, 'Driver license application not found');
+    }
+
+    const updatePayload = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    if (notes !== undefined) updatePayload.admin_notes = notes;
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('driver_license_applications')
+      .update(updatePayload)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (updateErr) {
+      logError('[Admin] updateDriverLicenseApplicationStatus update error', updateErr);
+      return response.serverError(res, 'Failed to update application status');
+    }
+
+    logInfo('[Admin] Driver license application status updated', {
+      id, previousStatus: existing.status, newStatus: status, adminId: req.admin?.id,
+    });
+
+    return response.success(res, updated, `Application status updated to ${status}`);
+  } catch (err) {
+    logError('[Admin] updateDriverLicenseApplicationStatus error', err);
+    return response.serverError(res, 'Failed to update application status');
+  }
+};
