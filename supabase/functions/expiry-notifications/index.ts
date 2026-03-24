@@ -418,7 +418,7 @@ async function processTask(
       `${Deno.env.get('FRONTEND_URL') || 'https://app.motoka.ng'}/licenses/renew`;
     sendExpiryReminderWhatsApp(
       (task.profile as any).phone_number || '',
-      task.profile.firstName || 'User',
+      task.profile.first_name || 'User',
       task.car.registration_no || '',
       task.daysUntilExpiry,
       task.expiryDate,
