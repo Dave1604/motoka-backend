@@ -149,6 +149,89 @@ Thank you for using Motoka!
   return sendEmail({ to, subject, html, text });
 }
 
+export async function sendOrderInProgressEmail({ to, firstName, orderNumber, orderType }) {
+  const subject = 'Your Order is Being Processed - Motoka';
+
+  const serviceLabel = orderType === 'plate_number'
+    ? 'plate number application'
+    : orderType === 'driver_license'
+    ? "driver's license application"
+    : 'vehicle document renewal';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background-color: #2563eb; color: #ffffff; padding: 30px 20px; text-align: center; }
+        .header h1 { margin: 0; font-size: 24px; }
+        .content { padding: 40px 30px; }
+        .status-box { background-color: #eff6ff; border: 2px solid #2563eb; border-radius: 8px; padding: 30px; text-align: center; margin: 30px 0; }
+        .details { background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e9ecef; }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-label { color: #6c757d; }
+        .detail-value { font-weight: 600; color: #1a1a1a; }
+        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Order In Progress</h1>
+        </div>
+        <div class="content">
+          <p>Hello ${firstName || 'there'},</p>
+          <p>Good news — our team has started working on your ${serviceLabel}. We'll notify you once it's completed.</p>
+          <div class="status-box">
+            <div style="font-size: 40px; margin-bottom: 12px;">⚙️</div>
+            <div style="font-size: 20px; font-weight: bold; color: #2563eb;">In Progress</div>
+            <div style="color: #6c757d; margin-top: 8px;">Our team is processing your request</div>
+          </div>
+          <div class="details">
+            <div class="detail-row">
+              <span class="detail-label">Order Number</span>
+              <span class="detail-value">${orderNumber}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Service</span>
+              <span class="detail-value" style="text-transform: capitalize;">${serviceLabel}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Status</span>
+              <span class="detail-value" style="color: #2563eb;">In Progress</span>
+            </div>
+          </div>
+          <p style="color: #6c757d; font-size: 14px;">You'll receive another email once your order is complete. If you have questions, please contact our support team.</p>
+        </div>
+        <div class="footer">
+          <p>Thank you for using Motoka!</p>
+          <p style="margin-top: 15px; color: #9ca3af;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Order In Progress - Motoka
+
+Hello ${firstName || 'there'},
+
+Our team has started working on your ${serviceLabel}.
+
+Order Number: ${orderNumber}
+Status: In Progress
+
+We'll notify you once your order is completed. Thank you for using Motoka!
+  `.trim();
+
+  return sendEmail({ to, subject, html, text });
+}
 /**
  * Send payment failed email
  * 

@@ -172,7 +172,15 @@ async function handleChargeSuccess(data, eventId) {
     logDebug('[Webhook] Transaction already processed', { reference });
     return;
   }
-  
+
+  // If the transaction was abandoned (user re-initiated payment) but the user still
+  // completed payment on the original link, recover it so the RPC can create the order
+  if (transaction.status === PAYMENT_STATUS.ABANDONED) {
+    logWarn('[Webhook] Payment received for abandoned transaction — recovering', { reference });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.PENDING });
+    transaction = await getTransactionByReference(reference);
+  }
+
   // Store event ID before processing — prevents race conditions where two
   // concurrent webhooks both pass the duplicate check above
   if (eventId) {
@@ -286,9 +294,28 @@ async function handleChargeSuccess(data, eventId) {
       }
     }
   }
-  
+
+  // Link the new order back to the driver_license_application so admin can see it
+  if (isDriverLicense && order?.id && transaction?.user_id) {
+    try {
+      const licenseType = metadata.licenseType || metadata.license_type || 'new';
+      await getSupabaseAdmin()
+        .from('driver_license_applications')
+        .update({ order_id: order.id, updated_at: new Date().toISOString() })
+        .eq('user_id', transaction.user_id)
+        .eq('application_type', licenseType);
+      logInfo('[Webhook] Linked order to driver_license_application', {
+        orderId: order.id, userId: transaction.user_id, licenseType
+      });
+    } catch (linkErr) {
+      logError('[Webhook] Failed to link order to driver_license_application (non-fatal)', {
+        error: linkErr.message, orderId: order?.id
+      });
+    }
+  }
+
   const updatedTransaction = await getTransactionByReference(reference);
-  
+
   if (!processResult.alreadyProcessed) {
     try {
       await PaymentSuccessService.processPaymentSuccessSideEffects({
@@ -434,7 +461,15 @@ async function handleMonicreditPaymentSuccess(data) {
     logDebug('[Monicredit Webhook] Transaction already processed', { reference: transaction.reference });
     return;
   }
-  
+
+  // If the transaction was abandoned (user re-initiated payment) but the user still
+  // paid on the original virtual account, recover it so the RPC can create the order
+  if (transaction.status === PAYMENT_STATUS.ABANDONED) {
+    logWarn('[Monicredit Webhook] Payment received for abandoned transaction — recovering', { reference: transaction.reference });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.PENDING });
+    transaction = await getTransactionByMonicreditOrderId(orderId);
+  }
+
   // Store event ID before processing — prevents race conditions on concurrent webhooks
   try {
     await updateTransactionWebhookEventId(transaction.reference, eventId);
@@ -543,7 +578,26 @@ async function handleMonicreditPaymentSuccess(data) {
   
   const updatedTransaction = await getTransactionByReference(transaction.reference);
   const createdOrder = processResult.orderId ? await getOrderById(processResult.orderId).catch(() => null) : null;
-  
+
+  // Link the new order back to the driver_license_application so admin can see it
+  if (isDriverLicense && createdOrder?.id && transaction?.user_id) {
+    try {
+      const licenseType = metadata.licenseType || metadata.license_type || 'new';
+      await getSupabaseAdmin()
+        .from('driver_license_applications')
+        .update({ order_id: createdOrder.id, updated_at: new Date().toISOString() })
+        .eq('user_id', transaction.user_id)
+        .eq('application_type', licenseType);
+      logInfo('[Monicredit Webhook] Linked order to driver_license_application', {
+        orderId: createdOrder.id, userId: transaction.user_id, licenseType
+      });
+    } catch (linkErr) {
+      logError('[Monicredit Webhook] Failed to link order to driver_license_application (non-fatal)', {
+        error: linkErr.message, orderId: createdOrder?.id
+      });
+    }
+  }
+
   if (!processResult.alreadyProcessed) {
     try {
       await PaymentSuccessService.processPaymentSuccessSideEffects({
@@ -551,7 +605,7 @@ async function handleMonicreditPaymentSuccess(data) {
         gatewayData: verificationResult || data,
         order: createdOrder
       });
-      
+
       logInfo('[Monicredit Webhook] Side-effects processed', { reference: transaction.reference });
     } catch (notifyError) {
       // Payment is already committed — log but don't rethrow

@@ -74,10 +74,34 @@ export async function getCarDocuments(userId, carId) {
 }
 
 /**
- * Get driver's license documents for a user
+ * Get driver's license documents for a user, optionally filtered by year.
+ * @param {string} userId
+ * @param {number|string|null} year  - optional 4-digit year, e.g. 2025
  */
-export async function getDriverLicenseDocuments(userId) {
-  return getUserDocuments(userId, { documentType: DOCUMENT_TYPE.DRIVER_LICENSE });
+export async function getDriverLicenseDocuments(userId, year = null) {
+  const supabase = getSupabaseAdmin();
+  let query = supabase
+    .from('documents')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('document_type', DOCUMENT_TYPE.DRIVER_LICENSE)
+    .order('created_at', { ascending: false });
+
+  if (year) {
+    const y = Number(year);
+    if (!Number.isNaN(y) && y > 2000 && y < 2100) {
+      query = query
+        .gte('created_at', `${y}-01-01T00:00:00.000Z`)
+        .lt('created_at', `${y + 1}-01-01T00:00:00.000Z`);
+    }
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    logError('Get driver license documents error', { error, userId });
+    throw error;
+  }
+  return data || [];
 }
 
 /**

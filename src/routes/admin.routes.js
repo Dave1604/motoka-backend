@@ -61,5 +61,20 @@ router.put('/documents/:id/reject', authenticateAdmin, admin.rejectDocument);
 
 // ── Manual payment processing ────────────────────────────────────────────────
 router.put('/transactions/:reference/mark-paid', authenticateAdmin, admin.markTransactionPaid);
+router.put('/transactions/:reference/mark-failed', authenticateAdmin, admin.markTransactionFailed);
+
+// ── WhatsApp broadcast ────────────────────────────────────────────────────────
+// ?dry_run=true previews count without sending
+router.post('/notifications/add-car-reminder', authenticateAdmin, admin.broadcastAddCarReminder);
+
+// ── Guest orders ─────────────────────────────────────────────────────────────
+// guest-orders must be registered before /:orderId to avoid capture conflicts
+router.get('/guest-orders', authenticateAdmin, admin.listGuestOrders);
+router.get('/guest-orders/:orderId', authenticateAdmin, admin.getGuestOrderDetails);
+
+// ── Driver license applications ───────────────────────────────────────────────
+router.get('/driver-license-applications', authenticateAdmin, admin.listDriverLicenseApplications);
+router.get('/driver-license-applications/:id', authenticateAdmin, admin.getDriverLicenseApplicationDetails);
+router.patch('/driver-license-applications/:id/status', authenticateAdmin, admin.updateDriverLicenseApplicationStatus);
 
 export default router;

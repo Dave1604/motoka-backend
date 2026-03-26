@@ -116,7 +116,8 @@ export const listCarDocuments = async (req, res) => {
 export const listDriverLicenseDocuments = async (req, res) => {
   try {
     const userId = req.user.id;
-    const documents = await getDriverLicenseDocuments(userId);
+    const { year } = req.query;
+    const documents = await getDriverLicenseDocuments(userId, year || null);
     return response.success(res, { documents }, 'Documents retrieved');
   } catch (error) {
     logError('List driver license documents error', error);

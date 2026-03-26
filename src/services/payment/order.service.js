@@ -526,60 +526,73 @@ export async function completeOrder(orderId, adminId, options = {}) {
     throw new OrderError(ERROR_MESSAGES.ORDER_CANCELLED, HTTP_STATUS.CONFLICT);
   }
   
-  // Calculate new expiry date
+  // Driver's license orders have no associated car — skip all car-related logic.
+  const isDriverLicense = !order.car_id;
+
   const renewalMonths = options.renewalMonths || order.renewal_months || 12;
-  const newExpiryDate = calculateNewExpiryDate(order.cars?.expiry_date, renewalMonths);
-  const newDateIssued = getTodayDateString();
-  
-  // Update car expiry and status
-  const { data: updatedCar, error: carError } = await supabaseAdmin
-    .from('cars')
-    .update({
-      expiry_date: newExpiryDate,
-      date_issued: newDateIssued,
-      status: 'approved'  // Car status → approved after renewal
-    })
-    .eq('id', order.car_id)
-    .select('*')
-    .single();
-  
-  if (carError) {
-    logError('Update car on order completion error', { error: carError, orderId, carId: order.car_id });
-    throw new OrderError('Failed to update car expiry', HTTP_STATUS.SERVER_ERROR);
+  const newExpiryDate = isDriverLicense
+    ? null
+    : calculateNewExpiryDate(order.cars?.expiry_date, renewalMonths);
+  const newDateIssued = isDriverLicense ? null : getTodayDateString();
+
+  let updatedCar = null;
+
+  if (!isDriverLicense) {
+    // Update car expiry and status for vehicle renewal orders
+    const { data: carData, error: carError } = await supabaseAdmin
+      .from('cars')
+      .update({
+        expiry_date: newExpiryDate,
+        date_issued: newDateIssued,
+        status: 'approved'
+      })
+      .eq('id', order.car_id)
+      .select('*')
+      .single();
+
+    if (carError) {
+      logError('Update car on order completion error', { error: carError, orderId, carId: order.car_id });
+      throw new OrderError('Failed to update car expiry', HTTP_STATUS.SERVER_ERROR);
+    }
+    updatedCar = carData;
   }
-  
+
   // Update order status
   const orderUpdateData = {
     status: ORDER_STATUS.COMPLETED,
-    new_expiry_date: newExpiryDate,
     completed_at: new Date().toISOString(),
     completion_notes: options.notes || null
   };
-  
+
+  if (newExpiryDate) {
+    orderUpdateData.new_expiry_date = newExpiryDate;
+  }
+
   // Set assigned_to if not already set
   if (!order.assigned_to) {
     orderUpdateData.assigned_to = adminId;
     orderUpdateData.assigned_at = new Date().toISOString();
   }
-  
+
   const { data: updatedOrder, error: orderError } = await supabaseAdmin
     .from('renewal_orders')
     .update(orderUpdateData)
     .eq('id', orderId)
     .select('*')
     .single();
-  
+
   if (orderError) {
     logError('Complete order error', { error: orderError, orderId });
     throw new OrderError('Failed to complete order', HTTP_STATUS.SERVER_ERROR);
   }
-  
+
   logInfo('[Order Service] Order completed', {
     orderId,
     carId: order.car_id,
+    orderType: order.order_type,
     newExpiryDate
   });
-  
+
   return {
     order: updatedOrder,
     car: updatedCar

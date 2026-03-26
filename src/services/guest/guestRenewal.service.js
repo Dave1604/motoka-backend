@@ -494,7 +494,7 @@ export async function verifyGuestPayment(orderId, reference) {
 
   const { data: order, error } = await supabase
     .from('guest_renewal_orders')
-    .select('id, payment_status, payment_reference, payment_gateway, total_amount, receipt_token')
+    .select('id, payment_status, payment_reference, payment_gateway, total_amount, receipt_token, expires_at')
     .eq('id', orderId)
     .maybeSingle();
 
@@ -511,7 +511,7 @@ export async function verifyGuestPayment(orderId, reference) {
   }
 
   // Reject expired pending orders
-  if (new Date(order.expires_at) < new Date()) {
+  if (order.expires_at && new Date(order.expires_at) < new Date()) {
     throw Object.assign(new Error('This order has expired'), { statusCode: 410 });
   }
 

@@ -435,33 +435,25 @@ export async function processPaymentSuccess({
 export async function getUserTransactions(userId, options = {}) {
   const page = Math.max(PAGINATION.MIN_PAGE, options.page || PAGINATION.DEFAULT_PAGE);
   const limit = Math.min(PAGINATION.MAX_LIMIT, Math.max(PAGINATION.MIN_LIMIT, options.limit || PAGINATION.DEFAULT_LIMIT));
-  const from = (page - 1) * limit;
-  const to = page * limit - 1;
-  
+
   const supabaseAdmin = getSupabaseAdmin();
-  
-  let query = supabaseAdmin
+
+  // ── Fetch ALL normal transactions (no range — we paginate after merging) ──
+  let txQuery = supabaseAdmin
     .from('payment_transactions')
-    .select('*', { count: 'exact' })
+    .select('*')
     .eq('user_id', userId)
-    .order('created_at', { ascending: false })
-    .range(from, to);
-  
-  if (options.status) {
-    query = query.eq('status', options.status);
-  }
-  
-  if (options.paymentType) {
-    query = query.eq('payment_type', options.paymentType);
-  }
-  
-  const { data: transactions, count, error } = await query;
-  
+    .order('created_at', { ascending: false });
+
+  if (options.status) txQuery = txQuery.eq('status', options.status);
+  if (options.paymentType) txQuery = txQuery.eq('payment_type', options.paymentType);
+
+  const { data: transactions, error } = await txQuery;
+
   if (error) {
     logError('Get user transactions error', { error, userId });
     throw new TransactionError('Failed to retrieve transactions', HTTP_STATUS.SERVER_ERROR);
   }
-  
   // ── Enrich normal authenticated transactions with their renewal orders ──
   const txIds = (transactions || []).map(tx => tx.id);
   const { data: allOrders } = txIds.length > 0
@@ -504,7 +496,7 @@ export async function getUserTransactions(userId, options = {}) {
   // ── Guest renewals linked to this user (upgraded from guest flow) ─────────
   const { data: guestOrders, error: guestError } = await supabaseAdmin
     .from('guest_renewal_orders')
-    .select('id, total_amount, payment_status, payment_gateway, plate_number, created_at, selected_items, receipt_token')
+    .select('id, payment_reference, total_amount, payment_status, payment_gateway, plate_number, created_at, selected_items, receipt_token')
     .eq('linked_user_id', userId)
     .eq('payment_status', 'payment_success')
     .order('created_at', { ascending: false });
@@ -556,16 +548,22 @@ export async function getUserTransactions(userId, options = {}) {
       receipt_token: order.receipt_token
     };
   });
-  
-  const combined = [...enrichedTransactions, ...guestTransactions].sort(
+
+  // ── Merge both lists, sort by date, then paginate the combined result ──────
+  // Fetching all transactions before slicing is intentional: typical users have
+  // O(10s–100s) transactions, and merging two paginated lists by date would
+  // require cursor-based pagination or a UNION query.
+  const allCombined = [...enrichedTransactions, ...guestTransactions].sort(
     (a, b) => new Date(b.created_at) - new Date(a.created_at)
   );
 
-  const totalTransactions = (count || 0) + (guestOrders?.length || 0);
+  const totalTransactions = allCombined.length;
   const totalPages = Math.ceil(totalTransactions / limit);
-  
+  const from = (page - 1) * limit;
+  const paginated = allCombined.slice(from, from + limit);
+
   return {
-    transactions: combined,
+    transactions: paginated,
     pagination: {
       current_page: page,
       limit,

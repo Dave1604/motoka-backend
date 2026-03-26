@@ -20,6 +20,8 @@ import notificationRoutes from './routes/notifications.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import publicRoutes from './routes/public.routes.js';
 import guestRoutes from './routes/guest.routes.js';
+// DEV-ONLY: WhatsApp sandbox webhook route — not loaded in production
+import whatsappRoutes from './routes/whatsapp.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { getCorsConfig } from './config/cors.config.js';
 import paymentMetrics from './services/payment/metrics.service.js';
@@ -142,6 +144,11 @@ app.use('/api/admin', adminAuthRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', notificationRoutes);
 app.use('/api', paymentRoutes);
+
+// WhatsApp inbound webhook — receives replies from users via Twilio
+// Sandbox mode: no signature validation (dev/testing)
+// Production mode: Twilio request signature validated inside whatsapp.routes.js
+app.use('/api/v1/whatsapp', whatsappRoutes);
 
 app.get('/api/docs', (req, res) => {
   const baseUrl = `${req.protocol}://${req.get('host')}/api`;

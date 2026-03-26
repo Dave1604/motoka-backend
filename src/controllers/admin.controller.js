@@ -11,9 +11,14 @@ import { uploadFile } from '../services/fileUpload.service.js';
 import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
 import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
-import { sendOrderCompletedEmail } from '../services/email/paymentEmail.service.js';
+import { sendOrderCompletedEmail, sendOrderInProgressEmail } from '../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../services/notification.service.js';
 import { logError, logInfo } from '../utils/logger.js';
+import {
+  sendOrderUpdateWhatsApp,
+  sendDocumentReadyWhatsApp,
+  sendAddCarReminderWhatsApp,
+} from '../services/whatsapp/whatsapp.service.js';
 import {
   getTransactionByReference,
   updateTransactionStatus,
@@ -22,6 +27,7 @@ import {
 import { getOrderById } from '../services/payment/order.service.js';
 import { PaymentSuccessService } from '../services/payment/payment-success.service.js';
 import { PAYMENT_STATUS, ORDER_TYPE } from '../constants/payment.constants.js';
+import { generateOrderNumber } from '../utils/paymentHelpers.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -45,11 +51,26 @@ function frontendStatusToDB(status) {
 
 // Format an order row into the shape the frontend expects
 function formatOrder(order, profile, userEmail, stateName, lgaName) {
+  // Extract plate/license details from transaction metadata for non-renewal orders
+  const txMeta = (() => {
+    try {
+      const raw = order.payment_transactions?.metadata;
+      return raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : {};
+    } catch { return {}; }
+  })();
+
   return {
     id: order.id,
     slug: order.order_number,          // frontend navigates by this field
     order_number: order.order_number,
     order_type: order.order_type,
+    payment_type: order.payment_transactions?.payment_type || order.order_type,
+    // Plate number specific details (visible for plate_number orders)
+    plate_type: txMeta.plateType || null,
+    plate_sub_type: txMeta.subType || null,
+    // Driver license specific details
+    license_type: txMeta.licenseType || null,
+    license_duration: txMeta.licenseDuration || null,
     amount: koboToNaira(order.amount_paid),
     amount_paid: koboToNaira(order.amount_paid),
     renewal_months: order.renewal_months,
@@ -94,6 +115,8 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
       chasis_no: order.cars.chasis_no,
       engine_no: order.cars.engine_no,
       expiry_date: order.cars.expiry_date,
+      preferred_name: order.cars.preferred_name || null,
+      plate_type: order.cars.type || null,
     } : null,
     payment: order.payment_transactions ? {
       transaction_id: order.payment_transactions.reference,
@@ -108,15 +131,19 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
 export const listUsers = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, limit = 20, search, status } = req.query;
-    
+    const { page = 1, limit = 20, search, status, sort = 'recently_added' } = req.query;
+
     const offset = (parseInt(page) - 1) * parseInt(limit);
-    
+
+    // sort: recently_added (default) | a_z (by first_name asc)
+    const sortAscending = sort === 'a_z';
+    const sortColumn = sort === 'a_z' ? 'first_name' : 'created_at';
+
     let query = supabaseAdmin
       .from('profiles')
       .select('*', { count: 'exact' })
       .is('deleted_at', null)
-      .order('created_at', { ascending: false })
+      .order(sortColumn, { ascending: sortAscending })
       .range(offset, offset + parseInt(limit) - 1);
     
     if (search) {
@@ -464,20 +491,35 @@ export const deleteUser = async (req, res) => {
 export const listCars = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all' } = req.query;
-    
+    const { page = 1, per_page = 15, status = 'all', car_type = 'all', search = '', sort = 'recently_added' } = req.query;
+
     const limit = parseInt(per_page);
     const offset = (parseInt(page) - 1) * limit;
-    
+
+    // sort: recently_added (default) | a_z (by vehicle_make asc)
+    const sortAscending = sort === 'a_z';
+    const sortColumn = sort === 'a_z' ? 'vehicle_make' : 'created_at';
+
     let query = supabaseAdmin
       .from('cars')
       .select('*', { count: 'exact' })
       .is('deleted_at', null)
-      .order('created_at', { ascending: false })
+      .order(sortColumn, { ascending: sortAscending })
       .range(offset, offset + limit - 1);
-    
+
     if (status !== 'all') {
       query = query.eq('status', status);
+    }
+
+    if (car_type !== 'all') {
+      query = query.eq('car_type', car_type);
+    }
+
+    if (search && search.trim()) {
+      const term = search.trim();
+      query = query.or(
+        `vehicle_make.ilike.%${term}%,vehicle_model.ilike.%${term}%,registration_no.ilike.%${term}%,name_of_owner.ilike.%${term}%`
+      );
     }
     
     const { data: cars, count, error } = await query;
@@ -868,7 +910,7 @@ export const listOrders = async (req, res) => {
         delivery_address, delivery_state, delivery_lga, delivery_contact,
         created_at, updated_at,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
-        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway )
+        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
@@ -940,11 +982,11 @@ export const getOrderDetails = async (req, res) => {
       .select(`
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
-                      registration_no, chasis_no, engine_no, expiry_date ),
-        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel, payment_gateway )
+                      registration_no, chasis_no, engine_no, expiry_date, preferred_name, type ),
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, channel, payment_gateway, payment_type, metadata )
       `)
       .eq('order_number', orderNumber)
-      .single();
+      .maybeSingle();
 
     if (error || !order) {
       return res.status(404).json({ status: false, message: 'Order not found' });
@@ -1058,7 +1100,7 @@ export const updateOrderStatus = async (req, res) => {
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
                       registration_no, chasis_no, engine_no, expiry_date ),
-        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway )
+        payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway, payment_type, metadata )
       `)
       .single();
 
@@ -1069,6 +1111,26 @@ export const updateOrderStatus = async (req, res) => {
 
     const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, [updated.user_id]);
     const formatted = formatOrder(updated, profileMap.get(updated.user_id), emailMap.get(updated.user_id), null, updated.delivery_lga);
+
+    // Fire-and-forget: notify user when admin starts processing their order
+    if (dbStatus === 'processing') {
+      const userEmail = emailMap.get(updated.user_id);
+      const profile = profileMap.get(updated.user_id);
+      if (userEmail) {
+        sendOrderInProgressEmail({
+          to: userEmail,
+          firstName: profile?.first_name || 'User',
+          orderNumber: updated.order_number,
+          orderType: updated.order_type,
+        }).catch(err => logError('Order in-progress email failed', err));
+      }
+      createInAppNotification(
+        updated.user_id,
+        'order',
+        'order_in_progress',
+        `Your order ${updated.order_number} is now being processed by our team.`
+      ).catch(err => logError('Order in-progress notification failed', err));
+    }
 
     // Fire-and-forget: notify user when admin completes or declines their order
     if (dbStatus === 'completed' || dbStatus === 'cancelled') {
@@ -1099,6 +1161,15 @@ export const updateOrderStatus = async (req, res) => {
           ).catch(err => logError('Order declined notification failed', err));
         }
       }
+
+      // WhatsApp hook — fire-and-forget, isolated from email/in-app logic above
+      // Only sends when WHATSAPP_REMINDERS_ENABLED=true and user has a phone number
+      sendOrderUpdateWhatsApp({
+        phone:   profile?.phone_number || null,
+        name:    profile?.first_name   || 'User',
+        orderId: updated.order_number,
+        status:  dbStatus,
+      }).catch(err => logError('WhatsApp order update failed (non-blocking)', err));
     }
 
     return res.status(200).json({ status: true, message: 'Order status updated successfully', data: formatted });
@@ -1121,6 +1192,7 @@ export const listTransactions = async (req, res) => {
     const dbStatus = status === 'success' ? 'successful'
       : status === 'failed' ? 'failed'
       : status === 'pending' ? 'pending'
+      : status === 'abandoned' ? 'abandoned'
       : null;
 
     let query = supabaseAdmin
@@ -1274,6 +1346,14 @@ export const getTransactionDetails = async (req, res) => {
       ? await supabaseAdmin.from('cars').select('id, slug, vehicle_make, vehicle_model, registration_no').eq('id', tx.car_id).single()
       : { data: null };
 
+    // Parse metadata so we can surface form details (plate type, license type, etc.)
+    let txMeta = {};
+    try {
+      txMeta = tx.metadata
+        ? (typeof tx.metadata === 'string' ? JSON.parse(tx.metadata) : tx.metadata)
+        : {};
+    } catch { txMeta = {}; }
+
     return res.status(200).json({
       status: true,
       message: 'Transaction retrieved',
@@ -1283,13 +1363,20 @@ export const getTransactionDetails = async (req, res) => {
         gateway_reference: tx.paystack_reference || tx.monicredit_order_id || tx.reference,
         payment_gateway: tx.payment_gateway || 'paystack',
         amount: koboToNaira(tx.amount),
-        status: tx.status === 'successful' ? 'approved' : tx.status,
+        status: tx.status,
         payment_type: tx.payment_type,
         payment_description: tx.payment_type?.replace(/_/g, ' '),
         channel: tx.channel,
         created_at: tx.created_at,
         paid_at: tx.paid_at,
         updated_at: tx.updated_at,
+        // Form details — what the user actually filled in
+        plate_type: txMeta.plateType || null,
+        plate_sub_type: txMeta.subType || null,
+        license_type: txMeta.licenseType || null,
+        license_duration: txMeta.licenseDuration || null,
+        renewal_months: txMeta.renewal_months || null,
+        delivery_details: txMeta.delivery_details || null,
         user: profile ? {
           id: profile.id,
           name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
@@ -1454,6 +1541,48 @@ export const adminUploadDocument = async (req, res) => {
 export const approveDocument = async (req, res) => {
   try {
     const doc = await updateDocumentStatus(parseInt(req.params.id, 10), 'approved');
+
+    // WhatsApp hook — fire-and-forget, does not affect the response
+    // Looks up user profile for phone number and car name, then sends notification
+    if (doc?.user_id) {
+      (async () => {
+        try {
+          const supabaseAdmin = getSupabaseAdmin();
+
+          // Fetch user phone and name
+          const { data: profile } = await supabaseAdmin
+            .from('profiles')
+            .select('first_name, phone_number')
+            .eq('id', doc.user_id)
+            .single();
+
+          // Fetch car name if this is a car document
+          let vehicleName = 'your vehicle';
+          if (doc.car_id) {
+            const { data: car } = await supabaseAdmin
+              .from('cars')
+              .select('vehicle_make, vehicle_model, vehicle_year')
+              .eq('id', doc.car_id)
+              .single();
+            if (car) {
+              vehicleName = [car.vehicle_year, car.vehicle_make, car.vehicle_model]
+                .filter(Boolean)
+                .join(' ');
+            }
+          }
+
+          await sendDocumentReadyWhatsApp({
+            phone:       profile?.phone_number || null,
+            name:        profile?.first_name   || 'User',
+            vehicleName,
+            documentUrl: doc.file_url || '',
+          });
+        } catch (err) {
+          logError('WhatsApp document ready notification failed (non-blocking)', err);
+        }
+      })();
+    }
+
     return res.status(200).json({
       status: true,
       message: 'Document approved',
@@ -1605,6 +1734,17 @@ export const markTransactionPaid = async (req, res) => {
     const alreadySuccessful = transaction.status === PAYMENT_STATUS.SUCCESSFUL;
 
     if (!alreadySuccessful) {
+      // For abandoned transactions: reset to pending first so the RPC can run its
+      // normal flow (which expects status = 'pending' before creating the order)
+      if (transaction.status === PAYMENT_STATUS.ABANDONED) {
+        logInfo('[markTransactionPaid] Recovering abandoned transaction', { reference });
+        await updateTransactionStatus(reference, {
+          status: PAYMENT_STATUS.PENDING,
+          channel: null,
+          authorization_code: null,
+          paid_at: null,
+        });
+      }
       await updateTransactionStatus(reference, {
         status: PAYMENT_STATUS.SUCCESSFUL,
         channel: 'manual',
@@ -1631,15 +1771,16 @@ export const markTransactionPaid = async (req, res) => {
       metadata,
     });
 
-    // If the RPC returned alreadyProcessed (transaction was already successful),
-    // insert the order directly since the RPC guard skipped it.
+    // If the RPC returned alreadyProcessed OR returned no orderId (can happen when the
+    // transaction status was updated to successful before the RPC ran, e.g. for
+    // abandoned transactions that were recovered), create the order directly.
     let finalOrderId = processResult.orderId;
-    if (alreadySuccessful && processResult.alreadyProcessed && !finalOrderId) {
+    if (processResult.alreadyProcessed && !finalOrderId) {
       const supabaseAdmin = getSupabaseAdmin();
       const { data: directOrder, error: orderInsertError } = await supabaseAdmin
         .from('renewal_orders')
         .insert({
-          order_number: `ORD-MANUAL-${Date.now()}`,
+          order_number: generateOrderNumber(),
           user_id: transaction.user_id,
           car_id: transaction.car_id || null,
           transaction_id: transaction.id,
@@ -1673,11 +1814,11 @@ export const markTransactionPaid = async (req, res) => {
     const updatedTransaction = await getTransactionByReference(reference);
     const createdOrder = finalOrderId ? await getOrderById(finalOrderId).catch(() => null) : null;
 
-    if (!processResult.alreadyProcessed || alreadySuccessful) {
+    if (finalOrderId) {
       try {
         await PaymentSuccessService.processPaymentSuccessSideEffects({
           transaction: updatedTransaction,
-          gatewayData: { channel: alreadySuccessful ? transaction.channel || 'manual' : 'manual' },
+          gatewayData: { channel: transaction.channel || 'manual' },
           order: createdOrder,
         });
       } catch (notifyError) {
@@ -1701,5 +1842,397 @@ export const markTransactionPaid = async (req, res) => {
   } catch (error) {
     logError('Admin mark transaction paid', error);
     return res.status(500).json({ status: false, message: 'Failed to process transaction' });
+  }
+};
+
+// PUT /admin/transactions/:reference/mark-failed — manually mark a transaction as failed
+// Used when admin confirms with the payment gateway that no money was received.
+export const markTransactionFailed = async (req, res) => {
+  try {
+    const { reference } = req.params;
+    const transaction = await getTransactionByReference(reference);
+
+    if (!transaction) {
+      return res.status(404).json({ status: false, message: 'Transaction not found' });
+    }
+
+    if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
+      // Check if there's already an order — can't mark as failed if order exists
+      const supabaseAdmin = getSupabaseAdmin();
+      const { data: existingOrder } = await supabaseAdmin
+        .from('renewal_orders')
+        .select('id, order_number')
+        .eq('transaction_id', transaction.id)
+        .maybeSingle();
+
+      if (existingOrder) {
+        return res.status(400).json({
+          status: false,
+          message: 'Cannot mark as failed — this transaction already has a linked order',
+          data: { orderNumber: existingOrder.order_number },
+        });
+      }
+    }
+
+    if (transaction.status === 'failed') {
+      return res.status(400).json({ status: false, message: 'Transaction is already marked as failed' });
+    }
+
+    await updateTransactionStatus(reference, { status: 'failed' });
+
+    logInfo('[markTransactionFailed] Transaction manually marked as failed', { reference });
+
+    return res.status(200).json({
+      status: true,
+      message: 'Transaction marked as failed',
+      data: { reference },
+    });
+  } catch (error) {
+    logError('Admin mark transaction failed', error);
+    return res.status(500).json({ status: false, message: 'Failed to update transaction' });
+  }
+};
+
+// ─── WhatsApp Broadcast ───────────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/notifications/add-car-reminder
+ *
+ * Sends a WhatsApp message to every user who has no cars on the platform.
+ * Only targets users with a phone number.
+ *
+ * Query params:
+ *   ?dry_run=true  — preview the count without sending anything
+ *
+ * Processed in batches of 10 with a 1 s delay between batches to stay
+ * well within Twilio's WhatsApp throughput limits.
+ */
+export async function broadcastAddCarReminder(req, res) {
+  const supabase = getSupabaseAdmin();
+  const dryRun = req.query.dry_run === 'true';
+
+  try {
+    if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') {
+      return response.error(
+        res,
+        'WhatsApp notifications are disabled. Set WHATSAPP_REMINDERS_ENABLED=true to enable.',
+        400,
+      );
+    }
+
+    // Step 1: collect user_ids that already have at least one active car
+    const { data: carsData, error: carsError } = await supabase
+      .from('cars')
+      .select('user_id')
+      .eq('is_deleted', false);
+
+    if (carsError) {
+      logError('[Broadcast] Failed to query cars', { error: carsError.message });
+      return response.serverError(res, 'Failed to query cars');
+    }
+
+    const userIdsWithCars = [...new Set((carsData || []).map(c => c.user_id))];
+
+    // Step 2: profiles without cars that have a phone number and are not suspended
+    let profilesQuery = supabase
+      .from('profiles')
+      .select('user_id, first_name, phone_number')
+      .not('phone_number', 'is', null)
+      .neq('is_suspended', true);
+
+    if (userIdsWithCars.length > 0) {
+      profilesQuery = profilesQuery.not('user_id', 'in', `(${userIdsWithCars.join(',')})`);
+    }
+
+    const { data: users, error: profilesError } = await profilesQuery;
+
+    if (profilesError) {
+      logError('[Broadcast] Failed to query users without cars', { error: profilesError.message });
+      return response.serverError(res, 'Failed to query users');
+    }
+
+    const total = (users || []).length;
+
+    if (dryRun) {
+      logInfo('[Broadcast] Dry run — add-car reminder', { total });
+      return response.success(res, {
+        dry_run: true,
+        total_users_without_cars: total,
+        message: `${total} user(s) would receive a notification. Remove dry_run=true to send.`,
+      });
+    }
+
+    if (total === 0) {
+      return response.success(res, {
+        message: 'No users without cars to notify',
+        total_users_without_cars: 0,
+        attempted: 0,
+      });
+    }
+
+    const appUrl = `${process.env.FRONTEND_URL || 'https://app.motoka.ng'}/dashboard`;
+    const BATCH_SIZE = 10;
+    const BATCH_DELAY_MS = 1000;
+
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+      const batch = users.slice(i, i + BATCH_SIZE);
+
+      await Promise.allSettled(
+        batch.map(user =>
+          sendAddCarReminderWhatsApp({
+            phone: user.phone_number,
+            name: user.first_name || 'there',
+            appUrl,
+          }),
+        ),
+      );
+
+      if (i + BATCH_SIZE < users.length) {
+        await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
+      }
+    }
+
+    logInfo('[Broadcast] Add-car reminder broadcast complete', { total, attempted: total });
+
+    return response.success(res, {
+      message: 'Broadcast complete',
+      total_users_without_cars: total,
+      attempted: total,
+    });
+  } catch (err) {
+    logError('[Broadcast] Unexpected error in broadcastAddCarReminder', { error: err.message });
+    return response.serverError(res, 'Broadcast failed');
+  }
+}
+
+// ─── Guest Orders ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/guest-orders
+ *
+ * Lists all guest renewal orders with optional filters.
+ *
+ * Query params:
+ *   ?page=1 &limit=20 &status=pending_payment|payment_success|payment_failed
+ *   &search=<plate or email>
+ */
+export const listGuestOrders = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const { status, search } = req.query;
+
+    let query = supabase
+      .from('guest_renewal_orders')
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (status) query = query.eq('payment_status', status);
+    if (search) {
+      query = query.or(`plate_number.ilike.%${search}%,guest_email.ilike.%${search}%,guest_name.ilike.%${search}%`);
+    }
+
+    const { data: orders, count, error } = await query;
+    if (error) {
+      logError('[Admin] listGuestOrders query error', error);
+      return response.serverError(res, 'Failed to retrieve guest orders');
+    }
+
+    return response.success(res, {
+      orders: orders || [],
+      pagination: {
+        current_page: page,
+        limit,
+        total: count || 0,
+        total_pages: Math.ceil((count || 0) / limit),
+        has_next: page < Math.ceil((count || 0) / limit),
+        has_prev: page > 1
+      }
+    }, 'Guest orders retrieved');
+  } catch (err) {
+    logError('[Admin] listGuestOrders error', err);
+    return response.serverError(res, 'Failed to retrieve guest orders');
+  }
+};
+
+/**
+ * GET /api/admin/guest-orders/:orderId
+ *
+ * Returns full details of a single guest renewal order including
+ * delivery info, selected items, and linked user.
+ */
+export const getGuestOrderDetails = async (req, res) => {
+  try {
+    const { orderId } = req.params;
+    const supabase = getSupabaseAdmin();
+
+    const { data: order, error } = await supabase
+      .from('guest_renewal_orders')
+      .select('*, guest_customers(name, email, phone)')
+      .eq('id', orderId)
+      .maybeSingle();
+
+    if (error || !order) {
+      return response.notFound(res, 'Guest order not found');
+    }
+
+    return response.success(res, order, 'Guest order retrieved');
+  } catch (err) {
+    logError('[Admin] getGuestOrderDetails error', err);
+    return response.serverError(res, 'Failed to retrieve guest order');
+  }
+};
+
+// ─── Driver License Applications ───────────────────────────────────────────────
+
+/**
+ * GET /admin/driver-license-applications
+ * Paginated list with optional filters: status, application_type, search (name/email)
+ */
+export const listDriverLicenseApplications = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const {
+      page = 1,
+      limit = 20,
+      status,
+      application_type,
+      search,
+    } = req.query;
+
+    const offset = (Number(page) - 1) * Number(limit);
+
+    let query = supabase
+      .from('driver_license_applications')
+      .select(`
+        id, user_id, application_type, status, is_current,
+        full_name, phone, license_number,
+        order_id, created_at, updated_at,
+        renewal_orders!driver_license_applications_order_id_fkey(id, status, created_at)
+      `, { count: 'exact' })
+      .eq('is_current', true)
+      .order('updated_at', { ascending: false })
+      .range(offset, offset + Number(limit) - 1);
+
+    if (status) query = query.eq('status', status);
+    if (application_type) query = query.eq('application_type', application_type);
+    if (search) query = query.ilike('full_name', `%${search}%`);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      logError('[Admin] listDriverLicenseApplications error', error);
+      return response.serverError(res, 'Failed to list driver license applications');
+    }
+
+    return response.success(res, {
+      applications: data || [],
+      pagination: {
+        total: count || 0,
+        page: Number(page),
+        limit: Number(limit),
+        totalPages: Math.ceil((count || 0) / Number(limit)),
+      },
+    });
+  } catch (err) {
+    logError('[Admin] listDriverLicenseApplications error', err);
+    return response.serverError(res, 'Failed to list driver license applications');
+  }
+};
+
+/**
+ * GET /admin/driver-license-applications/:id
+ * Full detail including all form fields, linked order, and user info from auth.users
+ */
+export const getDriverLicenseApplicationDetails = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { id } = req.params;
+
+    const { data: application, error } = await supabase
+      .from('driver_license_applications')
+      .select(`
+        *,
+        renewal_orders!driver_license_applications_order_id_fkey(
+          id, status, created_at, completed_at, order_type
+        )
+      `)
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error || !application) {
+      return response.notFound(res, 'Driver license application not found');
+    }
+
+    // Fetch user email from auth.users (service role can do this)
+    const { data: authUser } = await supabase.auth.admin.getUserById(application.user_id);
+
+    return response.success(res, {
+      ...application,
+      user_email: authUser?.user?.email || null,
+    }, 'Application retrieved');
+  } catch (err) {
+    logError('[Admin] getDriverLicenseApplicationDetails error', err);
+    return response.serverError(res, 'Failed to retrieve application');
+  }
+};
+
+const VALID_ADMIN_STATUSES = ['submitted', 'approved', 'rejected', 'expired'];
+
+/**
+ * PATCH /admin/driver-license-applications/:id/status
+ * Update status with optional rejection notes.
+ * Allowed transitions: submitted → approved | rejected; any → expired
+ */
+export const updateDriverLicenseApplicationStatus = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { id } = req.params;
+    const { status, notes } = req.body;
+
+    if (!status || !VALID_ADMIN_STATUSES.includes(status)) {
+      return response.error(res, `status must be one of: ${VALID_ADMIN_STATUSES.join(', ')}`, 400);
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('driver_license_applications')
+      .select('id, status, user_id, application_type, full_name')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return response.notFound(res, 'Driver license application not found');
+    }
+
+    const updatePayload = {
+      status,
+      updated_at: new Date().toISOString(),
+    };
+    if (notes !== undefined) updatePayload.admin_notes = notes;
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('driver_license_applications')
+      .update(updatePayload)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (updateErr) {
+      logError('[Admin] updateDriverLicenseApplicationStatus update error', updateErr);
+      return response.serverError(res, 'Failed to update application status');
+    }
+
+    logInfo('[Admin] Driver license application status updated', {
+      id, previousStatus: existing.status, newStatus: status, adminId: req.admin?.id,
+    });
+
+    return response.success(res, updated, `Application status updated to ${status}`);
+  } catch (err) {
+    logError('[Admin] updateDriverLicenseApplicationStatus error', err);
+    return response.serverError(res, 'Failed to update application status');
   }
 };
