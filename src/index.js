@@ -20,6 +20,7 @@ import notificationRoutes from './routes/notifications.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import publicRoutes from './routes/public.routes.js';
 import guestRoutes from './routes/guest.routes.js';
+import deferredRemindersRoutes from './routes/deferredReminders.routes.js';
 // DEV-ONLY: WhatsApp sandbox webhook route — not loaded in production
 import whatsappRoutes from './routes/whatsapp.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
@@ -144,6 +145,7 @@ app.use('/api/admin', adminAuthRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', notificationRoutes);
 app.use('/api', paymentRoutes);
+app.use('/api', deferredRemindersRoutes);
 
 // WhatsApp inbound webhook — receives replies from users via Twilio
 // Sandbox mode: no signature validation (dev/testing)
