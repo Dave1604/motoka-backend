@@ -785,3 +785,145 @@ Thank you for using Motoka!
 
   return sendEmail({ to, subject, html, text });
 }
+
+export async function sendDeferredDocReminderEmail({
+  to,
+  firstName,
+  documentName,
+  expiryDate,
+  carInfo,
+  daysUntilExpiry
+}) {
+  const subject = `Reminder: Your ${documentName} expires in ${daysUntilExpiry} days - Motoka`;
+  const renewUrl = `${process.env.FRONTEND_URL || 'https://motokaapp.com'}/licenses/renew`;
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background-color: #1d4ed8; color: #ffffff; padding: 30px 20px; text-align: center; }
+        .content { padding: 32px 28px; color: #1f2937; }
+        .details { background-color: #f8fafc; border-radius: 8px; padding: 16px; margin: 20px 0; }
+        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e5e7eb; }
+        .row:last-child { border-bottom: none; }
+        .cta { display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; border-radius: 6px; padding: 12px 24px; font-weight: 600; margin-top: 16px; }
+        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Document Expiry Reminder</h1>
+        </div>
+        <div class="content">
+          <p>Hello ${firstName || 'there'},</p>
+          <p>This is a reminder that your <strong>${documentName}</strong> expires in <strong>${daysUntilExpiry} days</strong>.</p>
+          <div class="details">
+            <div class="row"><span>Document</span><strong>${documentName}</strong></div>
+            <div class="row"><span>Expiry Date</span><strong>${expiryDate || 'N/A'}</strong></div>
+            <div class="row"><span>Vehicle</span><strong>${carInfo || 'Your vehicle'}</strong></div>
+          </div>
+          <p>Renew now to avoid delays and keep your documents up to date.</p>
+          <a class="cta" href="${renewUrl}">Renew Now</a>
+        </div>
+        <div class="footer">
+          <p>Motoka reminders are sent to help you stay compliant.</p>
+          <p style="margin-top: 10px; color: #9ca3af;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Document Expiry Reminder
+
+Hello ${firstName || 'there'},
+
+Your ${documentName} expires in ${daysUntilExpiry} days.
+Expiry Date: ${expiryDate || 'N/A'}
+Vehicle: ${carInfo || 'Your vehicle'}
+
+Renew now: ${renewUrl}
+  `.trim();
+
+  return sendEmail({ to, subject, html, text });
+}
+
+export async function sendSkippedDocNudgeEmail({
+  to,
+  firstName,
+  skippedDocNames = [],
+  carInfo,
+  nudgeDay = 1
+}) {
+  const renewUrl = `${process.env.FRONTEND_URL || 'https://motokaapp.com'}/licenses/renew`;
+  const subject = "Did you forget? Some of your vehicle documents weren't renewed - Motoka";
+  const docs = skippedDocNames.length ? skippedDocNames.join(', ') : 'some documents';
+
+  const nudges = {
+    1: 'Quick reminder: you skipped some document renewals in your last checkout.',
+    2: 'Friendly follow-up: your skipped document renewals are still pending.',
+    3: 'Final nudge: complete your skipped document renewals to stay up to date.'
+  };
+  const intro = nudges[nudgeDay] || nudges[1];
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+      <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
+        .header { background-color: #0f766e; color: #ffffff; padding: 30px 20px; text-align: center; }
+        .content { padding: 32px 28px; color: #1f2937; }
+        .details { background-color: #f8fafc; border-radius: 8px; padding: 16px; margin: 20px 0; }
+        .cta { display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; border-radius: 6px; padding: 12px 24px; font-weight: 600; margin-top: 16px; }
+        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Skipped Renewal Reminder</h1>
+        </div>
+        <div class="content">
+          <p>Hello ${firstName || 'there'},</p>
+          <p>${intro}</p>
+          <div class="details">
+            <p><strong>Skipped documents:</strong> ${docs}</p>
+            <p><strong>Vehicle:</strong> ${carInfo || 'Your vehicle'}</p>
+          </div>
+          <p>You can complete the remaining document renewals anytime.</p>
+          <a class="cta" href="${renewUrl}">Complete Renewal</a>
+        </div>
+        <div class="footer">
+          <p>Thank you for using Motoka.</p>
+          <p style="margin-top: 10px; color: #9ca3af;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Skipped Renewal Reminder
+
+Hello ${firstName || 'there'},
+
+${intro}
+Skipped documents: ${docs}
+Vehicle: ${carInfo || 'Your vehicle'}
+
+Complete renewal: ${renewUrl}
+  `.trim();
+
+  return sendEmail({ to, subject, html, text });
+}
