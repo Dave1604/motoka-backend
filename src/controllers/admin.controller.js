@@ -1,5 +1,9 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
+import { parse as csvParse } from 'csv-parse/sync';
+import { sanitizeCarInput } from '../utils/carSanitization.js';
+import { buildCarData, extractNormalizedIdentifiers } from '../utils/carDataBuilder.js';
+import { createCar, CarError } from '../services/car.service.js';
 import paymentMetrics from '../services/payment/metrics.service.js';
 import {
   adminListDocuments,
@@ -2234,5 +2238,270 @@ export const updateDriverLicenseApplicationStatus = async (req, res) => {
   } catch (err) {
     logError('[Admin] updateDriverLicenseApplicationStatus error', err);
     return response.serverError(res, 'Failed to update application status');
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN CAR CREATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/cars
+ * Admin adds a single car on behalf of any existing user.
+ * Body: { user_id: UUID, ...car fields }
+ */
+export const adminAddCar = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { user_id, ...carBody } = req.body;
+
+    if (!user_id) {
+      return res.status(400).json({ status: false, message: 'user_id is required' });
+    }
+
+    // Verify user exists
+    const { data: profile, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('id, first_name, last_name, email')
+      .eq('id', user_id)
+      .is('deleted_at', null)
+      .single();
+
+    if (profileError || !profile) {
+      return res.status(404).json({ status: false, message: 'User not found' });
+    }
+
+    const sanitizedBody = sanitizeCarInput(carBody);
+    const identifiers = extractNormalizedIdentifiers(sanitizedBody);
+
+    // Validate date ordering
+    if (sanitizedBody.date_issued && sanitizedBody.expiry_date) {
+      if (new Date(sanitizedBody.expiry_date) <= new Date(sanitizedBody.date_issued)) {
+        return res.status(400).json({ status: false, message: 'Expiry date must be after date issued' });
+      }
+    }
+
+    // Check for duplicate registration/chassis/engine numbers
+    if (identifiers.registration_no || identifiers.chasis_no || identifiers.engine_no) {
+      const orParts = [];
+      if (identifiers.registration_no) orParts.push(`registration_no.eq.${identifiers.registration_no}`);
+      if (identifiers.chasis_no) orParts.push(`chasis_no.eq.${identifiers.chasis_no}`);
+      if (identifiers.engine_no) orParts.push(`engine_no.eq.${identifiers.engine_no}`);
+
+      const { data: existing } = await supabaseAdmin
+        .from('cars')
+        .select('id, registration_no, chasis_no, engine_no')
+        .or(orParts.join(','))
+        .is('deleted_at', null)
+        .limit(1);
+
+      if (existing && existing.length > 0) {
+        const dup = existing[0];
+        const fields = [];
+        if (identifiers.registration_no && dup.registration_no === identifiers.registration_no) fields.push('Registration number');
+        if (identifiers.chasis_no && dup.chasis_no === identifiers.chasis_no) fields.push('Chassis number');
+        if (identifiers.engine_no && dup.engine_no === identifiers.engine_no) fields.push('Engine number');
+        return res.status(409).json({ status: false, message: `${fields.join(', ')} already exists in the system` });
+      }
+    }
+
+    const carData = buildCarData(sanitizedBody, user_id);
+    const car = await createCar(supabaseAdmin, carData);
+
+    logInfo('Admin added car', { adminId: req.admin?.id, userId: user_id, carSlug: car.slug });
+
+    return res.status(201).json({
+      status: true,
+      message: 'Car added successfully',
+      data: {
+        car,
+        owner: {
+          id: profile.id,
+          name: `${profile.first_name || ''} ${profile.last_name || ''}`.trim(),
+          email: profile.email,
+        },
+      },
+    });
+  } catch (error) {
+    if (error instanceof CarError) {
+      return res.status(error.statusCode).json({ status: false, message: error.message });
+    }
+    logError('adminAddCar', error);
+    return res.status(500).json({ status: false, message: 'Failed to add car' });
+  }
+};
+
+/**
+ * POST /api/admin/cars/bulk-import
+ * Admin uploads a CSV file to create multiple cars for existing users.
+ *
+ * CSV columns (header row required):
+ *   user_email, name_of_owner, address, phone_number,
+ *   vehicle_make, vehicle_model, vehicle_year, vehicle_color,
+ *   car_type, registration_status, registration_no, chasis_no,
+ *   engine_no, date_issued, expiry_date, plate_number
+ *
+ * Returns:
+ *   { total, succeeded, failed, errors: [{ row, user_email, reason }] }
+ */
+export const adminBulkImportCars = async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ status: false, message: 'CSV file is required' });
+  }
+
+  const supabaseAdmin = getSupabaseAdmin();
+  const results = { total: 0, succeeded: 0, failed: 0, errors: [], created: [] };
+
+  try {
+    const csvText = req.file.buffer.toString('utf-8');
+
+    let rows;
+    try {
+      rows = csvParse(csvText, {
+        columns: true,
+        skip_empty_lines: true,
+        trim: true,
+      });
+    } catch (parseErr) {
+      return res.status(400).json({ status: false, message: `Invalid CSV format: ${parseErr.message}` });
+    }
+
+    results.total = rows.length;
+
+    if (rows.length === 0) {
+      return res.status(400).json({ status: false, message: 'CSV file is empty or has no data rows' });
+    }
+
+    if (rows.length > 500) {
+      return res.status(400).json({ status: false, message: 'Maximum 500 rows per import' });
+    }
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      const rowNum = i + 2; // +2 because row 1 is the header
+      const userEmail = (row.user_email || '').trim().toLowerCase();
+
+      try {
+        // Validate required fields
+        if (!userEmail) throw new Error('user_email is required');
+        if (!row.vehicle_make) throw new Error('vehicle_make is required');
+        if (!row.vehicle_model) throw new Error('vehicle_model is required');
+        if (!row.vehicle_year) throw new Error('vehicle_year is required');
+        if (!row.vehicle_color) throw new Error('vehicle_color is required');
+        if (!row.car_type) throw new Error('car_type is required (private or commercial)');
+        if (!row.registration_status) throw new Error('registration_status is required (registered or unregistered)');
+        if (!row.name_of_owner) throw new Error('name_of_owner is required');
+        if (!row.address) throw new Error('address is required');
+
+        if (!['private', 'commercial'].includes(row.car_type.toLowerCase())) {
+          throw new Error('car_type must be "private" or "commercial"');
+        }
+        if (!['registered', 'unregistered'].includes(row.registration_status.toLowerCase())) {
+          throw new Error('registration_status must be "registered" or "unregistered"');
+        }
+
+        const year = parseInt(row.vehicle_year, 10);
+        if (isNaN(year) || year < 1900 || year > new Date().getFullYear() + 1) {
+          throw new Error(`vehicle_year must be a valid year between 1900 and ${new Date().getFullYear() + 1}`);
+        }
+
+        // Look up user by email in profiles table
+        const { data: profile, error: profileErr } = await supabaseAdmin
+          .from('profiles')
+          .select('id, first_name, last_name, email')
+          .eq('email', userEmail)
+          .is('deleted_at', null)
+          .maybeSingle();
+
+        if (profileErr) throw new Error('Database error looking up user');
+        if (!profile) throw new Error(`No user found with email "${userEmail}"`);
+
+        const carBody = {
+          name_of_owner: row.name_of_owner,
+          address: row.address,
+          phone_number: row.phone_number || null,
+          vehicle_make: row.vehicle_make,
+          vehicle_model: row.vehicle_model,
+          vehicle_year: year,
+          vehicle_color: row.vehicle_color,
+          car_type: row.car_type.toLowerCase(),
+          registration_status: row.registration_status.toLowerCase(),
+          registration_no: row.registration_no || null,
+          chasis_no: row.chasis_no || null,
+          engine_no: row.engine_no || null,
+          date_issued: row.date_issued || null,
+          expiry_date: row.expiry_date || null,
+          plate_number: row.plate_number || null,
+        };
+
+        const sanitizedBody = sanitizeCarInput(carBody);
+        const identifiers = extractNormalizedIdentifiers(sanitizedBody);
+
+        // Date ordering validation
+        if (sanitizedBody.date_issued && sanitizedBody.expiry_date) {
+          if (new Date(sanitizedBody.expiry_date) <= new Date(sanitizedBody.date_issued)) {
+            throw new Error('Expiry date must be after date issued');
+          }
+        }
+
+        // Duplicate check for this row
+        if (identifiers.registration_no || identifiers.chasis_no || identifiers.engine_no) {
+          const orParts = [];
+          if (identifiers.registration_no) orParts.push(`registration_no.eq.${identifiers.registration_no}`);
+          if (identifiers.chasis_no) orParts.push(`chasis_no.eq.${identifiers.chasis_no}`);
+          if (identifiers.engine_no) orParts.push(`engine_no.eq.${identifiers.engine_no}`);
+
+          const { data: existing } = await supabaseAdmin
+            .from('cars')
+            .select('id, registration_no, chasis_no, engine_no')
+            .or(orParts.join(','))
+            .is('deleted_at', null)
+            .limit(1);
+
+          if (existing && existing.length > 0) {
+            const dup = existing[0];
+            const fields = [];
+            if (identifiers.registration_no && dup.registration_no === identifiers.registration_no) fields.push('registration number');
+            if (identifiers.chasis_no && dup.chasis_no === identifiers.chasis_no) fields.push('chassis number');
+            if (identifiers.engine_no && dup.engine_no === identifiers.engine_no) fields.push('engine number');
+            throw new Error(`Duplicate ${fields.join(', ')} already exists`);
+          }
+        }
+
+        const carData = buildCarData(sanitizedBody, profile.id);
+        const car = await createCar(supabaseAdmin, carData);
+
+        results.succeeded++;
+        results.created.push({
+          row: rowNum,
+          user_email: userEmail,
+          car_slug: car.slug,
+          vehicle: `${car.vehicle_make} ${car.vehicle_model} (${car.vehicle_year})`,
+        });
+      } catch (rowErr) {
+        results.failed++;
+        results.errors.push({
+          row: rowNum,
+          user_email: userEmail || row.user_email || '(empty)',
+          reason: rowErr.message,
+        });
+      }
+    }
+
+    logInfo('Admin bulk import cars', {
+      adminId: req.admin?.id,
+      total: results.total,
+      succeeded: results.succeeded,
+      failed: results.failed,
+    });
+
+    return res.status(200).json({
+      status: true,
+      message: `Import complete: ${results.succeeded} added, ${results.failed} failed`,
+      data: results,
+    });
+  } catch (error) {
+    logError('adminBulkImportCars', error);
+    return res.status(500).json({ status: false, message: 'Bulk import failed' });
   }
 };
