@@ -248,38 +248,40 @@ export const getUser = async (req, res) => {
       return res.status(404).json({ status: false, message: 'User not found' });
     }
     
-    const { data: { user: authUser } } = await supabaseAdmin.auth.admin.getUserById(userId);
-    
-    const { data: kyc } = await supabaseAdmin
-      .from('kycs')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-    
-    // Get user's cars (recent 5) + count
-    const { data: carsData, count: carsCount } = await supabaseAdmin
-      .from('cars')
-      .select('id, vehicle_make, vehicle_model, registration_no, plate_number, status, expiry_date, slug', { count: 'exact' })
-      .eq('user_id', userId)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-      .limit(5);
+    // Run all independent queries in parallel
+    const [
+      { data: { user: authUser } },
+      { data: kyc },
+      { data: carsData, count: carsCount },
+      { data: ordersData, count: ordersCount },
+      { data: txData },
+    ] = await Promise.all([
+      supabaseAdmin.auth.admin.getUserById(userId),
+      supabaseAdmin.from('kycs').select('*').eq('user_id', userId).single(),
+      supabaseAdmin
+        .from('cars')
+        .select('id, vehicle_make, vehicle_model, registration_no, plate_number, status, expiry_date, slug', { count: 'exact' })
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+        .limit(5),
+      supabaseAdmin
+        .from('renewal_orders')
+        .select('id, order_number, order_type, status, amount_paid, created_at', { count: 'exact' })
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+        .limit(5),
+      supabaseAdmin
+        .from('payment_transactions')
+        .select('amount')
+        .eq('user_id', userId)
+        .eq('status', 'successful'),
+    ]);
 
-    // Get user's orders (recent 5) + count
-    const { data: ordersData, count: ordersCount } = await supabaseAdmin
-      .from('renewal_orders')
-      .select('id, order_number, order_type, status, amount_paid, created_at', { count: 'exact' })
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(5);
-
-    // Get total spent from successful transactions
-    const { data: txData } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('amount')
-      .eq('user_id', userId)
-      .eq('status', 'successful');
-    const totalSpent = (txData || []).reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0);
+    // amount is stored in kobo — convert to naira
+    const totalSpent = koboToNaira(
+      (txData || []).reduce((sum, tx) => sum + (Number(tx.amount) || 0), 0)
+    );
 
     const recentCars = (carsData || []).map(c => ({
       id: c.id,
@@ -2328,6 +2330,93 @@ export const adminAddCar = async (req, res) => {
     }
     logError('adminAddCar', error);
     return res.status(500).json({ status: false, message: 'Failed to add car' });
+  }
+};
+
+/**
+ * PUT /api/admin/cars/:slug
+ * Admin updates an existing car's details.
+ */
+export const adminUpdateCar = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { slug } = req.params;
+
+    // Fetch the existing car
+    const { data: existingCar, error: fetchError } = await supabaseAdmin
+      .from('cars')
+      .select('id, slug, registration_no, chasis_no, engine_no')
+      .eq('slug', slug)
+      .is('deleted_at', null)
+      .single();
+
+    if (fetchError || !existingCar) {
+      return res.status(404).json({ status: false, message: 'Car not found' });
+    }
+
+    const sanitizedBody = sanitizeCarInput(req.body);
+
+    // Validate date ordering if both dates are provided
+    if (sanitizedBody.date_issued && sanitizedBody.expiry_date) {
+      if (new Date(sanitizedBody.expiry_date) <= new Date(sanitizedBody.date_issued)) {
+        return res.status(400).json({ status: false, message: 'Expiry date must be after date issued' });
+      }
+    }
+
+    // Check for duplicate identifiers, excluding the current car
+    const identifiers = extractNormalizedIdentifiers(sanitizedBody);
+    if (identifiers.registration_no || identifiers.chasis_no || identifiers.engine_no) {
+      const orParts = [];
+      if (identifiers.registration_no) orParts.push(`registration_no.eq.${identifiers.registration_no}`);
+      if (identifiers.chasis_no) orParts.push(`chasis_no.eq.${identifiers.chasis_no}`);
+      if (identifiers.engine_no) orParts.push(`engine_no.eq.${identifiers.engine_no}`);
+
+      const { data: dupCars } = await supabaseAdmin
+        .from('cars')
+        .select('id, registration_no, chasis_no, engine_no')
+        .or(orParts.join(','))
+        .neq('id', existingCar.id)
+        .is('deleted_at', null)
+        .limit(1);
+
+      if (dupCars && dupCars.length > 0) {
+        const dup = dupCars[0];
+        const fields = [];
+        if (identifiers.registration_no && dup.registration_no === identifiers.registration_no) fields.push('Registration number');
+        if (identifiers.chasis_no && dup.chasis_no === identifiers.chasis_no) fields.push('Chassis number');
+        if (identifiers.engine_no && dup.engine_no === identifiers.engine_no) fields.push('Engine number');
+        return res.status(409).json({ status: false, message: `${fields.join(', ')} already exists in the system` });
+      }
+    }
+
+    const updateData = buildUpdateData(sanitizedBody, existingCar);
+
+    if (Object.keys(updateData).length === 0) {
+      return res.status(400).json({ status: false, message: 'No valid fields to update' });
+    }
+
+    const { data: updatedCar, error: updateError } = await supabaseAdmin
+      .from('cars')
+      .update(updateData)
+      .eq('id', existingCar.id)
+      .select()
+      .single();
+
+    if (updateError) {
+      logError('adminUpdateCar DB', updateError);
+      return res.status(500).json({ status: false, message: 'Failed to update car' });
+    }
+
+    logInfo('Admin updated car', { adminId: req.admin?.id, carSlug: slug });
+
+    return res.status(200).json({
+      status: true,
+      message: 'Car updated successfully',
+      data: updatedCar,
+    });
+  } catch (error) {
+    logError('adminUpdateCar', error);
+    return res.status(500).json({ status: false, message: 'Failed to update car' });
   }
 };
 

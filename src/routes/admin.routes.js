@@ -49,6 +49,7 @@ router.post('/cars/bulk-import', authenticateAdmin, csvUpload.single('file'), ad
 router.post('/cars', authenticateAdmin, admin.adminAddCar);
 router.get('/cars', authenticate, checkAdmin, admin.listCars);
 router.get('/cars/:slug', authenticate, checkAdmin, admin.getCarDetails);
+router.put('/cars/:slug', authenticateAdmin, admin.adminUpdateCar);
 
 // ── Payment system monitoring ─────────────────────────────────────────────────
 router.get('/metrics/payments', authenticate, checkAdmin, admin.getPaymentMetrics);
