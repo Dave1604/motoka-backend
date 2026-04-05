@@ -34,6 +34,7 @@ const router = Router();
  */
 
 // ── User management (Supabase-auth based) ────────────────────────────────────
+router.post('/users', authenticateAdmin, admin.adminCreateUser);
 router.get('/users', authenticate, checkAdmin, admin.listUsers);
 // search must be registered before /:userId to avoid 'search' being captured as a userId param
 router.get('/users/search', authenticateAdmin, admin.searchUsers);

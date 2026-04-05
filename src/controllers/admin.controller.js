@@ -185,20 +185,28 @@ export const listUsers = async (req, res) => {
     }
 
     const userIds = profiles.map(p => p.id);
-    
-    const { data: carCounts } = await supabaseAdmin
+
+    // Fetch car data: plate numbers + count per user (was count-only before)
+    const { data: carRows } = await supabaseAdmin
       .from('cars')
-      .select('user_id')
+      .select('user_id, plate_number, registration_no')
       .in('user_id', userIds)
-      .is('deleted_at', null);
-    
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false });
+
     const carsCountMap = new Map();
-    if (carCounts) {
-      carCounts.forEach(car => {
+    const platesMap = new Map();
+    if (carRows) {
+      carRows.forEach(car => {
         carsCountMap.set(car.user_id, (carsCountMap.get(car.user_id) || 0) + 1);
+        const plate = car.plate_number || car.registration_no;
+        if (plate) {
+          if (!platesMap.has(car.user_id)) platesMap.set(car.user_id, []);
+          platesMap.get(car.user_id).push(plate);
+        }
       });
     }
-    
+
     const users = profiles.map(profile => ({
       userId: profile.user_id,
       id: profile.id,
@@ -211,6 +219,7 @@ export const listUsers = async (req, res) => {
       is_suspended: profile.is_suspended,
       deleted_at: profile.deleted_at,
       cars_count: carsCountMap.get(profile.id) || 0,
+      plates: platesMap.get(profile.id) || [],
       orders_count: 0,
       created_at: profile.created_at
     }));
@@ -2240,6 +2249,129 @@ export const updateDriverLicenseApplicationStatus = async (req, res) => {
   } catch (err) {
     logError('[Admin] updateDriverLicenseApplicationStatus error', err);
     return response.serverError(res, 'Failed to update application status');
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ADMIN USER CREATION
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/users
+ * Admin creates a new user account and optionally registers their first car
+ * in a single request. The Supabase trigger auto-creates the profile row, but
+ * we verify/patch it explicitly for reliability.
+ *
+ * Body: {
+ *   email, first_name, last_name, phone_number?,
+ *   password?,            // auto-generated if omitted
+ *   car?: { plate_number, vehicle_make, vehicle_model, ... }
+ * }
+ */
+export const adminCreateUser = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { email, first_name, last_name, phone_number, password, car } = req.body;
+
+    if (!email || !first_name || !last_name) {
+      return res.status(400).json({
+        status: false,
+        message: 'email, first_name, and last_name are required',
+      });
+    }
+
+    // 1. Create the auth user (trigger will attempt profile insert)
+    const tempPassword = password || `Motoka${Math.random().toString(36).slice(2, 10)}!`;
+    const { data: authData, error: authError } = await supabaseAdmin.auth.admin.createUser({
+      email,
+      password: tempPassword,
+      email_confirm: true,
+      user_metadata: {
+        first_name,
+        last_name,
+        phone: phone_number || '',
+      },
+    });
+
+    if (authError) {
+      logError('[Admin] createUser auth error', authError);
+      const msg = authError.message?.includes('already been registered')
+        ? 'A user with this email already exists'
+        : authError.message || 'Failed to create user';
+      return res.status(409).json({ status: false, message: msg });
+    }
+
+    const userId = authData.user.id;
+
+    // 2. Ensure profile exists (trigger may have created it; upsert for safety)
+    const { error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .upsert({
+        id: userId,
+        first_name,
+        last_name,
+        phone_number: phone_number || null,
+        email,
+        user_type_id: 2,
+      }, { onConflict: 'id' });
+
+    if (profileError) {
+      logError('[Admin] createUser profile upsert failed', profileError);
+      // Auth user was created — don't leave orphans
+      await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+      return res.status(500).json({ status: false, message: 'Failed to create user profile' });
+    }
+
+    // 3. Optionally create the first car
+    let createdCar = null;
+    if (car && typeof car === 'object' && Object.keys(car).length > 0) {
+      try {
+        const sanitizedBody = sanitizeCarInput(car);
+        const carData = buildCarData(sanitizedBody, userId);
+        createdCar = await createCar(supabaseAdmin, carData);
+        logInfo('[Admin] Car created with new user', { userId, carSlug: createdCar.slug });
+      } catch (carErr) {
+        logError('[Admin] createUser car creation failed (non-fatal)', carErr);
+        // User was created successfully — car failure shouldn't roll back
+        // We'll report the partial success
+      }
+    }
+
+    // 4. Fetch the complete profile to return
+    const { data: profile } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', userId)
+      .single();
+
+    logInfo('[Admin] User created', {
+      adminId: req.admin?.id,
+      userId,
+      email,
+      hasCar: !!createdCar,
+    });
+
+    return res.status(201).json({
+      status: true,
+      message: createdCar
+        ? 'User and car created successfully'
+        : 'User created successfully',
+      data: {
+        user: {
+          id: userId,
+          user_id: profile?.user_id,
+          name: `${first_name} ${last_name}`.trim(),
+          email,
+          phone: phone_number || null,
+          created_at: profile?.created_at,
+        },
+        car: createdCar || null,
+        temporary_password: tempPassword,
+      },
+    });
+  } catch (error) {
+    logError('[Admin] adminCreateUser', error);
+    return res.status(500).json({ status: false, message: 'Failed to create user' });
   }
 };
 
