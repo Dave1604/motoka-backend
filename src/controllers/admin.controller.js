@@ -2303,23 +2303,40 @@ export const adminCreateUser = async (req, res) => {
 
     const userId = authData.user.id;
 
-    // 2. Ensure profile exists (trigger may have created it; upsert for safety)
-    const { error: profileError } = await supabaseAdmin
+    // 2. Check if trigger already created the profile
+    const { data: existingProfile } = await supabaseAdmin
       .from('profiles')
-      .upsert({
-        id: userId,
-        first_name,
-        last_name,
-        phone_number: phone_number || null,
-        email,
-        user_type_id: 2,
-      }, { onConflict: 'id' });
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle();
 
-    if (profileError) {
-      logError('[Admin] createUser profile upsert failed', profileError);
-      // Auth user was created — don't leave orphans
-      await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
-      return res.status(500).json({ status: false, message: 'Failed to create user profile' });
+    if (!existingProfile) {
+      // Generate a unique 6-char short user_id (same logic as auth signup)
+      let shortUserId;
+      for (let i = 0; i < 10; i++) {
+        const candidate = Math.random().toString(36).substring(2, 8).toUpperCase();
+        const { data: conflict } = await supabaseAdmin
+          .from('profiles').select('id').eq('user_id', candidate).maybeSingle();
+        if (!conflict) { shortUserId = candidate; break; }
+      }
+
+      const { error: profileError } = await supabaseAdmin
+        .from('profiles')
+        .insert({
+          id: userId,
+          user_id: shortUserId,
+          first_name,
+          last_name,
+          phone_number: phone_number || null,
+          email,
+          user_type_id: 2,
+        });
+
+      if (profileError) {
+        logError('[Admin] createUser profile insert failed', profileError);
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        return res.status(500).json({ status: false, message: 'Failed to create user profile' });
+      }
     }
 
     // 3. Optionally create the first car
