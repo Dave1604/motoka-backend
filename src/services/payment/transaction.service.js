@@ -454,7 +454,6 @@ export async function getUserTransactions(userId, options = {}) {
     logError('Get user transactions error', { error, userId });
     throw new TransactionError('Failed to retrieve transactions', HTTP_STATUS.SERVER_ERROR);
   }
-
   // ── Enrich normal authenticated transactions with their renewal orders ──
   const txIds = (transactions || []).map(tx => tx.id);
   const { data: allOrders } = txIds.length > 0
