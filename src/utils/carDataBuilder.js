@@ -31,8 +31,8 @@ export function buildCarData(sanitizedBody, userId) {
     cac_number
   } = sanitizedBody;
   
-  const parsedYear = parseInt(vehicle_year, 10);
-  if (isNaN(parsedYear)) {
+  const parsedYear = vehicle_year ? parseInt(vehicle_year, 10) : null;
+  if (vehicle_year && isNaN(parsedYear)) {
     throw new Error('Invalid vehicle year provided');
   }
   

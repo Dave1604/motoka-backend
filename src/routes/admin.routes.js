@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { checkAdmin } from '../middleware/checkAdmin.js';
@@ -18,6 +19,20 @@ import {
   deleteLadipoProduct,
 } from '../controllers/adminLadipo.controller.js';
 
+// Multer for CSV uploads — memory storage, 5 MB cap, CSV only
+const csvUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['text/csv', 'application/vnd.ms-excel', 'text/plain'];
+    if (allowed.includes(file.mimetype) || file.originalname.endsWith('.csv')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Only CSV files are allowed'));
+    }
+  },
+});
+
 const router = Router();
 
 /**
@@ -31,6 +46,7 @@ const router = Router();
  */
 
 // ── User management (Supabase-auth based) ────────────────────────────────────
+router.post('/users', authenticateAdmin, admin.adminCreateUser);
 router.get('/users', authenticate, checkAdmin, admin.listUsers);
 // search must be registered before /:userId to avoid 'search' being captured as a userId param
 router.get('/users/search', authenticateAdmin, admin.searchUsers);
@@ -40,9 +56,13 @@ router.put('/users/:userId/suspend', authenticate, checkAdmin, suspendUserValida
 router.put('/users/:userId/activate', authenticate, checkAdmin, admin.activateUser);
 router.delete('/users/:userId', authenticate, checkAdmin, admin.deleteUser);
 
-// ── Car management (Supabase-auth based) ─────────────────────────────────────
+// ── Car management ────────────────────────────────────────────────────────────
+// bulk-import must be registered BEFORE /:slug to avoid route capture conflicts
+router.post('/cars/bulk-import', authenticateAdmin, csvUpload.single('file'), admin.adminBulkImportCars);
+router.post('/cars', authenticateAdmin, admin.adminAddCar);
 router.get('/cars', authenticate, checkAdmin, admin.listCars);
 router.get('/cars/:slug', authenticate, checkAdmin, admin.getCarDetails);
+router.put('/cars/:slug', authenticateAdmin, admin.adminUpdateCar);
 
 // ── Payment system monitoring ─────────────────────────────────────────────────
 router.get('/metrics/payments', authenticate, checkAdmin, admin.getPaymentMetrics);
