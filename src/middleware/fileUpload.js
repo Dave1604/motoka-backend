@@ -210,6 +210,21 @@ const documentUpload = multer({
 
 export const handleDocumentUpload = documentUpload.single('file');
 
+const ladipoProductImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_IMAGE_SIZE },
+  fileFilter: (req, file, cb) => {
+    const allowedMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
+    if (allowedMimes.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Invalid image type. Allowed: ${allowedMimes.join(', ')}`), false);
+    }
+  },
+});
+
+export const handleLadipoProductImageUpload = ladipoProductImageUpload.single('image_file');
+
 /**
  * SCALABILITY: Cleanup temp files after processing
  * Call this in your controller after uploading to Supabase Storage
