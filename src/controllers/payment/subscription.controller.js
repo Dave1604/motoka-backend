@@ -18,9 +18,6 @@ import {
   initializeTransaction as paystackInitialize
 } from '../../services/payment/paystack.service.js';
 import {
-  validatePaymentAmount
-} from '../../services/payment/validation/amount.validator.js';
-import {
   PAYMENT_TYPE,
   HTTP_STATUS,
   ERROR_MESSAGES,
@@ -70,10 +67,9 @@ export const createSubscriptionHandler = async (req, res) => {
     const userEmail = req.user.email;
     const { car_slug, amount, plan = 'annual', selected_items = [] } = req.body;
     
-    // Validate amount
-    const amountValidation = validatePaymentAmount(amount);
-    if (!amountValidation.valid) {
-      return paymentResponse.error(res, amountValidation.error, HTTP_STATUS.BAD_REQUEST);
+    // Validate amount is a number within acceptable bounds (kobo)
+    if (typeof amount !== 'number' || amount < PAYMENT_LIMITS.MIN_AMOUNT || amount > PAYMENT_LIMITS.MAX_AMOUNT) {
+      return paymentResponse.error(res, ERROR_MESSAGES.AMOUNT_TOO_LOW, HTTP_STATUS.BAD_REQUEST);
     }
     
     // Get car by slug
