@@ -34,7 +34,8 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 import { sendPaymentFailedEmail } from '../../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
 import { formatAmount } from '../../utils/paymentHelpers.js';
-import { parseWebhookEvent, verifyTransaction as paystackVerifyTransaction } from '../../services/payment/paystack.service.js';
+import { parseWebhookEvent, verifyTransaction as paystackVerifyTransaction, createRefund } from '../../services/payment/paystack.service.js';
+import { activateSubscription } from '../../services/payment/subscription.service.js';
 import { generateMonicreditEventId } from '../../services/payment/monicredit/monicredit.service.js';
 import { MonicreditAdapter } from '../../services/payment/monicredit/index.js';
 import { logPaymentAudit } from '../../services/payment/audit.service.js';
@@ -248,6 +249,13 @@ async function handleChargeSuccess(data, eventId) {
     return;
   }
   
+  // Tokenization flow: ₦50 charge used only to capture a reusable card auth code.
+  // Activate the subscription, refund immediately, and skip order creation.
+  if (metadata.is_tokenization === true) {
+    await handleTokenizationSuccess(transaction, data, metadata);
+    return;
+  }
+
   const isSubscription = metadata.subscription_id || metadata.is_subscription;
   const isPlateNumber = metadata.payment_type === 'plate_number';
   const isDriverLicense = metadata.payment_type === 'driver_license';
@@ -257,7 +265,7 @@ async function handleChargeSuccess(data, eventId) {
       ? ORDER_TYPE.PLATE_NUMBER
       : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
-  
+
   const processResult = await processPaymentSuccess({
     reference: transaction.reference,
     status: PAYMENT_STATUS.SUCCESSFUL,
@@ -273,7 +281,8 @@ async function handleChargeSuccess(data, eventId) {
     deliveryState: metadata.delivery_details?.state || null,
     deliveryLGA: metadata.delivery_details?.lga || null,
     deliveryContact: metadata.delivery_details?.contact || null,
-    metadata
+    metadata,
+    renewalState: metadata.renewal_state || null
   });
   
   if (processResult.alreadyProcessed) {
@@ -344,6 +353,67 @@ async function handleChargeSuccess(data, eventId) {
     reference,
     transactionId: updatedTransaction.id,
     orderId: processResult.orderId
+  });
+}
+
+async function handleTokenizationSuccess(transaction, data, metadata) {
+  const subscriptionId = metadata.subscription_id;
+  const authorization = data.authorization;
+  const authCode = authorization?.authorization_code;
+
+  if (!authCode) {
+    logError('[Tokenization] No authorization_code in webhook data', {
+      reference: transaction.reference,
+      subscriptionId
+    });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
+    return;
+  }
+
+  if (!authorization.reusable) {
+    logWarn('[Tokenization] Card is not reusable — cannot set up auto-renewal', {
+      reference: transaction.reference,
+      subscriptionId
+    });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
+    return;
+  }
+
+  // Activate the subscription with the card details
+  await activateSubscription(subscriptionId, authCode, {
+    card_type: authorization.card_type,
+    last4: authorization.last4,
+    exp_month: authorization.exp_month,
+    exp_year: authorization.exp_year,
+    bank: authorization.bank
+  });
+
+  // Mark the ₦50 transaction as successful
+  await updateTransactionStatus(transaction.reference, {
+    status: PAYMENT_STATUS.SUCCESSFUL,
+    authorization_code: authCode,
+    paid_at: data.paid_at,
+    channel: data.channel
+  });
+
+  // Immediately refund the ₦50 — it was only for tokenization
+  try {
+    await createRefund({
+      transaction: data.reference,
+      reason: 'Card tokenization fee — auto-refund'
+    });
+    logInfo('[Tokenization] ₦50 refund issued', { reference: transaction.reference });
+  } catch (refundError) {
+    // Non-fatal: subscription is activated, refund can be retried manually
+    logError('[Tokenization] Refund failed (subscription still activated)', {
+      reference: transaction.reference,
+      error: refundError.message
+    });
+  }
+
+  logInfo('[Tokenization] Subscription activated successfully', {
+    reference: transaction.reference,
+    subscriptionId
   });
 }
 
@@ -573,7 +643,8 @@ async function handleMonicreditPaymentSuccess(data) {
     deliveryState: metadata.delivery_details?.state || metadata.delivery_state,
     deliveryLGA: metadata.delivery_details?.lga || metadata.delivery_lga,
     deliveryContact: metadata.delivery_details?.contact || metadata.delivery_contact,
-    metadata
+    metadata,
+    renewalState: metadata.renewal_state || null
   });
   
   const updatedTransaction = await getTransactionByReference(transaction.reference);

@@ -198,7 +198,9 @@ export const initializePayment = async (req, res) => {
       sub_type = null,
       // Driver license specific
       license_type = null,
-      duration = null          // '3yr' | '5yr' | 'international'
+      duration = null,          // '3yr' | '5yr' | 'international'
+      // State of renewal
+      renewal_state = null
     } = req.body;
 
     const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER;
@@ -477,10 +479,11 @@ export const initializePayment = async (req, res) => {
         plateType: isPlatePayment ? plate_type : null,
         subType: isPlatePayment ? (sub_type || null) : null,
         licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
-        licenseDuration: isDriverLicensePayment ? (duration || null) : null
+        licenseDuration: isDriverLicensePayment ? (duration || null) : null,
+        renewalState: (!isNonCarPayment && renewal_state) ? renewal_state : null
       })
     });
-    
+
     const initStartTime = Date.now();
     paymentMetrics.trackInitialization({ gateway: payment_gateway, amount });
     

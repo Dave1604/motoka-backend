@@ -43,7 +43,8 @@ import {
   createSubscriptionHandler,
   cancelSubscriptionHandler,
   pauseSubscriptionHandler,
-  resumeSubscriptionHandler
+  resumeSubscriptionHandler,
+  initiateTokenization
 } from '../controllers/payment/subscription.controller.js';
 
 const router = Router();
@@ -183,5 +184,6 @@ router.post(
 router.put('/subscriptions/:id/cancel', authenticate, cancelSubscriptionHandler);
 router.put('/subscriptions/:id/pause', authenticate, pauseSubscriptionHandler);
 router.put('/subscriptions/:id/resume', authenticate, resumeSubscriptionHandler);
+router.post('/subscriptions/:id/tokenize', authenticate, checkEmailVerified, paymentLimiter, initiateTokenization);
 
 export default router;

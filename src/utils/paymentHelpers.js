@@ -165,7 +165,9 @@ export function buildPaymentMetadata({
   plateType = null,
   subType = null,
   // Driver license specific (optional)
-  licenseType = null
+  licenseType = null,
+  // State of renewal (which state processes the renewal)
+  renewalState = null
 }) {
   const scheduleIds = paymentScheduleId.length > 0 ? paymentScheduleId : selectedItems;
   
@@ -182,6 +184,7 @@ export function buildPaymentMetadata({
     delivery_details: deliveryDetails,
     ...(plateType ? { plate_type: plateType, sub_type: subType } : {}),
     ...(licenseType ? { license_type: licenseType } : {}),
+    ...(renewalState ? { renewal_state: renewalState } : {}),
     initiated_at: new Date().toISOString()
   });
 }

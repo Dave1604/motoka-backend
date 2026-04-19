@@ -208,7 +208,8 @@ export const verifyPayment = async (req, res) => {
           deliveryState: metaData?.delivery_details?.state || metaData?.delivery_state,
           deliveryLGA: metaData?.delivery_details?.lga || metaData?.delivery_lga,
           deliveryContact: metaData?.delivery_details?.contact || metaData?.delivery_contact,
-          metadata: metaData
+          metadata: metaData,
+          renewalState: metaData?.renewal_state || null
         });
         
         paymentMetrics.trackSuccess({ gateway: paymentGateway, amount: transaction.amount, processingTime: verifyProcessingTime });

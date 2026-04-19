@@ -22,6 +22,7 @@ import {
   sendOrderUpdateWhatsApp,
   sendDocumentReadyWhatsApp,
   sendAddCarReminderWhatsApp,
+  sendExpiryReminderWhatsApp,
 } from '../services/whatsapp/whatsapp.service.js';
 import {
   getTransactionByReference,
@@ -85,6 +86,7 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
     delivery_lga: order.delivery_lga,
     state_name: stateName || order.delivery_state,
     lga_name: lgaName || order.delivery_lga,
+    renewal_state: order.renewal_state || null,
     selected_items: order.selected_items,
     previous_expiry_date: order.previous_expiry_date,
     new_expiry_date: order.new_expiry_date,
@@ -2017,6 +2019,122 @@ export async function broadcastAddCarReminder(req, res) {
   } catch (err) {
     logError('[Broadcast] Unexpected error in broadcastAddCarReminder', { error: err.message });
     return response.serverError(res, 'Broadcast failed');
+  }
+}
+
+// ─── WhatsApp Expiry Reminders ────────────────────────────────────────────────
+
+/**
+ * POST /api/admin/notifications/expiry-reminders
+ *
+ * Sends WhatsApp expiry reminders for cars expiring in 1, 7, 14, or 30 days.
+ * Supports ?dry_run=true to preview counts without sending.
+ * Supports ?days=7 to target a single window (default: all four windows).
+ */
+export async function triggerExpiryReminders(req, res) {
+  const supabase = getSupabaseAdmin();
+  const dryRun = req.query.dry_run === 'true';
+  const specificDays = req.query.days ? parseInt(req.query.days) : null;
+
+  try {
+    if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') {
+      return response.error(
+        res,
+        'WhatsApp notifications are disabled. Set WHATSAPP_REMINDERS_ENABLED=true to enable.',
+        400,
+      );
+    }
+
+    const REMINDER_WINDOWS = specificDays ? [specificDays] : [30, 14, 7, 1];
+    const frontendUrl = process.env.FRONTEND_URL || 'https://app.motoka.ng';
+
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+
+    // Collect results per window
+    const results = [];
+    let totalAttempted = 0;
+
+    for (const days of REMINDER_WINDOWS) {
+      const targetDate = new Date(today);
+      targetDate.setDate(targetDate.getDate() + days);
+      const targetDateStr = targetDate.toISOString().split('T')[0];
+
+      // Query cars expiring on the target date with user profile
+      const { data: cars, error: carsError } = await supabase
+        .from('cars')
+        .select(`
+          id,
+          registration_no,
+          vehicle_make,
+          vehicle_model,
+          expiry_date,
+          slug,
+          profiles!cars_user_id_fkey (
+            first_name,
+            phone_number,
+            user_id
+          )
+        `)
+        .eq('expiry_date', targetDateStr)
+        .eq('is_deleted', false)
+        .eq('status', 'approved')
+        .not('profiles.phone_number', 'is', null);
+
+      if (carsError) {
+        logError('[ExpiryReminder] Failed to query cars', { days, error: carsError.message });
+        results.push({ days, count: 0, error: carsError.message });
+        continue;
+      }
+
+      const eligible = (cars || []).filter(c => c.profiles?.phone_number);
+      results.push({ days, count: eligible.length });
+
+      if (dryRun || eligible.length === 0) continue;
+
+      totalAttempted += eligible.length;
+
+      const BATCH_SIZE = 10;
+      const BATCH_DELAY_MS = 1000;
+
+      for (let i = 0; i < eligible.length; i += BATCH_SIZE) {
+        const batch = eligible.slice(i, i + BATCH_SIZE);
+
+        await Promise.allSettled(
+          batch.map(car =>
+            sendExpiryReminderWhatsApp({
+              phone: car.profiles.phone_number,
+              name: car.profiles.first_name || 'there',
+              registrationNo: car.registration_no,
+              expiryDate: car.expiry_date,
+              daysRemaining: days,
+              renewalUrl: `${frontendUrl}/licenses/renew`,
+            }),
+          ),
+        );
+
+        if (i + BATCH_SIZE < eligible.length) {
+          await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
+        }
+      }
+    }
+
+    const totalEligible = results.reduce((sum, r) => sum + r.count, 0);
+
+    logInfo('[ExpiryReminder] Trigger complete', { dryRun, totalEligible, totalAttempted, results });
+
+    return response.success(res, {
+      dry_run: dryRun,
+      windows: results,
+      total_eligible: totalEligible,
+      total_attempted: dryRun ? 0 : totalAttempted,
+      message: dryRun
+        ? `Dry run: ${totalEligible} car(s) across ${results.length} window(s) would receive reminders.`
+        : `Sent reminders to ${totalAttempted} car(s) across ${results.length} window(s).`,
+    });
+  } catch (err) {
+    logError('[ExpiryReminder] Unexpected error', { error: err.message });
+    return response.serverError(res, 'Failed to trigger expiry reminders');
   }
 }
 

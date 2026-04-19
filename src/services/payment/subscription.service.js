@@ -57,6 +57,7 @@ export async function createSubscription({
   plan = SUBSCRIPTION_PLAN.ANNUAL,
   authorizationCode = null,
   cardDetails = {},
+  renewalDocumentIds = [],
   metadata = {}
 }) {
   const supabaseAdmin = getSupabaseAdmin();
@@ -107,6 +108,7 @@ export async function createSubscription({
     card_exp_year: cardDetails.exp_year || null,
     card_bank: cardDetails.bank || null,
     activated_at: authorizationCode ? new Date().toISOString() : null,
+    renewal_document_ids: Array.isArray(renewalDocumentIds) ? renewalDocumentIds : [],
     metadata
   };
   
@@ -266,7 +268,25 @@ export async function getUserSubscriptions(userId, options = {}) {
   if (options.status) {
     query = query.eq('status', options.status);
   }
-  
+
+  if (options.carSlug) {
+    const { data: car } = await supabaseAdmin
+      .from('cars')
+      .select('id')
+      .eq('slug', options.carSlug)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .single();
+
+    if (!car) {
+      return {
+        subscriptions: [],
+        pagination: { current_page: page, limit, total_subscriptions: 0, total_pages: 0, has_next: false, has_prev: false }
+      };
+    }
+    query = query.eq('car_id', car.id);
+  }
+
   const { data: subscriptions, count, error } = await query;
   
   if (error) {

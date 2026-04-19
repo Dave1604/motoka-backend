@@ -391,7 +391,8 @@ export async function processPaymentSuccess({
   deliveryState,
   deliveryLGA,
   deliveryContact,
-  metadata
+  metadata,
+  renewalState = null
 }) {
   const supabaseAdmin = getSupabaseAdmin();
 
@@ -410,7 +411,8 @@ export async function processPaymentSuccess({
     p_delivery_state: deliveryState || null,
     p_delivery_lga: deliveryLGA || null,
     p_delivery_contact: deliveryContact || null,
-    p_metadata: metadata || null
+    p_metadata: metadata || null,
+    p_renewal_state: renewalState || null
   });
 
   if (error) {

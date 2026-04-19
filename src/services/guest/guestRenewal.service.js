@@ -67,7 +67,8 @@ export async function initiateGuestRenewal({
   wantsDelivery,
   deliveryDetails,
   paymentGateway = PAYMENT_GATEWAY.MONICREDIT,
-  frontendBaseUrl
+  frontendBaseUrl,
+  renewalState = null
 }) {
   const supabase = getSupabaseAdmin();
 
@@ -151,6 +152,7 @@ export async function initiateGuestRenewal({
       delivery_fee: deliveryFee,
       total_amount: totalAmount,
       delivery_details: resolvedDelivery,
+      renewal_state: renewalState || null,
       payment_gateway: paymentGateway,
       payment_reference: paymentReference,
       payment_status: 'pending_payment',

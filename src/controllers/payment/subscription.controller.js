@@ -24,7 +24,9 @@ import {
   PAYMENT_TYPE,
   HTTP_STATUS,
   ERROR_MESSAGES,
-  SUCCESS_MESSAGES
+  SUCCESS_MESSAGES,
+  PAYMENT_LIMITS,
+  SUBSCRIPTION_STATUS
 } from '../../constants/payment.constants.js';
 import { PaystackError } from '../../services/payment/paystack.service.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
@@ -42,12 +44,13 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 export const getSubscriptions = async (req, res) => {
   try {
     const userId = req.user.id;
-    const { page, limit, status } = req.query;
-    
+    const { page, limit, status, car_slug } = req.query;
+
     const result = await getUserSubscriptions(userId, {
       page: parseInt(page) || 1,
       limit: parseInt(limit) || 20,
-      status: status || undefined
+      status: status || undefined,
+      carSlug: car_slug || undefined
     });
     
     return paymentResponse.success(res, result, 'Subscriptions retrieved');
@@ -65,7 +68,7 @@ export const createSubscriptionHandler = async (req, res) => {
   try {
     const userId = req.user.id;
     const userEmail = req.user.email;
-    const { car_slug, amount, plan = 'annual' } = req.body;
+    const { car_slug, amount, plan = 'annual', selected_items = [] } = req.body;
     
     // Validate amount
     const amountValidation = validatePaymentAmount(amount);
@@ -99,7 +102,8 @@ export const createSubscriptionHandler = async (req, res) => {
       carId: car.id,
       email: userEmail,
       amount,
-      plan
+      plan,
+      renewalDocumentIds: Array.isArray(selected_items) ? selected_items : []
     });
     
     // Initialize payment for first subscription charge
@@ -211,6 +215,91 @@ export const pauseSubscriptionHandler = async (req, res) => {
     }
     
     return paymentResponse.serverError(res, 'Failed to pause subscription');
+  }
+};
+
+/**
+ * Initiate ₦50 card tokenization for a pending subscription
+ * POST /api/subscriptions/:id/tokenize
+ *
+ * Bank transfer users have no card on file after their first payment.
+ * This kicks off a ₦50 Paystack charge (card-only, no bank transfer) that
+ * the webhook will immediately refund, storing the reusable authorization_code
+ * on the subscription so auto-renewal can charge the card later.
+ */
+export const initiateTokenization = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const userEmail = req.user.email;
+    const { id } = req.params;
+
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: subscription, error } = await supabaseAdmin
+      .from('subscriptions')
+      .select('*')
+      .eq('id', parseInt(id))
+      .eq('user_id', userId)
+      .single();
+
+    if (error || !subscription) {
+      return paymentResponse.notFound(res, ERROR_MESSAGES.SUBSCRIPTION_NOT_FOUND);
+    }
+
+    if (subscription.status === SUBSCRIPTION_STATUS.ACTIVE && subscription.authorization_code) {
+      return paymentResponse.error(res, 'Card already on file for this subscription', HTTP_STATUS.CONFLICT);
+    }
+
+    if (subscription.status === SUBSCRIPTION_STATUS.CANCELLED) {
+      return paymentResponse.error(res, ERROR_MESSAGES.SUBSCRIPTION_CANCELLED, HTTP_STATUS.CONFLICT);
+    }
+
+    const amount = PAYMENT_LIMITS.TOKENIZATION_AMOUNT;
+
+    const transaction = await createTransaction({
+      userId,
+      carId: subscription.car_id,
+      amount,
+      paymentType: PAYMENT_TYPE.TOKENIZATION,
+      metadata: {
+        subscription_id: subscription.id,
+        subscription_code: subscription.subscription_code,
+        is_tokenization: true
+      }
+    });
+
+    const callbackUrl = `${process.env.FRONTEND_URL}/payment/paystack/callback`;
+
+    const paystackResult = await paystackInitialize({
+      email: userEmail,
+      amount,
+      reference: transaction.reference,
+      callback_url: callbackUrl,
+      channels: ['card'], // card only — bank transfer cannot tokenize
+      metadata: {
+        transaction_id: transaction.id,
+        subscription_id: subscription.id,
+        is_tokenization: true
+      }
+    });
+
+    await updateTransactionWithPaystackInit(transaction.reference, paystackResult);
+
+    return paymentResponse.success(res, {
+      payment: {
+        reference: transaction.reference,
+        authorization_url: paystackResult.authorization_url,
+        access_code: paystackResult.access_code
+      }
+    }, 'Tokenization initiated');
+
+  } catch (error) {
+    logError('Initiate tokenization error', error);
+
+    if (error instanceof PaystackError) {
+      return paymentResponse.error(res, error.message, error.statusCode);
+    }
+
+    return paymentResponse.serverError(res, 'Failed to initiate tokenization');
   }
 };
 

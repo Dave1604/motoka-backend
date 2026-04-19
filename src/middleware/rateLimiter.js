@@ -95,6 +95,13 @@ const RATE_LIMITS = {
     windowMs: 60 * 1000, // 1 minute
     max: 60,
     message: 'Too many webhook requests'
+  },
+
+  // Mo AI chat — per-user limit to cap OpenAI costs
+  MO_CHAT: {
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: IS_DEV ? 200 : 20,
+    message: 'Too many messages — please wait a moment before continuing'
   }
 };
 
@@ -127,3 +134,17 @@ export const passwordResetLimiter = createLimiter(RATE_LIMITS.PASSWORD_RESET);
 export const carRegistrationLimiter = createLimiter(RATE_LIMITS.CAR_REGISTRATION);
 export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);
 export const webhookLimiter = createLimiter(RATE_LIMITS.WEBHOOK);
+
+// Mo chat limiter — keyed by user ID (not IP) since the endpoint requires auth
+export const moChatLimiter = rateLimit({
+  windowMs: RATE_LIMITS.MO_CHAT.windowMs,
+  max: RATE_LIMITS.MO_CHAT.max,
+  message: { success: false, message: RATE_LIMITS.MO_CHAT.message },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id || req.ip,
+  skip: (req) => {
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  },
+});

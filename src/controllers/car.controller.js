@@ -22,6 +22,33 @@ import { sendWelcomeEmail } from '../services/email/carEmail.service.js';
 import { PAGINATION, PATTERNS, ERROR_MESSAGES, HTTP_STATUS } from '../constants/car.constants.js';
 
 /**
+ * Get active subscriptions for multiple cars
+ * @param {Array<number>} carIds - Array of car IDs
+ * @returns {Promise<Map>} Map of car_id -> { status, card_last4, card_type, card_bank }
+ */
+async function getActiveSubscriptionsForCars(carIds) {
+  if (!carIds || carIds.length === 0) return new Map();
+
+  const subMap = new Map();
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: subs, error } = await supabaseAdmin
+      .from('subscriptions')
+      .select('car_id, id, status, card_last4, card_type, card_bank')
+      .in('car_id', carIds)
+      .eq('status', 'active');
+
+    if (error) throw error;
+    (subs || []).forEach(sub => {
+      if (!subMap.has(sub.car_id)) subMap.set(sub.car_id, sub);
+    });
+  } catch (err) {
+    logError('getActiveSubscriptionsForCars error', err);
+  }
+  return subMap;
+}
+
+/**
  * Get pending orders for multiple cars
  * @param {Array<number>} carIds - Array of car IDs
  * @returns {Promise<Map>} Map of car_id -> pending order
@@ -321,17 +348,28 @@ export const getCars = async (req, res) => {
     
     const result = await getCarsPaginated(supabaseUser, page, limit);
 
-    // Check for pending orders
+    // Check for pending orders and active subscriptions in parallel
     const carIds = (result.cars || []).map(car => car.id);
-    const pendingOrdersMap = await getPendingOrdersForCars(carIds);
+    const [pendingOrdersMap, subscriptionsMap] = await Promise.all([
+      getPendingOrdersForCars(carIds),
+      getActiveSubscriptionsForCars(carIds)
+    ]);
 
     const carsWithReminder = (result.cars || []).map((car) => {
       const pendingOrder = pendingOrdersMap.get(car.id) || null;
       const expiryStatus = buildExpiryStatus(car.expiry_date, new Date(), pendingOrder);
+      const activeSub = subscriptionsMap.get(car.id) || null;
       return {
         ...car,
         reminder: expiryStatus,
-        expiry_status: expiryStatus
+        expiry_status: expiryStatus,
+        active_subscription: activeSub ? {
+          id: activeSub.id,
+          status: activeSub.status,
+          card_last4: activeSub.card_last4,
+          card_type: activeSub.card_type,
+          card_bank: activeSub.card_bank
+        } : null
       };
     });
 
@@ -353,15 +391,26 @@ export const getCarBySlug = async (req, res) => {
     const supabaseUser = getSupabaseUser(req.token);
     const car = await getCarBySlugService(supabaseUser, slug, userId);
 
-    // Check for pending order
-    const pendingOrdersMap = await getPendingOrdersForCars([car.id]);
+    // Check for pending order and active subscription in parallel
+    const [pendingOrdersMap, subscriptionsMap] = await Promise.all([
+      getPendingOrdersForCars([car.id]),
+      getActiveSubscriptionsForCars([car.id])
+    ]);
     const pendingOrder = pendingOrdersMap.get(car.id) || null;
     const expiryStatus = buildExpiryStatus(car.expiry_date, new Date(), pendingOrder);
+    const activeSub = subscriptionsMap.get(car.id) || null;
 
     const carWithReminder = {
       ...car,
       reminder: expiryStatus,
-      expiry_status: expiryStatus
+      expiry_status: expiryStatus,
+      active_subscription: activeSub ? {
+        id: activeSub.id,
+        status: activeSub.status,
+        card_last4: activeSub.card_last4,
+        card_type: activeSub.card_type,
+        card_bank: activeSub.card_bank
+      } : null
     };
     
     return response.success(res, { car: carWithReminder }, 'Car retrieved successfully');

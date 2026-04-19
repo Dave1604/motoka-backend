@@ -90,7 +90,8 @@ export const PAYMENT_TYPE = {
   RENEWAL_AUTO: 'renewal_auto',
   NEW_REGISTRATION: 'new_registration',
   PLATE_NUMBER: 'plate_number',
-  DRIVER_LICENSE: 'driver_license'
+  DRIVER_LICENSE: 'driver_license',
+  TOKENIZATION: 'tokenization'
 };
 
 export const SUBSCRIPTION_STATUS = {
@@ -132,7 +133,8 @@ export const ORDER_TYPE = {
 export const PAYMENT_LIMITS = {
   MIN_AMOUNT: 10000,        // ₦100
   MAX_AMOUNT: 100000000,    // ₦1,000,000
-  DEFAULT_CURRENCY: 'NGN'
+  DEFAULT_CURRENCY: 'NGN',
+  TOKENIZATION_AMOUNT: 5000 // ₦50 — charged then immediately refunded for card tokenization
 };
 
 export const PAYMENT_GATEWAY = {

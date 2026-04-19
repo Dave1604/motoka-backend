@@ -86,6 +86,8 @@ router.put('/transactions/:reference/mark-failed', authenticateAdmin, admin.mark
 // ── WhatsApp broadcast ────────────────────────────────────────────────────────
 // ?dry_run=true previews count without sending
 router.post('/notifications/add-car-reminder', authenticateAdmin, admin.broadcastAddCarReminder);
+// ?dry_run=true previews counts | ?days=7 targets a single window
+router.post('/notifications/expiry-reminders', authenticateAdmin, admin.triggerExpiryReminders);
 
 // ── Guest orders ─────────────────────────────────────────────────────────────
 // guest-orders must be registered before /:orderId to avoid capture conflicts

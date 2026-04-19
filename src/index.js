@@ -20,17 +20,23 @@ import notificationRoutes from './routes/notifications.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import publicRoutes from './routes/public.routes.js';
 import guestRoutes from './routes/guest.routes.js';
+import moRoutes from './routes/mo.routes.js';
 import deferredRemindersRoutes from './routes/deferredReminders.routes.js';
 // DEV-ONLY: WhatsApp sandbox webhook route — not loaded in production
 import whatsappRoutes from './routes/whatsapp.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { getCorsConfig } from './config/cors.config.js';
 import paymentMetrics from './services/payment/metrics.service.js';
+import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
 import { logInfo, logWarn } from './utils/logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
 
 const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY', 'JWT_SECRET'];
+
+if (!process.env.OPENAI_API_KEY) {
+  console.warn('⚠️  OPENAI_API_KEY is not set — Mo (AI chat) will return errors at runtime');
+}
 
 const productionRequiredEnvVars = [
   'MONICREDIT_WEBHOOK_SECRET',
@@ -145,6 +151,7 @@ app.use('/api/admin', adminAuthRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api', notificationRoutes);
 app.use('/api', paymentRoutes);
+app.use('/api', moRoutes);
 app.use('/api', deferredRemindersRoutes);
 
 // WhatsApp inbound webhook — receives replies from users via Twilio
@@ -653,6 +660,23 @@ app.listen(PORT, '0.0.0.0', () => {
   logInfo('Periodic metrics logging started', {
     interval_minutes: METRICS_LOG_INTERVAL_MS / 60000
   });
+
+  // Auto-billing job — runs once per hour, processes subscriptions due for charging today
+  const AUTO_BILLING_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+  setInterval(async () => {
+    try {
+      await runAutoBillingJob();
+    } catch (err) {
+      logWarn('[AutoBilling] Scheduler caught unhandled error', { error: err.message });
+    }
+  }, AUTO_BILLING_INTERVAL_MS);
+
+  // Run once at startup so we don't wait an hour on first deploy
+  runAutoBillingJob().catch(err =>
+    logWarn('[AutoBilling] Startup run failed', { error: err.message })
+  );
+
+  logInfo('Auto-billing job scheduled', { interval_minutes: AUTO_BILLING_INTERVAL_MS / 60000 });
 });
 
 export default app;

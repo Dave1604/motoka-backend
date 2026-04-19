@@ -29,7 +29,7 @@ export const buildExpiryStatus = (expiryDate, now = new Date(), pendingOrder = n
       };
     }
     return {
-      message: 'No reminder available',
+      message: 'Up to date',
       days_left: null,
       status: 'no_reminder',
       is_urgent: false,
@@ -104,7 +104,7 @@ export const buildExpiryStatus = (expiryDate, now = new Date(), pendingOrder = n
   // Condition 2: Today < expiry_date - 30 days (more than 30 days remaining)
   if (diffDays > REMINDER_THRESHOLD_DAYS) {
     return {
-      message: 'No reminder available',
+      message: 'Up to date',
       days_left: diffDays,
       status: 'no_reminder',
       is_urgent: false,
