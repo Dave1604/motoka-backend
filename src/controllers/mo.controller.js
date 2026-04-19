@@ -5,16 +5,16 @@ import { getRenewalItems } from '../services/payment/renewalItems.service.js';
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_MODEL = 'gpt-4o-mini';
 
-// All DB prices are stored in Naira
+// renewal_items prices are stored in kobo; plate and driver license prices are in naira
 function formatNaira(naira) {
   return `₦${Number(naira).toLocaleString('en-NG')}`;
 }
 
 function buildPricingSection(renewalItems, platePrices, driverLicensePrices) {
-  // Renewal services
+  // Renewal services — prices in kobo, divide by 100 for display
   const renewalLines = renewalItems.map((item) => {
     const note = item.required ? ' (required)' : ' (optional add-on)';
-    return `  - ${item.name}: ${formatNaira(item.price)}${note}`;
+    return `  - ${item.name}: ${formatNaira(item.price / 100)}${note}`;
   });
 
   // Plate number prices
@@ -79,7 +79,7 @@ EXPIRY DATE QUESTIONS ("check expiry", "when does X expire", "is my car expired"
 
 PRICING QUESTIONS ("how much", "what is the cost", "price of"):
 - Quote the exact price from the pricing section above.
-- If they ask about renewal, note that Vehicle Licence (₦4,700) is required and any add-ons are optional.
+- If they ask about renewal, note that Vehicle Licence is required and any add-ons are optional.
 
 RENEWAL QUESTIONS ("renew", "how do I renew", "renew my licence"):
 - Tell them to click the "Licenses" tab in the top navigation, then click "Renew Now" on the car they want to renew.
