@@ -177,6 +177,7 @@ describe('CORS Configuration', () => {
       expect(config.allowedHeaders).toContain('x-monicredit-signature');
       expect(config.allowedHeaders).toContain('x-signature');
       expect(config.allowedHeaders).toContain('x-paystack-signature');
+      expect(config.allowedHeaders).toContain('Idempotency-Key');
     });
 
     it('should include credentials support', () => {

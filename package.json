@@ -11,7 +11,10 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:watch": "npm test -- --watch"
+    "test:watch": "npm test -- --watch",
+    "seed:ladipo": "node scripts/seed-ladipo-products.js",
+    "cleanup:ladipo-demo": "node scripts/cleanup-ladipo-demo-products.js",
+    "import:ladipo:autofactor": "node scripts/import-ladipo-autofactor.js"
   },
   "keywords": [
     "authentication",

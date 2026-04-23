@@ -11,6 +11,9 @@ import {
   verifyAndFulfillOrder,
   getUserOrders,
   getOrderByNumber,
+  getCompatibility,
+  upsertCompatibilityEntries,
+  deleteCompatibilityEntry,
 } from '../services/ladipo/ladipo.service.js';
 import { logError } from '../utils/logger.js';
 
@@ -28,7 +31,7 @@ export const handleGetCategories = async (req, res) => {
 // GET /ladipo/parts
 export const handleGetParts = async (req, res) => {
   try {
-    const { page, limit, q, category_slug } = req.query;
+    const { page, limit, q, category_slug, make, model, year } = req.query;
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
     const result = await getParts({
@@ -36,6 +39,9 @@ export const handleGetParts = async (req, res) => {
       limit: parsedLimit,
       q,
       category_slug,
+      make,
+      model,
+      year,
     });
     return res.json({ success: true, data: result });
   } catch (error) {
@@ -54,6 +60,44 @@ export const handleGetPartBySlug = async (req, res) => {
   } catch (error) {
     logError('[Ladipo] handleGetPartBySlug', error);
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// GET /ladipo/parts/:id/compatibility
+export const handleGetCompatibility = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const data = await getCompatibility(id);
+    return res.json({ success: true, data });
+  } catch (error) {
+    logError('[Ladipo] handleGetCompatibility', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// POST /ladipo/parts/:id/compatibility
+export const handleUpsertCompatibility = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { entries = [] } = req.body;
+    const data = await upsertCompatibilityEntries(id, entries);
+    return res.json({ success: true, data });
+  } catch (error) {
+    logError('[Ladipo] handleUpsertCompatibility', error);
+    return res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+// DELETE /ladipo/compatibility/:entryId
+export const handleDeleteCompatibilityEntry = async (req, res) => {
+  try {
+    const { entryId } = req.params;
+    const data = await deleteCompatibilityEntry(entryId);
+    return res.json({ success: true, data });
+  } catch (error) {
+    logError('[Ladipo] handleDeleteCompatibilityEntry', error);
+    const status = error.message.includes('not found') ? 404 : 400;
+    return res.status(status).json({ success: false, message: error.message });
   }
 };
 

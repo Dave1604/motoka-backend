@@ -29,16 +29,17 @@ export async function getCategories() {
 
 // ─── Parts ───────────────────────────────────────────────────────────────────
 
-export async function getParts({ page = 1, limit = 20, q, category_slug } = {}) {
+export async function getParts({ page = 1, limit = 20, q, category_slug, make, model, year } = {}) {
   const supabase = getSupabaseAdmin();
   const offset = (page - 1) * limit;
 
   let query = supabase
     .from('ladipo_parts')
     .select(`
-      id, slug, name, description, brand, condition, part_type, images, is_active,
+      id, slug, name, description, brand, condition, part_type, images, is_active, is_universal,
       category:ladipo_categories(id, name, slug),
-      inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label)
+      inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label),
+      compatibility:ladipo_part_compatibility(id, make, model, year_min, year_max, engine_code, notes)
     `, { count: 'exact' })
     .eq('is_active', true)
     .range(offset, offset + limit - 1)
@@ -72,9 +73,96 @@ export async function getParts({ page = 1, limit = 20, q, category_slug } = {}) 
     query = query.in('category_id', categoryIds);
   }
 
+  const normalizedMake = typeof make === 'string' ? make.trim() : '';
+  const normalizedModel = typeof model === 'string' ? model.trim() : '';
+  const parsedYear = year === undefined || year === null || year === ''
+    ? null
+    : Number.parseInt(year, 10);
+
+  if (normalizedMake) {
+    const { data: compatibilityRows, error: compatibilityErr } = await supabase
+      .from('ladipo_part_compatibility')
+      .select('part_id, model, year_min, year_max')
+      .ilike('make', normalizedMake);
+
+    if (compatibilityErr) {
+      logError('[Ladipo] getParts compatibility lookup failed', compatibilityErr);
+      throw new Error('Failed to fetch parts');
+    }
+
+    const compatibleIds = new Set(
+      (compatibilityRows || [])
+        .filter((row) => {
+          const modelMatches = !normalizedModel
+            || !row.model
+            || String(row.model).trim().toLowerCase() === normalizedModel.toLowerCase();
+          const yearMatches = !Number.isFinite(parsedYear)
+            || parsedYear === null
+            || ((row.year_min == null || row.year_min <= parsedYear)
+              && (row.year_max == null || row.year_max >= parsedYear));
+          return modelMatches && yearMatches;
+        })
+        .map((row) => row.part_id)
+        .filter(Boolean)
+    );
+
+    const { data: universalRows, error: universalErr } = await supabase
+      .from('ladipo_parts')
+      .select('id')
+      .eq('is_active', true)
+      .eq('is_universal', true);
+
+    if (universalErr) {
+      logError('[Ladipo] getParts universal lookup failed', universalErr);
+      throw new Error('Failed to fetch parts');
+    }
+
+    for (const row of universalRows || []) {
+      if (row?.id) compatibleIds.add(row.id);
+    }
+
+    const allIds = Array.from(compatibleIds);
+    if (allIds.length === 0) {
+      return { parts: [], total: 0 };
+    }
+
+    query = query.in('id', allIds);
+  }
+
   if (q && q.trim()) {
     const term = q.trim().toLowerCase();
-    query = query.or(`name.ilike.%${term}%,brand.ilike.%${term}%,description.ilike.%${term}%`);
+    const synonymGroups = [
+      ['tyre', 'tire'],
+      ['brake', 'break pad'],
+      ['absorber', 'shock', 'damper'],
+      ['battery', 'accumulator'],
+      ['filter', 'strainer'],
+      ['bearing', 'hub bearing'],
+      ['coolant', 'antifreeze'],
+      ['lubricant', 'engine oil', 'oil'],
+      ['belt', 'drive belt', 'fan belt'],
+      ['wiper', 'windscreen wiper', 'blade'],
+      ['light', 'headlamp', 'headlight', 'bulb'],
+      ['spark plug', 'sparkplug'],
+      ['exhaust', 'muffler'],
+      ['steering', 'rack', 'power steering'],
+      ['alternator', 'dynamo'],
+      ['radiator', 'cooling radiator'],
+    ];
+
+    const expandedTerms = new Set([term]);
+    for (const group of synonymGroups) {
+      if (group.some((s) => term.includes(s) || s.includes(term))) {
+        for (const synonym of group) expandedTerms.add(synonym);
+      }
+    }
+
+    const orClauses = [...expandedTerms].flatMap((t) => [
+      `name.ilike.%${t}%`,
+      `brand.ilike.%${t}%`,
+      `description.ilike.%${t}%`,
+    ]);
+    query = query.or(orClauses.join(','));
   }
 
   const { data, error, count } = await query;
@@ -94,9 +182,10 @@ export async function getPartBySlug(slug) {
   const { data, error } = await supabase
     .from('ladipo_parts')
     .select(`
-      id, slug, name, description, brand, condition, part_type, images, specifications, key_features, is_active,
+      id, slug, name, description, brand, condition, part_type, images, specifications, key_features, is_active, is_universal,
       category:ladipo_categories(id, name, slug),
-      inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label)
+      inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label),
+      compatibility:ladipo_part_compatibility(id, make, model, year_min, year_max, engine_code, notes)
     `)
     .eq('slug', slug)
     .eq('is_active', true)
@@ -109,6 +198,109 @@ export async function getPartBySlug(slug) {
   }
 
   return flattenPart(data);
+}
+
+export async function getCompatibility(partId) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('ladipo_part_compatibility')
+    .select('id, part_id, make, model, year_min, year_max, engine_code, notes, created_at')
+    .eq('part_id', partId)
+    .order('make', { ascending: true })
+    .order('model', { ascending: true, nullsFirst: true })
+    .order('year_min', { ascending: true, nullsFirst: true });
+
+  if (error) {
+    logError('[Ladipo] getCompatibility failed', error);
+    throw new Error('Failed to fetch compatibility');
+  }
+
+  return data || [];
+}
+
+export async function upsertCompatibilityEntries(partId, entries = []) {
+  const supabase = getSupabaseAdmin();
+  const safeEntries = Array.isArray(entries) ? entries : [];
+
+  const normalizedEntries = safeEntries.map((entry) => {
+    const makeValue = String(entry?.make || '').trim();
+    if (!makeValue) {
+      throw new Error('Each compatibility entry must include make');
+    }
+
+    const modelValue = entry?.model ? String(entry.model).trim() : null;
+    const yearMinValue = entry?.year_min === '' || entry?.year_min == null
+      ? null
+      : Number.parseInt(entry.year_min, 10);
+    const yearMaxValue = entry?.year_max === '' || entry?.year_max == null
+      ? null
+      : Number.parseInt(entry.year_max, 10);
+
+    if ((yearMinValue != null && !Number.isInteger(yearMinValue))
+      || (yearMaxValue != null && !Number.isInteger(yearMaxValue))) {
+      throw new Error('year_min and year_max must be valid integers');
+    }
+    if (yearMinValue != null && yearMaxValue != null && yearMinValue > yearMaxValue) {
+      throw new Error('year_min cannot be greater than year_max');
+    }
+
+    return {
+      part_id: partId,
+      make: makeValue,
+      model: modelValue || null,
+      year_min: yearMinValue,
+      year_max: yearMaxValue,
+      engine_code: entry?.engine_code ? String(entry.engine_code).trim() : null,
+      notes: entry?.notes ? String(entry.notes).trim() : null,
+    };
+  });
+
+  const { error: deleteErr } = await supabase
+    .from('ladipo_part_compatibility')
+    .delete()
+    .eq('part_id', partId);
+
+  if (deleteErr) {
+    logError('[Ladipo] upsertCompatibilityEntries delete failed', deleteErr);
+    throw new Error('Failed to update compatibility');
+  }
+
+  if (normalizedEntries.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('ladipo_part_compatibility')
+    .insert(normalizedEntries)
+    .select('id, part_id, make, model, year_min, year_max, engine_code, notes, created_at')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    logError('[Ladipo] upsertCompatibilityEntries insert failed', error);
+    throw new Error('Failed to update compatibility');
+  }
+
+  return data || [];
+}
+
+export async function deleteCompatibilityEntry(entryId) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('ladipo_part_compatibility')
+    .delete()
+    .eq('id', entryId)
+    .select('id, part_id')
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new Error('Compatibility entry not found');
+    }
+    logError('[Ladipo] deleteCompatibilityEntry failed', error);
+    throw new Error('Failed to delete compatibility entry');
+  }
+
+  return data;
 }
 
 // ─── Cart ────────────────────────────────────────────────────────────────────
@@ -571,6 +763,7 @@ function flattenPart(part) {
   if (!part) return part;
   const inventoryRows = Array.isArray(part.inventory) ? part.inventory : [];
   const primaryInv = inventoryRows[0] || null;
+  const compatibilityRows = Array.isArray(part.compatibility) ? part.compatibility : [];
   return {
     ...part,
     inventory_id: primaryInv?.id ?? null,
@@ -578,6 +771,7 @@ function flattenPart(part) {
     stock_qty: primaryInv?.stock_qty ?? 0,
     seller_label: primaryInv?.seller_label ?? 'Motoka',
     primary_image_url: part.images?.[0] ?? null,
+    compatibility: compatibilityRows,
     inventory: undefined, // remove raw array
   };
 }

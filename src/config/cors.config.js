@@ -106,6 +106,8 @@ export function getCorsConfig() {
     allowedHeaders: [
       'Content-Type',
       'Authorization',
+      'Idempotency-Key',
+      'idempotency-key',
       'X-Requested-With',
       'Accept',
       'Cache-Control',

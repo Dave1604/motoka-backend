@@ -121,6 +121,9 @@ function normalizeProductPayload(payload = {}) {
   const isActive = payload.is_active !== undefined
     ? String(payload.is_active).toLowerCase() === 'true' || payload.is_active === true
     : true;
+  const isUniversal = payload.is_universal !== undefined
+    ? String(payload.is_universal).toLowerCase() === 'true' || payload.is_universal === true
+    : false;
   let images = [];
   if (Array.isArray(payload.images)) {
     images = payload.images;
@@ -172,6 +175,7 @@ function normalizeProductPayload(payload = {}) {
       description,
       condition,
       part_type: partType,
+      is_universal: isUniversal,
       is_active: isActive,
       images,
       specifications,
@@ -753,7 +757,7 @@ export async function listLadipoProducts(req, res) {
     let query = supabase
       .from('ladipo_parts')
       .select(`
-        id, slug, name, description, brand, condition, part_type, images, is_active, category_id, created_at, updated_at,
+        id, slug, name, description, brand, condition, part_type, images, is_active, is_universal, category_id, created_at, updated_at,
         category:ladipo_categories(id, name, slug),
         inventory:ladipo_part_inventory(id, part_id, price_kobo, stock_qty, seller_label)
       `, { count: 'exact' })

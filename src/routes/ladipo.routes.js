@@ -1,9 +1,13 @@
 import express from 'express';
 import { authenticate } from '../middleware/authenticate.js';
+import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
 import {
   handleGetCategories,
   handleGetParts,
   handleGetPartBySlug,
+  handleGetCompatibility,
+  handleUpsertCompatibility,
+  handleDeleteCompatibilityEntry,
   handleGetCart,
   handleAddToCart,
   handleUpdateCartItem,
@@ -21,6 +25,9 @@ const router = express.Router();
 router.get('/ladipo/categories', handleGetCategories);
 router.get('/ladipo/parts', handleGetParts);
 router.get('/ladipo/parts/:slug', handleGetPartBySlug);
+router.get('/ladipo/parts/:id/compatibility', handleGetCompatibility);
+router.post('/ladipo/parts/:id/compatibility', authenticateAdmin, handleUpsertCompatibility);
+router.delete('/ladipo/compatibility/:entryId', authenticateAdmin, handleDeleteCompatibilityEntry);
 
 // ─── Protected: orders ───────────────────────────────────────────────────────
 // NOTE: verify-payment must be declared before /:orderNumber to avoid route collision
