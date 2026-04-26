@@ -1,6 +1,7 @@
 import express from 'express';
 import { authenticate } from '../middleware/authenticate.js';
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
+import { ladipoCartLimiter, ladipoCheckoutLimiter } from '../middleware/rateLimiter.js';
 import {
   handleGetCategories,
   handleGetParts,
@@ -31,18 +32,28 @@ router.delete('/ladipo/compatibility/:entryId', authenticateAdmin, handleDeleteC
 
 // ─── Protected: orders ───────────────────────────────────────────────────────
 // NOTE: verify-payment must be declared before /:orderNumber to avoid route collision
-router.post('/ladipo/orders/verify-payment', authenticate, handleVerifyPayment);
+router.post(
+  '/ladipo/orders/verify-payment',
+  authenticate,
+  ladipoCheckoutLimiter,
+  handleVerifyPayment
+);
 
 // ─── Protected: cart ─────────────────────────────────────────────────────────
-router.get('/ladipo/cart', authenticate, handleGetCart);
-router.post('/ladipo/cart', authenticate, handleAddToCart);
-router.patch('/ladipo/cart/:id', authenticate, handleUpdateCartItem);
-router.delete('/ladipo/cart/:id', authenticate, handleDeleteCartItem);
+router.get('/ladipo/cart', authenticate, ladipoCartLimiter, handleGetCart);
+router.post('/ladipo/cart', authenticate, ladipoCartLimiter, handleAddToCart);
+router.patch('/ladipo/cart/:id', authenticate, ladipoCartLimiter, handleUpdateCartItem);
+router.delete('/ladipo/cart/:id', authenticate, ladipoCartLimiter, handleDeleteCartItem);
 
 // ─── Protected: orders ───────────────────────────────────────────────────────
-router.post('/ladipo/orders', authenticate, handleCreateOrder);
+router.post('/ladipo/orders', authenticate, ladipoCheckoutLimiter, handleCreateOrder);
 router.get('/ladipo/orders', authenticate, handleGetUserOrders);
 router.get('/ladipo/orders/:orderNumber', authenticate, handleGetOrder);
-router.post('/ladipo/orders/:orderNumber/pay', authenticate, handlePayOrder);
+router.post(
+  '/ladipo/orders/:orderNumber/pay',
+  authenticate,
+  ladipoCheckoutLimiter,
+  handlePayOrder
+);
 
 export default router;

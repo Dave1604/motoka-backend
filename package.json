@@ -40,7 +40,8 @@
     "qrcode": "^1.5.4",
     "resend": "^6.9.1",
     "speakeasy": "^2.0.0",
-    "twilio": "^5.12.2"
+    "twilio": "^5.12.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "jest": "^29.7.0",

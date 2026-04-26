@@ -16,6 +16,23 @@ import {
   deleteCompatibilityEntry,
 } from '../services/ladipo/ladipo.service.js';
 import { logError } from '../utils/logger.js';
+import {
+  ladipoAddToCartBodySchema,
+  ladipoCartItemIdParamSchema,
+  ladipoCreateOrderBodySchema,
+  ladipoOrderNumberParamSchema,
+  ladipoPayOrderBodySchema,
+  ladipoUpdateCartItemBodySchema,
+  ladipoVerifyPaymentBodySchema,
+} from '../validators/ladipo.validation.js';
+
+function invalidInput(res, zodError) {
+  return res.status(400).json({
+    success: false,
+    message: 'Invalid input',
+    issues: zodError.issues.map((i) => ({ path: i.path, message: i.message })),
+  });
+}
 
 // GET /ladipo/categories
 export const handleGetCategories = async (req, res) => {
@@ -116,8 +133,11 @@ export const handleGetCart = async (req, res) => {
 // POST /ladipo/cart
 export const handleAddToCart = async (req, res) => {
   try {
+    const parsed = ladipoAddToCartBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidInput(res, parsed.error);
+
     const userId = req.user.id;
-    const { product_id, quantity } = req.body;
+    const { product_id, quantity } = parsed.data;
     const cartItem = await addCartItem({ userId, product_id, quantity });
     return res.status(201).json({ success: true, data: cartItem });
   } catch (error) {
@@ -130,9 +150,15 @@ export const handleAddToCart = async (req, res) => {
 // PATCH /ladipo/cart/:id
 export const handleUpdateCartItem = async (req, res) => {
   try {
+    const paramsParsed = ladipoCartItemIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) return invalidInput(res, paramsParsed.error);
+
+    const bodyParsed = ladipoUpdateCartItemBodySchema.safeParse(req.body);
+    if (!bodyParsed.success) return invalidInput(res, bodyParsed.error);
+
     const userId = req.user.id;
-    const { id } = req.params;
-    const { quantity } = req.body;
+    const { id } = paramsParsed.data;
+    const { quantity } = bodyParsed.data;
     const cartItem = await updateCartItemQuantity({ userId, cartItemId: id, quantity });
     return res.json({ success: true, data: cartItem });
   } catch (error) {
@@ -145,8 +171,11 @@ export const handleUpdateCartItem = async (req, res) => {
 // DELETE /ladipo/cart/:id
 export const handleDeleteCartItem = async (req, res) => {
   try {
+    const paramsParsed = ladipoCartItemIdParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) return invalidInput(res, paramsParsed.error);
+
     const userId = req.user.id;
-    const { id } = req.params;
+    const { id } = paramsParsed.data;
     await removeCartItem({ userId, cartItemId: id });
     return res.json({ success: true, message: 'Cart item removed' });
   } catch (error) {
@@ -159,12 +188,11 @@ export const handleDeleteCartItem = async (req, res) => {
 // POST /ladipo/orders
 export const handleCreateOrder = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const { items, delivery } = req.body;
+    const parsed = ladipoCreateOrderBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidInput(res, parsed.error);
 
-    if (!items || !Array.isArray(items) || items.length === 0) {
-      return res.status(400).json({ success: false, message: 'items array is required' });
-    }
+    const userId = req.user.id;
+    const { items, delivery } = parsed.data;
 
     const order = await createOrder({ userId, items, delivery });
     return res.status(201).json({ success: true, data: order });
@@ -180,10 +208,16 @@ export const handleCreateOrder = async (req, res) => {
 // POST /ladipo/orders/:orderNumber/pay
 export const handlePayOrder = async (req, res) => {
   try {
+    const paramsParsed = ladipoOrderNumberParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) return invalidInput(res, paramsParsed.error);
+
+    const bodyParsed = ladipoPayOrderBodySchema.safeParse(req.body ?? {});
+    if (!bodyParsed.success) return invalidInput(res, bodyParsed.error);
+
     const userId = req.user.id;
     const userEmail = req.user.email;
-    const { orderNumber } = req.params;
-    const { payment_gateway = 'paystack' } = req.body;
+    const { orderNumber } = paramsParsed.data;
+    const { payment_gateway } = bodyParsed.data;
     const result = await payOrder({ orderNumber, userId, userEmail, payment_gateway });
     return res.json({ success: true, data: result });
   } catch (error) {
@@ -198,9 +232,11 @@ export const handlePayOrder = async (req, res) => {
 // POST /ladipo/orders/verify-payment
 export const handleVerifyPayment = async (req, res) => {
   try {
+    const parsed = ladipoVerifyPaymentBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidInput(res, parsed.error);
+
     const userId = req.user.id;
-    const { reference } = req.body;
-    if (!reference) return res.status(400).json({ success: false, message: 'reference is required' });
+    const { reference } = parsed.data;
 
     const order = await verifyAndFulfillOrder(reference, userId);
     if (!order) return res.status(400).json({ success: false, message: 'Payment verification failed' });
@@ -228,8 +264,11 @@ export const handleGetUserOrders = async (req, res) => {
 // GET /ladipo/orders/:orderNumber
 export const handleGetOrder = async (req, res) => {
   try {
+    const paramsParsed = ladipoOrderNumberParamSchema.safeParse(req.params);
+    if (!paramsParsed.success) return invalidInput(res, paramsParsed.error);
+
     const userId = req.user.id;
-    const { orderNumber } = req.params;
+    const { orderNumber } = paramsParsed.data;
     const order = await getOrderByNumber({ orderNumber, userId });
     if (!order) return res.status(404).json({ success: false, message: 'Order not found' });
     return res.json({ success: true, data: order });
