@@ -1,7 +1,7 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { createHash } from 'node:crypto';
 import { logError, logInfo } from '../utils/logger.js';
-import { uploadFile } from '../services/fileUpload.service.js';
+import { deleteFromCloudinary, uploadToCloudinary } from '../services/fileUpload.service.js';
 import { withIdempotency } from '../services/ladipo/ladipoAdminIdempotency.service.js';
 import {
   notifyLadipoOrderCancelled,
@@ -798,12 +798,10 @@ export async function createLadipoProduct(req, res) {
     const supabase = getSupabaseAdmin();
     const payload = normalizeProductPayload(req.body);
     if (req.file) {
-      const uploadedImageUrl = await uploadFile(
+      const uploadedImageUrl = await uploadToCloudinary(
         req.file.buffer,
         req.file.originalname,
         req.file.mimetype,
-        req.admin?.id || 'admin',
-        'ladipo-products',
       );
       payload.part.images = [uploadedImageUrl, ...(payload.part.images || [])];
     }
@@ -847,13 +845,13 @@ export async function updateLadipoProduct(req, res) {
       .maybeSingle();
     const payload = normalizeProductPayload(req.body);
     if (req.file) {
-      const uploadedImageUrl = await uploadFile(
+      const uploadedImageUrl = await uploadToCloudinary(
         req.file.buffer,
         req.file.originalname,
         req.file.mimetype,
-        req.admin?.id || 'admin',
-        'ladipo-products',
       );
+      const existingImages = Array.isArray(existingPart?.images) ? existingPart.images : [];
+      await Promise.all(existingImages.map((url) => deleteFromCloudinary(url)));
       payload.part.images = [uploadedImageUrl];
     } else if ((!payload.part.images || payload.part.images.length === 0) && existingPart?.images) {
       payload.part.images = existingPart.images;
@@ -917,6 +915,15 @@ export async function deleteLadipoProduct(req, res) {
   try {
     const supabase = getSupabaseAdmin();
     const { productId } = req.params;
+
+    const { data: existingPart } = await supabase
+      .from('ladipo_parts')
+      .select('images')
+      .eq('id', productId)
+      .maybeSingle();
+
+    const existingImages = Array.isArray(existingPart?.images) ? existingPart.images : [];
+    await Promise.all(existingImages.map((url) => deleteFromCloudinary(url)));
 
     const { error } = await supabase
       .from('ladipo_parts')
