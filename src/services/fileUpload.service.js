@@ -64,6 +64,56 @@ export const uploadFiles = async (files, userId, carSlug = null) => {
 };
 
 /**
+ * Generates a short-lived signed URL for a stored file.
+ * Handles both legacy public-URL format and bare relative paths.
+ * Call this instead of returning stored file_url values directly (KAGE-006).
+ * @param {string} filePathOrUrl - Stored file path or public URL
+ * @param {number} expiresIn - Seconds until expiry (default 1 hour)
+ * @returns {Promise<string>} Signed URL
+ */
+export const getSignedUrl = async (filePathOrUrl, expiresIn = 3600) => {
+  const supabaseAdmin = getSupabaseAdmin();
+
+  // Support legacy full public URLs stored before this fix was applied
+  let filePath = filePathOrUrl;
+  const publicPrefix = `/storage/v1/object/public/${BUCKET_NAME}/`;
+  if (filePathOrUrl.includes(publicPrefix)) {
+    filePath = filePathOrUrl.split(publicPrefix)[1];
+  }
+
+  const { data, error } = await supabaseAdmin.storage
+    .from(BUCKET_NAME)
+    .createSignedUrl(filePath, expiresIn);
+
+  if (error || !data?.signedUrl) {
+    throw new Error(`Failed to generate signed URL: ${error?.message}`);
+  }
+
+  return data.signedUrl;
+};
+
+/**
+ * Transforms an array of document objects so that file_url becomes a fresh signed URL.
+ * Documents whose URL cannot be signed are returned with file_url set to null.
+ * @param {Array} documents
+ * @returns {Promise<Array>}
+ */
+export const withSignedUrls = async (documents) => {
+  if (!documents?.length) return documents;
+  return Promise.all(
+    documents.map(async (doc) => {
+      if (!doc.file_url) return doc;
+      try {
+        const signedUrl = await getSignedUrl(doc.file_url);
+        return { ...doc, file_url: signedUrl };
+      } catch {
+        return { ...doc, file_url: null };
+      }
+    })
+  );
+};
+
+/**
  * Deletes a file from Supabase Storage
  * @param {string} fileUrl - Public URL of the file
  * @returns {Promise<void>}

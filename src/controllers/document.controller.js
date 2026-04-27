@@ -1,7 +1,7 @@
 import * as response from '../utils/responses.js';
 import { logError } from '../utils/logger.js';
 import { createDocument, getCarDocuments, getDriverLicenseDocuments } from '../services/document.service.js';
-import { uploadFile } from '../services/fileUpload.service.js';
+import { uploadFile, getSignedUrl, withSignedUrls } from '../services/fileUpload.service.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { HTTP_STATUS } from '../constants/car.constants.js';
 
@@ -53,7 +53,8 @@ export const uploadDocument = async (req, res) => {
         fileUrl,
         uploadedByType: 'user',
       });
-      return response.created(res, { document: doc }, 'Document uploaded successfully');
+      const signedUrl = await getSignedUrl(doc.file_url).catch(() => null);
+      return response.created(res, { document: { ...doc, file_url: signedUrl } }, 'Document uploaded successfully');
     }
 
     if (document_type === 'driver_license') {
@@ -66,7 +67,8 @@ export const uploadDocument = async (req, res) => {
         fileUrl,
         uploadedByType: 'user',
       });
-      return response.created(res, { document: doc }, 'Document uploaded successfully');
+      const signedUrl = await getSignedUrl(doc.file_url).catch(() => null);
+      return response.created(res, { document: { ...doc, file_url: signedUrl } }, 'Document uploaded successfully');
     }
 
     return response.error(res, 'Invalid document type', HTTP_STATUS.BAD_REQUEST);
@@ -101,7 +103,8 @@ export const listCarDocuments = async (req, res) => {
       return response.notFound(res, 'Car not found');
     }
 
-    const documents = await getCarDocuments(userId, car.id);
+    const rawDocs = await getCarDocuments(userId, car.id);
+    const documents = await withSignedUrls(rawDocs);
     return response.success(res, { documents }, 'Documents retrieved');
   } catch (error) {
     logError('List car documents error', error);
@@ -117,7 +120,8 @@ export const listDriverLicenseDocuments = async (req, res) => {
   try {
     const userId = req.user.id;
     const { year } = req.query;
-    const documents = await getDriverLicenseDocuments(userId, year || null);
+    const rawDocs = await getDriverLicenseDocuments(userId, year || null);
+    const documents = await withSignedUrls(rawDocs);
     return response.success(res, { documents }, 'Documents retrieved');
   } catch (error) {
     logError('List driver license documents error', error);
