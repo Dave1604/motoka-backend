@@ -14,6 +14,10 @@ export const ladipoCartItemIdParamSchema = z.object({
   id: uuid,
 });
 
+export const ladipoProductIdParamSchema = z.object({
+  productId: uuid,
+});
+
 export const ladipoAddToCartBodySchema = z.object({
   product_id: uuid,
   quantity: z.coerce.number().int().min(1).max(99).optional().default(1),
@@ -59,4 +63,16 @@ export const ladipoPayOrderBodySchema = z.object({
 /** Paystack reference or Monicredit / Ladipo gateway reference string */
 export const ladipoVerifyPaymentBodySchema = z.object({
   reference: z.string().trim().min(8).max(256),
+});
+
+const compatibilityEntrySchema = z.object({
+  make: z.string().trim().min(1).max(100),
+  model: z.string().trim().min(1).max(100),
+  year_from: z.coerce.number().int().min(1900).max(2100),
+  year_to: z.coerce.number().int().min(1900).max(2100),
+  notes: z.string().trim().max(500).optional().nullable(),
+});
+
+export const ladipoCompatibilityBodySchema = z.object({
+  entries: z.array(compatibilityEntrySchema).max(100).optional().default([]),
 });

@@ -35,7 +35,10 @@ const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_
 
 const productionRequiredEnvVars = [
   'MONICREDIT_WEBHOOK_SECRET',
-  'ALLOWED_ORIGINS'
+  'ALLOWED_ORIGINS',
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
 ];
 
 
@@ -63,6 +66,7 @@ if (isProduction) {
     console.error('These variables are mandatory for production security:');
     console.error('  • MONICREDIT_WEBHOOK_SECRET: Required for webhook signature verification');
     console.error('  • ALLOWED_ORIGINS: Required for CORS origin restrictions');
+    console.error('  • CLOUDINARY_*: Required for Ladipo product image uploads');
     console.error('');
     console.error('Set these variables in your production environment before starting.');
     console.error('Application cannot start without these security configurations.');

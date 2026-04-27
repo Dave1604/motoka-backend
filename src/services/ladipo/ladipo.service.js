@@ -506,6 +506,25 @@ export async function createOrder({ userId, items, delivery }) {
     throw new Error('Failed to create order');
   }
 
+  // Stock is intentionally unlimited for Ladipo products.
+  // We only clear ordered products from cart after successful order creation.
+  const orderedPartIds = [...new Set(lineItems.map((item) => item.part_id).filter(Boolean))];
+  if (orderedPartIds.length > 0) {
+    const { error: cartDeleteError } = await supabase
+      .from('ladipo_cart_items')
+      .delete()
+      .eq('user_id', userId)
+      .in('product_id', orderedPartIds);
+    if (cartDeleteError) {
+      logError('[Ladipo] cart cleanup failed after order creation', {
+        order_number,
+        user_id: userId,
+        product_ids: orderedPartIds,
+        error: cartDeleteError.message,
+      });
+    }
+  }
+
   logInfo('[Ladipo] Order created', { order_number, user_id: userId, total_kobo });
   notifyLadipoOrderCreated(userId, order).catch(() => {});
   return order;

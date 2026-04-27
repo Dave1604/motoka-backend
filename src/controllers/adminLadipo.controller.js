@@ -794,11 +794,12 @@ export async function listLadipoProducts(req, res) {
 }
 
 export async function createLadipoProduct(req, res) {
+  let uploadedImageUrl = null;
   try {
     const supabase = getSupabaseAdmin();
     const payload = normalizeProductPayload(req.body);
     if (req.file) {
-      const uploadedImageUrl = await uploadToCloudinary(
+      uploadedImageUrl = await uploadToCloudinary(
         req.file.buffer,
         req.file.originalname,
         req.file.mimetype,
@@ -829,6 +830,9 @@ export async function createLadipoProduct(req, res) {
       data: { ...part, inventory },
     });
   } catch (error) {
+    if (uploadedImageUrl) {
+      await deleteFromCloudinary(uploadedImageUrl);
+    }
     logError('[Admin Ladipo] createLadipoProduct', error);
     return res.status(400).json({ status: false, message: error.message || 'Failed to create Ladipo product' });
   }
@@ -921,6 +925,10 @@ export async function deleteLadipoProduct(req, res) {
       .select('images')
       .eq('id', productId)
       .maybeSingle();
+
+    if (!existingPart) {
+      return res.status(404).json({ status: false, message: 'Ladipo product not found' });
+    }
 
     const existingImages = Array.isArray(existingPart?.images) ? existingPart.images : [];
     await Promise.all(existingImages.map((url) => deleteFromCloudinary(url)));

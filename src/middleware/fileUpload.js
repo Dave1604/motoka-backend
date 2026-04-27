@@ -223,7 +223,32 @@ const ladipoProductImageUpload = multer({
   },
 });
 
-export const handleLadipoProductImageUpload = ladipoProductImageUpload.single('image_file');
+export const handleLadipoProductImageUpload = (req, res, next) => {
+  const uploadSingle = ladipoProductImageUpload.single('image_file');
+  uploadSingle(req, res, (err) => {
+    if (!err) return next();
+
+    if (err instanceof multer.MulterError) {
+      let message = 'Image upload error';
+      switch (err.code) {
+        case 'LIMIT_FILE_SIZE':
+          message = 'Image too large. Maximum size is 5MB';
+          break;
+        case 'LIMIT_UNEXPECTED_FILE':
+          message = `Unexpected file field: ${err.field}`;
+          break;
+        default:
+          message = err.message || 'Image upload error';
+      }
+      return res.status(400).json({ success: false, message });
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: err.message || 'Image upload error',
+    });
+  });
+};
 
 /**
  * SCALABILITY: Cleanup temp files after processing
