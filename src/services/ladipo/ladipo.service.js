@@ -542,7 +542,6 @@ export async function payOrder({ orderNumber, userId, userEmail, payment_gateway
 
   if (error || !order) throw new Error('Order not found');
   if (order.payment_status === 'paid') throw new Error('Order already paid');
-  if (order.payment_status === 'failed') throw new Error('Order payment failed — please create a new order');
 
   // Use email from auth token; optionally enrich with profile for Monicredit customer fields
   const email = userEmail;
