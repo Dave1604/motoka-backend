@@ -4,7 +4,7 @@ import * as oauth from '../controllers/oauth.controller.js';
 import * as twoFactor from '../controllers/twoFactor.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
-import { authLimiter, otpLimiter, passwordResetLimiter } from '../middleware/rateLimiter.js';
+import { authLimiter, otpLimiter, passwordResetLimiter, loginAccountLimiter, twoFAAccountLimiter } from '../middleware/rateLimiter.js';
 import { registerValidation, loginValidation, emailValidation, otpValidation, resetPasswordValidation, twoFactorCodeValidation, validate } from '../utils/validators.js';
 
 const router = Router();
@@ -15,7 +15,7 @@ router.get('/auth/callback', oauth.handleCallback);
 
 // Public routes
 router.post('/register', authLimiter, registerValidation, validate, auth.register);
-router.post('/login', authLimiter, loginValidation, validate, auth.login);
+router.post('/login', authLimiter, loginAccountLimiter, loginValidation, validate, auth.login);
 router.post('/send-otp', passwordResetLimiter, emailValidation, validate, auth.sendPasswordResetOTP);
 router.post('/verify-otp', otpLimiter, otpValidation, validate, auth.verifyPasswordResetOTP);
 router.post('/reset-password', resetPasswordValidation, validate, auth.resetPassword);
@@ -30,7 +30,7 @@ router.post('/verify-email', authLimiter, otpValidation, validate, auth.verifyEm
 router.post('/refresh', auth.refresh);
 
 // 2FA public routes
-router.post('/2fa/verify-login', authLimiter, auth.verify2FALogin);
+router.post('/2fa/verify-login', authLimiter, twoFAAccountLimiter, auth.verify2FALogin);
 router.post('/2fa/verify-recovery', authLimiter, twoFactor.verifyRecoveryCode);
 
 // Protected routes

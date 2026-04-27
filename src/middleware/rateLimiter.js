@@ -1,7 +1,4 @@
 import rateLimit from 'express-rate-limit';
-// TODO: Uncomment for Redis support
-// import RedisStore from 'rate-limit-redis';
-// import { createClient } from 'redis';
 
 /**
  * SCALABILITY: Rate Limiting Configuration
@@ -41,10 +38,19 @@ import rateLimit from 'express-rate-limit';
  * ```
  */
 
-/**
- * Rate limit configuration profiles
- * Organized by endpoint sensitivity
- */
+// RFC 1918 private ranges + loopback — never legitimate in X-Forwarded-For from the internet.
+// If trust proxy causes req.ip to resolve to one of these, it means the header was spoofed
+// (KAGE-002). Fall back to the actual TCP socket address so spoofing cannot bypass rate limits.
+const PRIVATE_IP_RE = /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|127\.|::1$|::ffff:127\.)/;
+
+function resolveRateLimitKey(req) {
+  const ip = req.ip || '';
+  if (PRIVATE_IP_RE.test(ip)) {
+    return req.socket?.remoteAddress || ip;
+  }
+  return ip;
+}
+
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
 const RATE_LIMITS = {
@@ -118,7 +124,8 @@ function createLimiter(config) {
     message: { success: false, message: config.message },
     standardHeaders: true,
     legacyHeaders: false,
-    // Skip rate limiting entirely for local development (localhost)
+    // Use validated IP — ignores spoofed RFC 1918 X-Forwarded-For values (KAGE-002)
+    keyGenerator: resolveRateLimitKey,
     skip: (req) => {
       const ip = req.ip || req.connection?.remoteAddress || '';
       return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
@@ -134,6 +141,36 @@ export const passwordResetLimiter = createLimiter(RATE_LIMITS.PASSWORD_RESET);
 export const carRegistrationLimiter = createLimiter(RATE_LIMITS.CAR_REGISTRATION);
 export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);
 export const webhookLimiter = createLimiter(RATE_LIMITS.WEBHOOK);
+
+// Per-account login limiter — keyed by email address (KAGE-008).
+// Prevents credential stuffing even when the attacker rotates IPs.
+export const loginAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: IS_DEV ? 100 : 10,
+  message: { success: false, message: 'Too many login attempts for this account, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.body?.email || '').toLowerCase() || resolveRateLimitKey(req),
+  skip: (req) => {
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  },
+});
+
+// Per-token 2FA limiter — keyed by user_id from body (KAGE-008).
+// Max 5 attempts per temp_token session; prevents OTP brute-force.
+export const twoFAAccountLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: IS_DEV ? 100 : 5,
+  message: { success: false, message: 'Too many 2FA attempts, please log in again' },
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => (req.body?.user_id || req.body?.email || '').toLowerCase() || resolveRateLimitKey(req),
+  skip: (req) => {
+    const ip = req.ip || req.connection?.remoteAddress || '';
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  },
+});
 
 // Mo chat limiter — keyed by user ID (not IP) since the endpoint requires auth
 export const moChatLimiter = rateLimit({

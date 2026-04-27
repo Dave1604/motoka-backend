@@ -47,6 +47,12 @@ import {
   initiateTokenization
 } from '../controllers/payment/subscription.controller.js';
 
+import {
+  getBanks,
+  getPaymentMethods,
+  getPendingTokenizationSubscriptions
+} from '../controllers/payment/paymentMethods.controller.js';
+
 const router = Router();
 
 router.get('/payment/callback', async (req, res) => {
@@ -185,5 +191,9 @@ router.put('/subscriptions/:id/cancel', authenticate, cancelSubscriptionHandler)
 router.put('/subscriptions/:id/pause', authenticate, pauseSubscriptionHandler);
 router.put('/subscriptions/:id/resume', authenticate, resumeSubscriptionHandler);
 router.post('/subscriptions/:id/tokenize', authenticate, checkEmailVerified, paymentLimiter, initiateTokenization);
+
+router.get('/banks', getBanks);
+router.get('/payment-methods', authenticate, getPaymentMethods);
+router.get('/payment-methods/pending-tokenization', authenticate, getPendingTokenizationSubscriptions);
 
 export default router;

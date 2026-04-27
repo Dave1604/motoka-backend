@@ -3,6 +3,23 @@ import * as response from '../utils/responses.js';
 import * as twoFactorService from '../services/twoFactor.service.js';
 import { sendPasswordResetOTP as sendPasswordResetEmail } from '../services/email/email.service.js';
 
+// Fields that must never appear in any API response (KAGE-003, KAGE-005)
+const SAFE_PROFILE_FIELDS = [
+  'id', 'user_id', 'first_name', 'last_name', 'phone_number', 'email',
+  'image', 'nin', 'address', 'gender', 'user_type', 'user_type_id',
+  'is_admin', 'is_suspended', 'two_factor_enabled', 'two_factor_type',
+  'two_factor_confirmed_at', 'created_at', 'updated_at',
+];
+
+function sanitizeProfile(profile) {
+  if (!profile) return null;
+  return Object.fromEntries(
+    SAFE_PROFILE_FIELDS.filter(k => k in profile).map(k => [k, profile[k]])
+  );
+}
+
+const SAFE_PROFILE_SELECT = 'id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, created_at, updated_at';
+
 export const register = async (req, res) => {
   try {
     const { first_name, last_name, email, phone, password } = req.body;
@@ -48,7 +65,7 @@ export const register = async (req, res) => {
     let profile = null;
     const { data: existingProfile } = await supabaseAdmin
       .from('profiles')
-      .select('*')
+      .select(SAFE_PROFILE_SELECT)
       .eq('id', userId)
       .maybeSingle();
 
@@ -73,7 +90,7 @@ export const register = async (req, res) => {
           email,
           user_type_id: 2
         })
-        .select('*')
+        .select(SAFE_PROFILE_SELECT)
         .single();
 
       if (insertError) {
@@ -94,7 +111,7 @@ export const register = async (req, res) => {
     }).catch(() => {}); // non-fatal if OTP fails
 
     return response.created(res, {
-      user: { id: userId, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...profile },
+      user: { id: userId, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...sanitizeProfile(profile) },
       session: data.session
     }, 'Registration successful. Please check your email for verification code.');
   } catch (error) {
@@ -123,25 +140,25 @@ export const login = async (req, res) => {
     
     const { data: profile } = await supabaseAdmin
       .from('profiles')
-      .select('*')
+      .select(SAFE_PROFILE_SELECT)
       .eq('id', data.user.id)
       .single();
-    
+
     if (profile?.is_suspended) {
       return response.forbidden(res, 'Your account has been suspended');
     }
-    
+
     if (profile?.deleted_at) {
       return response.forbidden(res, 'Your account has been deleted');
     }
-    
+
     if (profile?.two_factor_enabled) {
       const tempToken = await twoFactorService.create2FALoginToken(data.user.id);
-      
+
       if (profile.two_factor_type === 'email') {
         await twoFactorService.generateEmail2FACode(data.user.id);
       }
-      
+
       return response.success(res, {
         requires_2fa: true,
         two_factor_method: profile.two_factor_type,
@@ -149,9 +166,9 @@ export const login = async (req, res) => {
         user_id: data.user.id
       }, '2FA verification required');
     }
-    
+
     return response.success(res, {
-      user: { id: data.user.id, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...profile },
+      user: { id: data.user.id, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...sanitizeProfile(profile) },
       session: data.session
     }, 'Login successful');
   } catch (error) {
@@ -439,7 +456,7 @@ export const verifyEmail = async (req, res) => {
 export const me = async (req, res) => {
   try {
     return response.success(res, {
-      user: { id: req.user.id, email: req.user.email, email_verified: !!req.user.email_confirmed_at, ...req.user.profile }
+      user: { id: req.user.id, email: req.user.email, email_verified: !!req.user.email_confirmed_at, ...sanitizeProfile(req.user.profile) }
     });
   } catch (error) {
     console.error('Get user error:', error);
@@ -486,10 +503,10 @@ export const verify2FALogin = async (req, res) => {
     }
     
     const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(user_id);
-    const { data: fullProfile } = await supabaseAdmin.from('profiles').select('*').eq('id', user_id).single();
-    
+    const { data: fullProfile } = await supabaseAdmin.from('profiles').select(SAFE_PROFILE_SELECT).eq('id', user_id).single();
+
     return response.success(res, {
-      user: { id: user.id, email: user.email, email_verified: !!user.email_confirmed_at, ...fullProfile }
+      user: { id: user.id, email: user.email, email_verified: !!user.email_confirmed_at, ...sanitizeProfile(fullProfile) }
     }, '2FA verified successfully');
   } catch (error) {
     console.error('2FA verify login error:', error);
