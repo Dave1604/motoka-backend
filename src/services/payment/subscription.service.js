@@ -58,15 +58,16 @@ export async function createSubscription({
   authorizationCode = null,
   cardDetails = {},
   renewalDocumentIds = [],
-  metadata = {}
+  metadata = {},
+  nextBillingDate: overrideNextBillingDate = null
 }) {
   const supabaseAdmin = getSupabaseAdmin();
-  
+
   // Validate plan
   if (!Object.values(SUBSCRIPTION_PLAN).includes(plan)) {
     throw new SubscriptionError('Invalid subscription plan', HTTP_STATUS.BAD_REQUEST);
   }
-  
+
   // Check if car already has an active subscription
   const hasActive = await hasActiveSubscription(carId);
   if (hasActive) {
@@ -76,10 +77,10 @@ export async function createSubscription({
       'DUPLICATE_SUBSCRIPTION'
     );
   }
-  
-  // Calculate billing dates
+
+  // Calculate billing dates — allow override for deferred (card-setup) flow
   const billingCycleMonths = getMonthsForPlan(plan);
-  const nextBillingDate = calculateNextBillingDate(null, plan);
+  const nextBillingDate = overrideNextBillingDate || calculateNextBillingDate(null, plan);
   
   // Generate unique subscription code
   const subscriptionCode = generateSubscriptionCode();

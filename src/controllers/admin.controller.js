@@ -1941,7 +1941,7 @@ export async function broadcastAddCarReminder(req, res) {
     const { data: carsData, error: carsError } = await supabase
       .from('cars')
       .select('user_id')
-      .eq('is_deleted', false);
+      .is('deleted_at', null);
 
     if (carsError) {
       logError('[Broadcast] Failed to query cars', { error: carsError.message });
@@ -2077,7 +2077,7 @@ export async function triggerExpiryReminders(req, res) {
           )
         `)
         .eq('expiry_date', targetDateStr)
-        .eq('is_deleted', false)
+        .is('deleted_at', null)
         .eq('status', 'approved')
         .not('profiles.phone_number', 'is', null);
 
