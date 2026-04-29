@@ -27,6 +27,20 @@ import {
 const ATTEMPT_WINDOWS = [14, 7, 3];
 const MAX_RETRIES = ATTEMPT_WINDOWS.length;
 
+// Send pre-charge notification at this many days before expiry
+const PRE_CHARGE_NOTIFY_DAYS = 30;
+
+function isCardExpired(card_exp_month, card_exp_year) {
+  if (!card_exp_month || !card_exp_year) return false;
+  const today = new Date();
+  const year = parseInt(card_exp_year, 10);
+  const month = parseInt(card_exp_month, 10);
+  // Card is valid through the last day of the expiry month
+  if (today.getFullYear() > year) return true;
+  if (today.getFullYear() === year && today.getMonth() + 1 > month) return true;
+  return false;
+}
+
 /**
  * Get subscriptions that are due for a billing attempt today.
  *
@@ -92,6 +106,70 @@ async function getSubscriptionsDueToday() {
 }
 
 /**
+ * Find subscriptions where the car expires in ~30 days and send a heads-up
+ * notification if we haven't done so yet. Stores a flag in metadata so the
+ * notification only fires once per billing cycle.
+ */
+async function sendPreChargeNotifications() {
+  const supabaseAdmin = getSupabaseAdmin();
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const { data: subscriptions, error } = await supabaseAdmin
+    .from('subscriptions')
+    .select(`*, cars:car_id (id, vehicle_make, vehicle_model, registration_no, expiry_date)`)
+    .eq('status', SUBSCRIPTION_STATUS.ACTIVE)
+    .not('authorization_code', 'is', null);
+
+  if (error || !subscriptions?.length) return;
+
+  for (const sub of subscriptions) {
+    if (!sub.cars?.expiry_date) continue;
+
+    const expiry = new Date(sub.cars.expiry_date);
+    expiry.setHours(0, 0, 0, 0);
+    const daysUntilExpiry = Math.round((expiry - today) / (1000 * 60 * 60 * 24));
+
+    // Notify in the 28–31 day window (to handle daily job timing drift)
+    if (daysUntilExpiry < 28 || daysUntilExpiry > 31) continue;
+
+    // Skip if already notified this cycle
+    if (sub.metadata?.pre_charge_notified_at) {
+      const notifiedAt = new Date(sub.metadata.pre_charge_notified_at);
+      const daysSinceNotify = Math.round((today - notifiedAt) / (1000 * 60 * 60 * 24));
+      if (daysSinceNotify < 60) continue; // already notified in this renewal cycle
+    }
+
+    const car = sub.cars;
+    const label = `${car.vehicle_make} ${car.vehicle_model} (${car.registration_no})`;
+    const chargeDate = new Date(expiry);
+    chargeDate.setDate(chargeDate.getDate() - 14);
+    const chargeDateStr = chargeDate.toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' });
+    const nairaAmount = (sub.amount / 100).toLocaleString('en-NG');
+
+    try {
+      await createInAppNotification(
+        sub.user_id,
+        'payment',
+        'auto_renewal_upcoming',
+        `Heads up! Auto-renewal for ${label} is coming up. We'll charge ₦${nairaAmount} on ${chargeDateStr}.`
+      );
+
+      // Mark as notified in metadata
+      const updatedMeta = { ...(sub.metadata || {}), pre_charge_notified_at: new Date().toISOString() };
+      await supabaseAdmin
+        .from('subscriptions')
+        .update({ metadata: updatedMeta })
+        .eq('id', sub.id);
+
+      logInfo('[AutoBilling] Pre-charge notification sent', { subscriptionId: sub.id, daysUntilExpiry });
+    } catch (err) {
+      logError('[AutoBilling] Failed to send pre-charge notification', { error: err.message, subscriptionId: sub.id });
+    }
+  }
+}
+
+/**
  * Charge a single subscription.
  * On success: update billing dates and reset retry_count.
  * On failure: increment retry_count; if max retries hit, pause and notify.
@@ -106,6 +184,15 @@ async function chargeSubscription(sub, daysUntilExpiry) {
     daysUntilExpiry,
     attempt: sub.retry_count + 1
   });
+
+  // Guard: skip charge and notify user if their saved card has expired
+  if (isCardExpired(sub.card_exp_month, sub.card_exp_year)) {
+    logWarn('[AutoBilling] Saved card is expired — skipping charge, notifying user', {
+      subscriptionId: sub.id
+    });
+    await notifyExpiredCard(sub);
+    return;
+  }
 
   try {
     const result = await chargeAuthorization({
@@ -233,6 +320,21 @@ async function notifySuccess(sub) {
   }
 }
 
+async function notifyExpiredCard(sub) {
+  const car = sub.cars;
+  const label = `${car.vehicle_make} ${car.vehicle_model} (${car.registration_no})`;
+  try {
+    await createInAppNotification(
+      sub.user_id,
+      'payment',
+      'card_expired',
+      `Your saved card for ${label} has expired. Please update it in Settings → Auto Renewal so we can renew your documents.`
+    );
+  } catch (err) {
+    logError('[AutoBilling] Failed to send expired card notification', { error: err.message });
+  }
+}
+
 async function notifyPaymentFailed(sub) {
   const car = sub.cars;
   const label = `${car.vehicle_make} ${car.vehicle_model} (${car.registration_no})`;
@@ -258,6 +360,11 @@ export async function runAutoBillingJob() {
   let failed = 0;
 
   try {
+    // Send 30-day heads-up notifications before checking charges
+    await sendPreChargeNotifications().catch(err =>
+      logError('[AutoBilling] Pre-charge notification run failed', { error: err.message })
+    );
+
     const dueSubscriptions = await getSubscriptionsDueToday();
     logInfo('[AutoBilling] Subscriptions due today', { count: dueSubscriptions.length });
 

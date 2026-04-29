@@ -47,6 +47,8 @@ import {
   initiateTokenization
 } from '../controllers/payment/subscription.controller.js';
 
+import { setupCardForValidCar } from '../controllers/payment/subscriptionSetup.controller.js';
+
 import {
   getBanks,
   getPaymentMethods,
@@ -180,6 +182,13 @@ router.get('/orders', authenticate, getUserOrdersHandler);
 router.get('/orders/:orderNumber', authenticate, getOrder);
 
 router.get('/subscriptions', authenticate, getSubscriptions);
+router.post(
+  '/subscriptions/card-setup',
+  authenticate,
+  checkEmailVerified,
+  paymentLimiter,
+  setupCardForValidCar
+);
 router.post(
   '/subscriptions',
   authenticate,
