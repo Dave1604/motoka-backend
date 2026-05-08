@@ -42,9 +42,6 @@ if (!process.env.OPENAI_API_KEY) {
 const productionRequiredEnvVars = [
   'MONICREDIT_WEBHOOK_SECRET',
   'ALLOWED_ORIGINS',
-  'CLOUDINARY_CLOUD_NAME',
-  'CLOUDINARY_API_KEY',
-  'CLOUDINARY_API_SECRET',
 ];
 
 
@@ -80,6 +77,10 @@ if (isProduction) {
   }
   
   console.log('✅ Production security configuration validated');
+
+  if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+    console.warn('⚠️  CLOUDINARY_* vars not set — admin Ladipo product image uploads will fail at runtime');
+  }
 }
 
 const app = express();
