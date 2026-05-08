@@ -11,7 +11,7 @@ import {
   createDocument,
   updateDocumentStatus
 } from '../services/document.service.js';
-import { uploadFile } from '../services/fileUpload.service.js';
+import { uploadFile, getSignedUrl } from '../services/fileUpload.service.js';
 import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
 import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
@@ -21,6 +21,7 @@ import { logError, logInfo } from '../utils/logger.js';
 import {
   sendOrderUpdateWhatsApp,
   sendDocumentReadyWhatsApp,
+  sendDocumentRejectedWhatsApp,
   sendAddCarReminderWhatsApp,
   sendExpiryReminderWhatsApp,
 } from '../services/whatsapp/whatsapp.service.js';
@@ -1543,10 +1544,11 @@ export const adminUploadDocument = async (req, res) => {
       uploadedByUserId: adminId,
     });
 
+    const signedUrl = await getSignedUrl(doc.file_url).catch(() => null);
     return res.status(201).json({
       status: true,
       message: 'Document uploaded successfully',
-      data: { document: doc },
+      data: { document: { ...doc, file_url: signedUrl } },
     });
   } catch (error) {
     logError('Admin upload document', error);
@@ -1616,6 +1618,43 @@ export const rejectDocument = async (req, res) => {
   try {
     const { reason } = req.body || {};
     const doc = await updateDocumentStatus(parseInt(req.params.id, 10), 'rejected', reason);
+
+    if (doc?.user_id) {
+      (async () => {
+        try {
+          const supabaseAdmin = getSupabaseAdmin();
+          const { data: profile } = await supabaseAdmin
+            .from('profiles')
+            .select('first_name, phone_number')
+            .eq('id', doc.user_id)
+            .single();
+
+          let vehicleName = 'your vehicle';
+          if (doc.car_id) {
+            const { data: car } = await supabaseAdmin
+              .from('cars')
+              .select('vehicle_make, vehicle_model, vehicle_year')
+              .eq('id', doc.car_id)
+              .single();
+            if (car) {
+              vehicleName = [car.vehicle_year, car.vehicle_make, car.vehicle_model]
+                .filter(Boolean)
+                .join(' ');
+            }
+          }
+
+          await sendDocumentRejectedWhatsApp({
+            phone:       profile?.phone_number || null,
+            name:        profile?.first_name   || 'User',
+            vehicleName,
+            reason:      reason || null,
+          });
+        } catch (err) {
+          logError('WhatsApp document rejected notification failed (non-blocking)', err);
+        }
+      })();
+    }
+
     return res.status(200).json({
       status: true,
       message: 'Document rejected',
@@ -1929,14 +1968,6 @@ export async function broadcastAddCarReminder(req, res) {
   const dryRun = req.query.dry_run === 'true';
 
   try {
-    if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') {
-      return response.error(
-        res,
-        'WhatsApp notifications are disabled. Set WHATSAPP_REMINDERS_ENABLED=true to enable.',
-        400,
-      );
-    }
-
     // Step 1: collect user_ids that already have at least one active car
     const { data: carsData, error: carsError } = await supabase
       .from('cars')
@@ -1977,6 +2008,14 @@ export async function broadcastAddCarReminder(req, res) {
         total_users_without_cars: total,
         message: `${total} user(s) would receive a notification. Remove dry_run=true to send.`,
       });
+    }
+
+    if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') {
+      return response.error(
+        res,
+        'WhatsApp notifications are disabled. Set WHATSAPP_REMINDERS_ENABLED=true to enable.',
+        400,
+      );
     }
 
     if (total === 0) {
@@ -2037,14 +2076,6 @@ export async function triggerExpiryReminders(req, res) {
   const specificDays = req.query.days ? parseInt(req.query.days) : null;
 
   try {
-    if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') {
-      return response.error(
-        res,
-        'WhatsApp notifications are disabled. Set WHATSAPP_REMINDERS_ENABLED=true to enable.',
-        400,
-      );
-    }
-
     const REMINDER_WINDOWS = specificDays ? [specificDays] : [30, 14, 7, 1];
     const frontendUrl = process.env.FRONTEND_URL || 'https://app.motoka.ng';
 
@@ -2091,6 +2122,11 @@ export async function triggerExpiryReminders(req, res) {
       results.push({ days, count: eligible.length });
 
       if (dryRun || eligible.length === 0) continue;
+
+      if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') {
+        results.push({ days, count: 0, error: 'WhatsApp disabled' });
+        continue;
+      }
 
       totalAttempted += eligible.length;
 

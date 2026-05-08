@@ -269,6 +269,35 @@ export async function sendDocumentReadyWhatsApp({ phone, name, vehicleName, docu
   }
 }
 
+export async function sendDocumentRejectedWhatsApp({ phone, name, vehicleName, reason }) {
+  if (process.env.WHATSAPP_REMINDERS_ENABLED !== 'true') return;
+  if (!phone) {
+    logInfo('[WhatsApp] Skipping document rejected — no phone number', { vehicleName });
+    return;
+  }
+
+  const contentSid = process.env.TWILIO_TEMPLATE_DOCUMENT_REJECTED;
+  if (!contentSid) {
+    logError('[WhatsApp] TWILIO_TEMPLATE_DOCUMENT_REJECTED is not set');
+    return;
+  }
+
+  try {
+    await _sendTemplate(phone, contentSid, {
+      '1': String(name),
+      '2': String(vehicleName),
+      '3': String(reason || 'Please re-upload a clearer copy of your document.'),
+    });
+    logInfo('[WhatsApp] Document rejected notification sent', { phone, vehicleName });
+  } catch (error) {
+    logError('[WhatsApp] Failed to send document rejected notification', {
+      error: error.message,
+      phone,
+      vehicleName,
+    });
+  }
+}
+
 /**
  * Sends an "add your car" prompt via WhatsApp to users without any registered vehicles.
  *
