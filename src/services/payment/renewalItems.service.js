@@ -7,6 +7,18 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { logError } from '../../utils/logger.js';
 
+// Short-lived cache so duplicate calls within a single request lifecycle are free.
+// Renewal items rarely change; 60 s is safe and eliminates the N+1 re-fetch in the
+// Monicredit adapter without coupling the adapter to the controller's data.
+let _itemsCache = null;
+let _itemsCacheAt = 0;
+const ITEMS_CACHE_TTL = 60_000;
+
+export function clearRenewalItemsCache() {
+  _itemsCache = null;
+  _itemsCacheAt = 0;
+}
+
 export class RenewalItemsError extends Error {
   constructor(message, statusCode = 500, code = null) {
     super(message);
@@ -17,6 +29,12 @@ export class RenewalItemsError extends Error {
 }
 
 export async function getRenewalItems({ includeInactive = false } = {}) {
+  // Only cache the default (active-only) query — admin calls with includeInactive bypass cache
+  const canUseCache = !includeInactive;
+  if (canUseCache && _itemsCache && (Date.now() - _itemsCacheAt) < ITEMS_CACHE_TTL) {
+    return _itemsCache;
+  }
+
   const supabaseAdmin = getSupabaseAdmin();
 
   let query = supabaseAdmin
@@ -36,12 +54,19 @@ export async function getRenewalItems({ includeInactive = false } = {}) {
     throw new RenewalItemsError('Failed to retrieve renewal items', 500, 'DB_ERROR');
   }
 
-  return (items || []).map((item) => ({
+  const result = (items || []).map((item) => ({
     id: item.item_key,
     name: item.name,
     price: item.price,
     required: item.required
   }));
+
+  if (canUseCache) {
+    _itemsCache = result;
+    _itemsCacheAt = Date.now();
+  }
+
+  return result;
 }
 
 export async function validateRenewalItemsSelection(selectedItemIds = []) {

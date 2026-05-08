@@ -4,8 +4,20 @@ import * as admin from '../controllers/admin.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
 import { checkAdmin } from '../middleware/checkAdmin.js';
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
-import { handleDocumentUpload } from '../middleware/fileUpload.js';
+import { handleDocumentUpload, handleLadipoProductImageUpload } from '../middleware/fileUpload.js';
 import { suspendUserValidation, validate } from '../utils/validators.js';
+import {
+  listLadipoOrders,
+  getLadipoOrderDetails,
+  getLadipoAdminCapabilities,
+  updateLadipoOrderStatus,
+  updateLadipoOrderAssignee,
+  updateLadipoOrderWorkflow,
+  listLadipoProducts,
+  createLadipoProduct,
+  updateLadipoProduct,
+  deleteLadipoProduct,
+} from '../controllers/adminLadipo.controller.js';
 
 // Multer for CSV uploads — memory storage, 5 MB cap, CSV only
 const csvUpload = multer({
@@ -65,6 +77,18 @@ router.get('/recent-transactions', authenticateAdmin, admin.getRecentTransaction
 router.get('/orders', authenticateAdmin, admin.listOrders);
 router.get('/orders/:orderNumber', authenticateAdmin, admin.getOrderDetails);
 router.put('/orders/:orderNumber/status', authenticateAdmin, admin.updateOrderStatus);
+
+// ── Ladipo marketplace management (authenticateAdmin) ────────────────────────
+router.get('/ladipo/capabilities', authenticateAdmin, getLadipoAdminCapabilities);
+router.get('/ladipo/orders', authenticateAdmin, listLadipoOrders);
+router.get('/ladipo/orders/:orderNumber', authenticateAdmin, getLadipoOrderDetails);
+router.put('/ladipo/orders/:orderNumber/status', authenticateAdmin, updateLadipoOrderStatus);
+router.put('/ladipo/orders/:orderNumber/assignee', authenticateAdmin, updateLadipoOrderAssignee);
+router.put('/ladipo/orders/:orderNumber/workflow', authenticateAdmin, updateLadipoOrderWorkflow);
+router.get('/ladipo/products', authenticateAdmin, listLadipoProducts);
+router.post('/ladipo/products', authenticateAdmin, handleLadipoProductImageUpload, createLadipoProduct);
+router.put('/ladipo/products/:productId', authenticateAdmin, handleLadipoProductImageUpload, updateLadipoProduct);
+router.delete('/ladipo/products/:productId', authenticateAdmin, deleteLadipoProduct);
 
 // ── Transaction management (authenticateAdmin) ────────────────────────────────
 router.get('/transactions/failed', authenticateAdmin, admin.getFailedTransactions);

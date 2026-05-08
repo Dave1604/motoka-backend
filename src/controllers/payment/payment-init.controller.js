@@ -422,40 +422,29 @@ export const initializePayment = async (req, res) => {
       car = carRow;
     }
 
-    // Abandon stale pending transactions: for car payments by car_id; for driver license by user + type
+    // Abandon stale pending transactions in a single atomic UPDATE (no prior SELECT needed).
     if (car) {
-      const { data: staleTxns } = await supabaseAdmin
+      const { data: abandoned } = await supabaseAdmin
         .from('payment_transactions')
-        .select('id, reference')
+        .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
         .eq('car_id', car.id)
         .eq('user_id', userId)
-        .eq('status', PAYMENT_STATUS.PENDING);
-      if (staleTxns && staleTxns.length > 0) {
-        await supabaseAdmin
-          .from('payment_transactions')
-          .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
-          .eq('car_id', car.id)
-          .eq('user_id', userId)
-          .eq('status', PAYMENT_STATUS.PENDING);
-        logInfo('[Payment Init] Abandoned stale pending transactions', { carId: car.id, count: staleTxns.length });
+        .eq('status', PAYMENT_STATUS.PENDING)
+        .select('id');
+      if (abandoned?.length) {
+        logInfo('[Payment Init] Abandoned stale pending transactions', { carId: car.id, count: abandoned.length });
       }
     } else if (isDriverLicensePayment) {
-      const { data: staleTxns } = await supabaseAdmin
+      const { data: abandoned } = await supabaseAdmin
         .from('payment_transactions')
-        .select('id, reference')
+        .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
         .eq('user_id', userId)
         .eq('payment_type', PAYMENT_TYPE.DRIVER_LICENSE)
         .is('car_id', null)
-        .eq('status', PAYMENT_STATUS.PENDING);
-      if (staleTxns && staleTxns.length > 0) {
-        await supabaseAdmin
-          .from('payment_transactions')
-          .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
-          .eq('user_id', userId)
-          .eq('payment_type', PAYMENT_TYPE.DRIVER_LICENSE)
-          .is('car_id', null)
-          .eq('status', PAYMENT_STATUS.PENDING);
-        logInfo('[Payment Init] Abandoned stale driver license pending transactions', { count: staleTxns.length });
+        .eq('status', PAYMENT_STATUS.PENDING)
+        .select('id');
+      if (abandoned?.length) {
+        logInfo('[Payment Init] Abandoned stale driver license pending transactions', { count: abandoned.length });
       }
     }
 

@@ -179,7 +179,13 @@ export async function getUserNotificationsByType(userId, category, page = 1, lim
         query = query.or('type.eq.warning,action.eq.warning');
         break;
       case 'Successful':
-        query = query.in('action', ['completed', 'success', 'created', 'payment_success']);
+        query = query.in('action', [
+          'completed',
+          'success',
+          'created',
+          'payment_success',
+          'ladipo_payment_success',
+        ]);
         break;
       default:
         // 'All' or unknown - no extra filter

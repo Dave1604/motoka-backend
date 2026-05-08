@@ -34,6 +34,24 @@ function getResend() {
 
 const EMAIL_FROM = process.env.EMAIL_FROM || 'Motoka <onboarding@resend.dev>';
 
+function buildResendTroubleshootingHint(errorMessage = '') {
+  const msg = String(errorMessage || '').toLowerCase();
+
+  if (msg.includes('application not found')) {
+    return 'Resend application/key mismatch. Generate a fresh API key from the same Resend workspace/project and update RESEND_API_KEY.';
+  }
+
+  if (msg.includes('invalid api key') || msg.includes('unauthorized') || msg.includes('forbidden')) {
+    return 'Resend API key is invalid or revoked. Replace RESEND_API_KEY with an active key.';
+  }
+
+  if (msg.includes('domain') || msg.includes('from')) {
+    return 'Sender/domain issue. Verify EMAIL_FROM domain in Resend or use onboarding@resend.dev for testing.';
+  }
+
+  return null;
+}
+
 /**
  * Generic email sender
  *
@@ -57,8 +75,19 @@ export async function sendEmail({ to, subject, html, text }) {
     });
 
     if (error) {
-      console.error('[Email Service] Send failed:', { to, subject, error: error.message });
-      throw new Error(`Email send failed: ${error.message}`);
+      const hint = buildResendTroubleshootingHint(error.message);
+      console.error('[Email Service] Send failed:', {
+        to,
+        subject,
+        from: EMAIL_FROM,
+        error: error.message,
+        hint
+      });
+      throw new Error(
+        hint
+          ? `Email send failed: ${error.message}. ${hint}`
+          : `Email send failed: ${error.message}`
+      );
     }
 
     console.log('[Email Service] Email sent successfully:', { to, subject, id: data?.id });

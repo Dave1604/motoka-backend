@@ -1,6 +1,7 @@
 import { getPlateNumberPrices } from '../services/platePrice.service.js';
 import { getDriverLicensePrices } from '../services/driverLicensePrice.service.js';
 import { getRenewalItems } from '../services/payment/renewalItems.service.js';
+import { getParts } from '../services/ladipo/ladipo.service.js';
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_MODEL = 'gpt-4o';
@@ -50,6 +51,7 @@ function cleanResponse(text) {
 }
 
 const ACTION_RE = /\[ACTION:(\{[^}]+\})\]\s*$/;
+const LADIPO_SEARCH_RE = /\[LADIPO_SEARCH:(\{[^}]+\})\]/;
 
 function parseAction(text) {
   const match = text.match(ACTION_RE);
@@ -60,6 +62,43 @@ function parseAction(text) {
     return { reply, action };
   } catch {
     return { reply: text.replace(ACTION_RE, '').trim(), action: null };
+  }
+}
+
+function parseLadipoSearch(text) {
+  const match = text.match(LADIPO_SEARCH_RE);
+  if (!match) return { text: text.replace(LADIPO_SEARCH_RE, '').trim(), params: null };
+  try {
+    const params = JSON.parse(match[1]);
+    return { text: text.replace(LADIPO_SEARCH_RE, '').trim(), params };
+  } catch {
+    return { text: text.replace(LADIPO_SEARCH_RE, '').trim(), params: null };
+  }
+}
+
+async function fetchLadipoSuggestions(params) {
+  if (!params) return null;
+  try {
+    const result = await getParts({
+      q: params.q || undefined,
+      make: params.make || undefined,
+      model: params.model || undefined,
+      year: params.year || undefined,
+      limit: 4,
+      page: 1,
+    });
+    if (!result?.parts?.length) return null;
+    return result.parts.map((p) => ({
+      id: p.id,
+      slug: p.slug,
+      name: p.name,
+      brand: p.brand || null,
+      image: p.images?.[0] || null,
+      price_kobo: p.price_kobo ?? null,
+      condition: p.condition,
+    }));
+  } catch {
+    return null;
   }
 }
 
@@ -151,10 +190,11 @@ Auto-renewal / "will it renew itself":
 - If OFF end with: [ACTION:{"label":"Set Up Auto-Renewal","route":"/settings"}]
 
 Car parts / repairs / accessories / Ladipo questions:
-- Ladipo is Motoka's upcoming parts marketplace (still in development).
+- Ladipo is Motoka's parts marketplace — live and ready. Users can browse and buy car parts directly.
 - If user has multiple cars, ask which one first. Once you know the car, give a specific, precise recommendation (tyre size, oil grade, battery spec, etc.) using your own knowledge of that make/model/year.
 - Keep it to 2–3 short sentences.
-- End with: [ACTION:{"label":"Visit Ladipo","route":"/ladipo"}]
+- IMPORTANT: After your advice, add a LADIPO_SEARCH tag so we can show the user real available parts. Format: [LADIPO_SEARCH:{"q":"exact part name","make":"car make","model":"car model","year":year_as_number}]. Use the user's car data for make/model/year if available. Keep "q" short and specific (e.g. "brake pad", "engine oil 5W-30", "shock absorber", "car battery"). If no car info: only include "q".
+- End with: [ACTION:{"label":"Shop on Ladipo","route":"/ladipo"}]
 
 Car documents / "view my documents":
 - End with: [ACTION:{"label":"View Documents","route":"/documents"}]
@@ -307,11 +347,12 @@ RULES — follow these exactly, every single response:
 4. For numbered lists, use "1. 2. 3." format only. No other formatting symbols.
 5. Always write dates as full month names: "April 28, 2026" not "2026-04-28".
 6. Only include one [ACTION:...] tag per response, at the very end, on its own line. If no navigation is needed, do not include any ACTION tag.
-7. Never make up vehicle details — only use what's in the user's car data above. Use your built-in knowledge only for general car specs and Nigeria road knowledge, not for the user's specific registration or expiry data.
-8. Respond in the same language the user writes in (English or Pidgin English).
-9. If you genuinely don't know something, say so honestly in one sentence.
-10. When the user asks about a specific car in their garage, always reference that exact car by make, model, and year.
-11. All advice must be practical for Nigerian conditions — no generic Western advice like "change oil every 10,000 km" or "tyres last 5 years".`;
+7. You may include one [LADIPO_SEARCH:{...}] tag in your response when the user asks about car parts, consumables, or accessories. Place it BEFORE the [ACTION:...] tag. Never include it for non-parts questions.
+8. Never make up vehicle details — only use what's in the user's car data above. Use your built-in knowledge only for general car specs and Nigeria road knowledge, not for the user's specific registration or expiry data.
+9. Respond in the same language the user writes in (English or Pidgin English).
+10. If you genuinely don't know something, say so honestly in one sentence.
+11. When the user asks about a specific car in their garage, always reference that exact car by make, model, and year.
+12. All advice must be practical for Nigerian conditions — no generic Western advice like "change oil every 10,000 km" or "tyres last 5 years".`;
 }
 
 export const chat = async (req, res) => {
@@ -359,9 +400,15 @@ export const chat = async (req, res) => {
 
     const raw = data.choices?.[0]?.message?.content?.trim() || "I'm not sure how to help with that.";
     const cleaned = cleanResponse(raw);
-    const { reply, action } = parseAction(cleaned);
 
-    res.json({ success: true, reply, action });
+    // Extract LADIPO_SEARCH tag first (before ACTION, since it sits earlier in text)
+    const { text: withoutLadipoTag, params: ladipoParams } = parseLadipoSearch(cleaned);
+    const { reply, action } = parseAction(withoutLadipoTag);
+
+    // Fetch Ladipo suggestions in parallel only if the tag was found
+    const ladipoSuggestions = await fetchLadipoSuggestions(ladipoParams);
+
+    res.json({ success: true, reply, action, ladipoSuggestions: ladipoSuggestions || null });
   } catch (err) {
     console.error('[Mo] controller error:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });

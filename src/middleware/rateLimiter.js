@@ -105,9 +105,23 @@ const RATE_LIMITS = {
 
   // Mo AI chat — per-user limit to cap OpenAI costs
   MO_CHAT: {
-    windowMs: 15 * 60 * 1000, // 15 minutes
+    windowMs: 15 * 60 * 1000,
     max: IS_DEV ? 200 : 20,
     message: 'Too many messages — please wait a moment before continuing'
+  },
+
+  // Ladipo marketplace — cart mutations (per IP)
+  LADIPO_CART: {
+    windowMs: 5 * 60 * 1000,
+    max: IS_DEV ? 500 : 50,
+    message: 'Too many cart requests, please try again later'
+  },
+
+  // Ladipo — order create, pay, verify (stricter; abuse / card testing)
+  LADIPO_CHECKOUT: {
+    windowMs: 15 * 60 * 1000,
+    max: IS_DEV ? 200 : 10,
+    message: 'Too many checkout or payment requests, please try again later'
   }
 };
 
@@ -141,9 +155,10 @@ export const passwordResetLimiter = createLimiter(RATE_LIMITS.PASSWORD_RESET);
 export const carRegistrationLimiter = createLimiter(RATE_LIMITS.CAR_REGISTRATION);
 export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);
 export const webhookLimiter = createLimiter(RATE_LIMITS.WEBHOOK);
+export const ladipoCartLimiter = createLimiter(RATE_LIMITS.LADIPO_CART);
+export const ladipoCheckoutLimiter = createLimiter(RATE_LIMITS.LADIPO_CHECKOUT);
 
 // Per-account login limiter — keyed by email address (KAGE-008).
-// Prevents credential stuffing even when the attacker rotates IPs.
 export const loginAccountLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: IS_DEV ? 100 : 10,
@@ -158,7 +173,6 @@ export const loginAccountLimiter = rateLimit({
 });
 
 // Per-token 2FA limiter — keyed by user_id from body (KAGE-008).
-// Max 5 attempts per temp_token session; prevents OTP brute-force.
 export const twoFAAccountLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: IS_DEV ? 100 : 5,

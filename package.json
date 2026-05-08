@@ -11,7 +11,10 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
-    "test:watch": "npm test -- --watch"
+    "test:watch": "npm test -- --watch",
+    "seed:ladipo": "node scripts/seed-ladipo-products.js",
+    "cleanup:ladipo-demo": "node scripts/cleanup-ladipo-demo-products.js",
+    "import:ladipo:autofactor": "node scripts/import-ladipo-autofactor.js"
   },
   "keywords": [
     "authentication",
@@ -23,6 +26,7 @@
   "license": "ISC",
   "dependencies": {
     "@supabase/supabase-js": "^2.47.12",
+    "cloudinary": "^2.10.0",
     "cors": "^2.8.5",
     "csv-parse": "^6.2.1",
     "dotenv": "^16.4.7",
@@ -37,7 +41,8 @@
     "qrcode": "^1.5.4",
     "resend": "^6.9.1",
     "speakeasy": "^2.0.0",
-    "twilio": "^5.12.2"
+    "twilio": "^5.12.2",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "jest": "^29.7.0",

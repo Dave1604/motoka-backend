@@ -40,6 +40,10 @@ import { generateMonicreditEventId } from '../../services/payment/monicredit/mon
 import { MonicreditAdapter } from '../../services/payment/monicredit/index.js';
 import { logPaymentAudit } from '../../services/payment/audit.service.js';
 import { markGuestOrderPaid, markGuestOrderFailed } from '../../services/guest/guestRenewal.service.js';
+import {
+  verifyAndFulfillOrder as fulfillLadipoOrder,
+  markLadipoOrderPaymentFailed,
+} from '../../services/ladipo/ladipo.service.js';
 
 // POST /api/webhooks/paystack
 export const handlePaystackWebhook = async (req, res) => {
@@ -165,6 +169,18 @@ async function handleChargeSuccess(data, eventId) {
       logInfo('[Paystack Webhook] Guest order marked as paid', { reference, orderId: guestOrder.id });
       return;
     }
+
+    // Check if this is a Ladipo marketplace order
+    try {
+      const ladipoOrder = await fulfillLadipoOrder(reference);
+      if (ladipoOrder) {
+        logInfo('[Paystack Webhook] Ladipo order fulfilled via webhook', { reference, order_number: ladipoOrder.order_number });
+        return;
+      }
+    } catch (ladipoErr) {
+      logError('[Paystack Webhook] Ladipo fulfillment error (non-fatal)', { reference, error: ladipoErr.message });
+    }
+
     logError('Transaction not found for webhook', { reference });
     return;
   }
@@ -523,6 +539,22 @@ async function handleMonicreditPaymentSuccess(data) {
       logInfo('[Monicredit Webhook] Guest order marked as paid', { orderId, guestOrderId: guestOrder.id });
       return;
     }
+    // Check if this is a Ladipo marketplace order
+    try {
+      const ladipoOrder = await fulfillLadipoOrder(orderId, null, { gateway: 'monicredit' });
+      if (ladipoOrder) {
+        logInfo('[Monicredit Webhook] Ladipo order fulfilled via webhook', {
+          orderId,
+          order_number: ladipoOrder.order_number
+        });
+        return;
+      }
+    } catch (ladipoErr) {
+      logError('[Monicredit Webhook] Ladipo fulfillment error (non-fatal)', {
+        orderId,
+        error: ladipoErr.message
+      });
+    }
     logError('Transaction not found for Monicredit webhook', { orderId });
     return;
   }
@@ -725,6 +757,15 @@ async function handleMonicreditPaymentFailed(data) {
   const transaction = await getTransactionByMonicreditOrderId(orderId);
   
   if (!transaction) {
+    // Check Ladipo orders before giving up
+    const ladipoOrder = await markLadipoOrderPaymentFailed(orderId, { gateway: 'monicredit' });
+    if (ladipoOrder) {
+      logInfo('[Monicredit Webhook] Ladipo order marked failed via webhook', {
+        orderId,
+        order_number: ladipoOrder.order_number
+      });
+      return;
+    }
     await markGuestOrderFailed(orderId);
     logError('Transaction not found for Monicredit webhook (failed)', { orderId });
     return;

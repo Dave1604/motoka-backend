@@ -22,6 +22,7 @@ import publicRoutes from './routes/public.routes.js';
 import guestRoutes from './routes/guest.routes.js';
 import moRoutes from './routes/mo.routes.js';
 import deferredRemindersRoutes from './routes/deferredReminders.routes.js';
+import ladipoRoutes from './routes/ladipo.routes.js';
 // DEV-ONLY: WhatsApp sandbox webhook route — not loaded in production
 import whatsappRoutes from './routes/whatsapp.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
@@ -40,7 +41,10 @@ if (!process.env.OPENAI_API_KEY) {
 
 const productionRequiredEnvVars = [
   'MONICREDIT_WEBHOOK_SECRET',
-  'ALLOWED_ORIGINS'
+  'ALLOWED_ORIGINS',
+  'CLOUDINARY_CLOUD_NAME',
+  'CLOUDINARY_API_KEY',
+  'CLOUDINARY_API_SECRET',
 ];
 
 
@@ -68,6 +72,7 @@ if (isProduction) {
     console.error('These variables are mandatory for production security:');
     console.error('  • MONICREDIT_WEBHOOK_SECRET: Required for webhook signature verification');
     console.error('  • ALLOWED_ORIGINS: Required for CORS origin restrictions');
+    console.error('  • CLOUDINARY_*: Required for Ladipo product image uploads');
     console.error('');
     console.error('Set these variables in your production environment before starting.');
     console.error('Application cannot start without these security configurations.');
@@ -153,6 +158,7 @@ app.use('/api', notificationRoutes);
 app.use('/api', paymentRoutes);
 app.use('/api', moRoutes);
 app.use('/api', deferredRemindersRoutes);
+app.use('/api', ladipoRoutes);
 
 // WhatsApp inbound webhook — receives replies from users via Twilio
 // Sandbox mode: no signature validation (dev/testing)

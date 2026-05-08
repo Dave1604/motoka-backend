@@ -1,8 +1,10 @@
 import { randomUUID } from 'crypto';
+import { getCloudinary } from '../config/cloudinary.js';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { getFileExtension } from '../utils/fileValidator.js';
 
 const BUCKET_NAME = 'car-documents';
+const CLOUDINARY_FOLDER = 'ladipo-products';
 
 /**
  * Uploads a single file to Supabase Storage
@@ -233,4 +235,77 @@ export const moveFilesToCarFolder = async (tempUrls, userId, carSlug) => {
   }
   
   return newUrls;
+};
+
+/**
+ * Upload a product image to Cloudinary.
+ * @param {Buffer} fileBuffer - File buffer
+ * @param {string} filename - Original filename
+ * @param {string} mimetype - File MIME type
+ * @returns {Promise<string>} - Secure Cloudinary URL
+ */
+export const uploadToCloudinary = async (fileBuffer, filename, mimetype) => {
+  const cloudinary = getCloudinary();
+  void mimetype;
+  const extension = getFileExtension(filename);
+  const publicId = `${randomUUID()}${extension ? extension.replace('.', '-') : ''}`;
+
+  const result = await new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder: CLOUDINARY_FOLDER,
+        public_id: publicId,
+        resource_type: 'image',
+        overwrite: false,
+        unique_filename: false,
+        use_filename: false,
+        invalidate: false,
+      },
+      (error, uploadResult) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(uploadResult);
+      },
+    );
+
+    uploadStream.end(fileBuffer);
+  });
+
+  if (!result?.secure_url) {
+    throw new Error('Failed to upload image to Cloudinary');
+  }
+
+  return result.secure_url;
+};
+
+/**
+ * Deletes a Cloudinary asset by URL.
+ * @param {string} fileUrl - Cloudinary secure_url
+ * @returns {Promise<void>}
+ */
+export const deleteFromCloudinary = async (fileUrl) => {
+  if (!fileUrl || typeof fileUrl !== 'string' || !fileUrl.includes('res.cloudinary.com')) {
+    return;
+  }
+
+  try {
+    const cloudinary = getCloudinary();
+    const parsed = new URL(fileUrl);
+    const uploadIndex = parsed.pathname.indexOf('/upload/');
+    if (uploadIndex === -1) return;
+
+    let publicIdPath = parsed.pathname.slice(uploadIndex + '/upload/'.length);
+    publicIdPath = publicIdPath.replace(/^v\d+\//, '');
+    publicIdPath = publicIdPath.replace(/\.[^.\/]+$/, '');
+    if (!publicIdPath) return;
+
+    await cloudinary.uploader.destroy(publicIdPath, {
+      resource_type: 'image',
+      invalidate: true,
+    });
+  } catch (error) {
+    console.error(`Failed to delete Cloudinary asset ${fileUrl}:`, error.message);
+  }
 };
