@@ -11,9 +11,10 @@ import {
   createDocument,
   updateDocumentStatus
 } from '../services/document.service.js';
-import { uploadFile, getSignedUrl } from '../services/fileUpload.service.js';
+import { uploadFile, getSignedUrl, withSignedUrls } from '../services/fileUpload.service.js';
 import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
 import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
+import { completeOrder, OrderError } from '../services/payment/order.service.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
 import { sendOrderCompletedEmail, sendOrderInProgressEmail } from '../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../services/notification.service.js';
@@ -39,19 +40,24 @@ import { generateOrderNumber } from '../utils/paymentHelpers.js';
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
 
 // ─── Status normalization helpers ────────────────────────────────────────────
-// DB stores: pending | processing | completed | cancelled
-// Frontend expects: pending (New) | in_progress (Inprogress) | completed | declined
-
+// Canonical end-to-end: pending | processing | completed | cancelled
+// (matches the DB enum). The frontend renders display labels — "New",
+// "In Progress", "Cancelled" — via a label map, not through API translation.
+//
+// dbStatusToFrontend is now identity. Kept as a function so the call sites
+// still read correctly and we can add log/metric instrumentation later if
+// needed without another rename pass.
 function dbStatusToFrontend(status) {
-  if (status === 'processing') return 'in_progress';
-  if (status === 'cancelled') return 'declined';
   return status;
 }
 
+// frontendStatusToDB tolerates the legacy spellings (in_progress, declined,
+// new) so that a frontend deploy lagging a backend deploy doesn't break
+// admin filters. New code on either side should use the canonical values.
 function frontendStatusToDB(status) {
   if (status === 'in_progress') return 'processing';
   if (status === 'declined') return 'cancelled';
-  if (status === 'new') return 'pending'; // safety net — frontend may send 'new'
+  if (status === 'new') return 'pending';
   return status;
 }
 
@@ -1071,59 +1077,70 @@ export const updateOrderStatus = async (req, res) => {
       return res.status(409).json({ status: false, message: 'Cannot update a completed order' });
     }
 
-    const updateData = {
-      status: dbStatus,
-      updated_at: new Date().toISOString(),
-    };
-
-    if (dbStatus === 'processing' && current.status === 'pending') {
-      updateData.processing_started_at = new Date().toISOString();
-      // Auto-assign to the admin performing the action
-      updateData.assigned_to = req.admin?.id || null;
-      updateData.assigned_at = new Date().toISOString();
-    }
-
+    // ── Completion: delegate to completeOrder() so driver-license and plate
+    // orders (which have no car_id) skip the car-expiry update path. The
+    // previous inline implementation called .eq('id', null) on cars, silently
+    // matched nothing, and marked the order completed without fulfilling it.
+    let updateData = {};
     if (dbStatus === 'completed') {
-      updateData.completed_at = new Date().toISOString();
-      // Extend the car's expiry date
-      const renewalMonths = current.renewal_months || 12;
-      const baseDate = current.cars?.expiry_date
-        ? new Date(current.cars.expiry_date)
-        : new Date();
-      baseDate.setMonth(baseDate.getMonth() + renewalMonths);
-      const newExpiry = baseDate.toISOString().split('T')[0];
-      updateData.new_expiry_date = newExpiry;
-      updateData.completion_notes = notes || null;
+      try {
+        await completeOrder(current.id, req.admin?.id || null, { notes });
+      } catch (err) {
+        if (err instanceof OrderError) {
+          return res.status(err.statusCode || 500).json({ status: false, message: err.message });
+        }
+        logError('Update order status — completeOrder', err);
+        return response.serverError(res, 'Failed to update order status');
+      }
+    } else {
+      updateData = {
+        status: dbStatus,
+        updated_at: new Date().toISOString(),
+      };
 
-      await supabaseAdmin
-        .from('cars')
-        .update({ expiry_date: newExpiry, date_issued: new Date().toISOString().split('T')[0], status: 'approved' })
-        .eq('id', current.car_id);
+      if (dbStatus === 'processing' && current.status === 'pending') {
+        updateData.processing_started_at = new Date().toISOString();
+        // Auto-assign to the admin performing the action
+        updateData.assigned_to = req.admin?.id || null;
+        updateData.assigned_at = new Date().toISOString();
+      }
+
+      if (dbStatus === 'cancelled') {
+        updateData.cancelled_at = new Date().toISOString();
+        updateData.rejection_reason = notes || null;
+      }
+
+      if (notes && dbStatus !== 'cancelled') {
+        updateData.processing_notes = notes;
+      }
+
+      const { error: updateError } = await supabaseAdmin
+        .from('renewal_orders')
+        .update(updateData)
+        .eq('order_number', orderNumber);
+
+      if (updateError) {
+        logError('Update order status', updateError);
+        return response.serverError(res, 'Failed to update order status');
+      }
     }
 
-    if (dbStatus === 'cancelled') {
-      updateData.cancelled_at = new Date().toISOString();
-      updateData.rejection_reason = notes || null;
-    }
-
-    if (notes && dbStatus !== 'cancelled') {
-      updateData.processing_notes = notes;
-    }
-
-    const { data: updated, error: updateError } = await supabaseAdmin
+    // Re-fetch with full join so the response and downstream notification
+    // code see the same shape as before. completeOrder() returns a thin row;
+    // this gives us the same payload the previous single update+select did.
+    const { data: updated, error: refetchError } = await supabaseAdmin
       .from('renewal_orders')
-      .update(updateData)
-      .eq('order_number', orderNumber)
       .select(`
         *,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color,
                       registration_no, chasis_no, engine_no, expiry_date ),
         payment_transactions:transaction_id ( id, reference, amount, status, paid_at, payment_gateway, payment_type, metadata )
       `)
+      .eq('order_number', orderNumber)
       .single();
 
-    if (updateError) {
-      logError('Update order status', updateError);
+    if (refetchError || !updated) {
+      logError('Update order status — refetch', refetchError);
       return response.serverError(res, 'Failed to update order status');
     }
 
@@ -1161,7 +1178,7 @@ export const updateOrderStatus = async (req, res) => {
             firstName: profile?.first_name || 'User',
             orderNumber: updated.order_number,
             carDetails: updated.cars,
-            newExpiryDate: updateData.new_expiry_date || null,
+            newExpiryDate: updated.new_expiry_date || null,
           }).catch(err => logError('Order completed email failed', err));
 
           createInAppNotification(
@@ -1201,7 +1218,7 @@ export const updateOrderStatus = async (req, res) => {
 export const listTransactions = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all', search } = req.query;
+    const { page = 1, per_page = 15, status = 'all', gateway = 'all', search } = req.query;
 
     const limit = Math.min(100, Math.max(1, parseInt(per_page)));
     const offset = (Math.max(1, parseInt(page)) - 1) * limit;
@@ -1213,20 +1230,17 @@ export const listTransactions = async (req, res) => {
       : status === 'abandoned' ? 'abandoned'
       : null;
 
+    const dbGateway = (gateway === 'paystack' || gateway === 'monicredit') ? gateway : null;
+
     let query = supabaseAdmin
       .from('payment_transactions')
       .select('*', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
-    if (dbStatus) {
-      query = query.eq('status', dbStatus);
-    }
-
-    // Reference search at DB level
-    if (search) {
-      query = query.ilike('reference', `%${search}%`);
-    }
+    if (dbStatus) query = query.eq('status', dbStatus);
+    if (dbGateway) query = query.eq('payment_gateway', dbGateway);
+    if (search) query = query.ilike('reference', `%${search}%`);
 
     const { data: transactions, count, error } = await query;
     if (error) {
@@ -1237,25 +1251,70 @@ export const listTransactions = async (req, res) => {
     const userIds = [...new Set((transactions || []).map(t => t.user_id).filter(Boolean))];
     const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
 
-    // Summary uses aggregate counts — fetch only what we need, not full rows
-    const { data: allTx } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('amount, status');
+    // Summary: HEAD-only count queries (no row transfer) + targeted sums on the
+    // smaller `successful` / `pending` subsets. The previous implementation
+    // streamed every row in payment_transactions on every page render — fine at
+    // a few hundred rows, terrible past a few thousand.
+    //
+    // NOTE: Supabase JS requires .select() before any filter chain (.eq, etc).
+    // Build each query as `from().select(...)` first, then apply filters.
+    const headCount = (filterFn) => {
+      let q = supabaseAdmin.from('payment_transactions').select('id', { count: 'exact', head: true });
+      if (filterFn) q = filterFn(q);
+      return q;
+    };
+    const [
+      { count: cntTotal },
+      { count: cntSuccessful },
+      { count: cntPending },
+      { count: cntFailed },
+      { count: cntAbandoned },
+      { count: cntPaystack },
+      { count: cntMonicredit },
+      { data: successfulAmounts },
+      { data: pendingAmounts },
+    ] = await Promise.all([
+      headCount(),
+      headCount(q => q.eq('status', 'successful')),
+      headCount(q => q.eq('status', 'pending')),
+      headCount(q => q.eq('status', 'failed')),
+      headCount(q => q.eq('status', 'abandoned')),
+      headCount(q => q.eq('payment_gateway', 'paystack')),
+      headCount(q => q.eq('payment_gateway', 'monicredit')),
+      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
+      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'pending'),
+    ]);
+
+    const sumKobo = (rows) => (rows || []).reduce((s, r) => s + parseFloat(r.amount || 0), 0);
+    const receivedKobo = sumKobo(successfulAmounts);
+    const pendingKobo = sumKobo(pendingAmounts);
 
     const summary = {
-      total_amount: 0,
-      total_transactions: count || 0,
-      successful_transactions: 0,
-      failed_transactions: 0,
-      pending_transactions: 0,
+      counts: {
+        total: cntTotal || 0,
+        successful: cntSuccessful || 0,
+        pending: cntPending || 0,
+        failed: cntFailed || 0,
+        abandoned: cntAbandoned || 0,
+      },
+      amounts: {
+        received_kobo: receivedKobo,
+        received: koboToNaira(receivedKobo),
+        pending_kobo: pendingKobo,
+        pending: koboToNaira(pendingKobo),
+      },
+      by_gateway: {
+        paystack: cntPaystack || 0,
+        monicredit: cntMonicredit || 0,
+      },
+      // Back-compat: old AdminPayments.jsx still reads these field names. Keep
+      // returning them so a stale frontend cache doesn't blank the cards.
+      total_amount: koboToNaira(receivedKobo),
+      total_transactions: cntTotal || 0,
+      successful_transactions: cntSuccessful || 0,
+      failed_transactions: (cntFailed || 0) + (cntAbandoned || 0),
+      pending_transactions: cntPending || 0,
     };
-    (allTx || []).forEach(t => {
-      const amtKobo = parseFloat(t.amount || 0);
-      if (t.status === 'successful') { summary.successful_transactions++; summary.total_amount += amtKobo; }
-      else if (t.status === 'failed' || t.status === 'abandoned') summary.failed_transactions++;
-      else if (t.status === 'pending') summary.pending_transactions++;
-    });
-    summary.total_amount = koboToNaira(summary.total_amount);
 
     const formatted = (transactions || []).map(t => {
       const profile = profileMap.get(t.user_id);
@@ -1436,10 +1495,15 @@ export const listDocuments = async (req, res) => {
       page: page ? parseInt(page, 10) : 1,
       limit: limit ? parseInt(limit, 10) : 20,
     });
+    // The `car-documents` Supabase bucket is private, so the stored file_url
+    // (a /public/ path) cannot be opened directly — Supabase responds with
+    // "Bucket not found". Replace each file_url with a short-lived signed URL
+    // before returning. Mirrors the user-facing document.controller flow.
+    const documents = await withSignedUrls(result.documents);
     return res.status(200).json({
       status: true,
       message: 'Documents retrieved',
-      data: result.documents,
+      data: documents,
       pagination: {
         total: result.total,
         page: parseInt(req.query.page || 1, 10),
@@ -1465,10 +1529,12 @@ export const getDocumentDetails = async (req, res) => {
       .select('first_name, last_name, email, phone_number')
       .eq('id', doc.user_id)
       .single();
+    // Bucket is private — sign the URL so the admin can actually open the file
+    const signedUrl = doc.file_url ? await getSignedUrl(doc.file_url).catch(() => null) : null;
     return res.status(200).json({
       status: true,
       message: 'Document retrieved',
-      data: { ...doc, user: profile },
+      data: { ...doc, file_url: signedUrl, user: profile },
     });
   } catch (error) {
     logError('Admin get document', error);
@@ -1666,15 +1732,27 @@ export const rejectDocument = async (req, res) => {
   }
 };
 
-// GET /admin/documents/:id/download — redirect browser to the raw file URL
+// GET /admin/documents/:id/download — return a short-lived signed URL the
+// frontend can open in a new tab. The `car-documents` bucket is private, so
+// the stored /public/ URL cannot be opened directly (Supabase returns
+// "Bucket not found"). A signed URL is required.
 export const downloadDocument = async (req, res) => {
   try {
     const doc = await getDocumentById(parseInt(req.params.id, 10));
     if (!doc) {
       return res.status(404).json({ status: false, message: 'Document not found' });
     }
-    // Return the URL so the frontend can open it — avoids CORS issues with direct redirect
-    return res.status(200).json({ status: true, url: doc.file_url });
+    if (!doc.file_url) {
+      return res.status(404).json({ status: false, message: 'Document has no file attached' });
+    }
+    let signedUrl;
+    try {
+      signedUrl = await getSignedUrl(doc.file_url);
+    } catch (err) {
+      logError('Admin download document — sign URL failed', { docId: doc.id, error: err.message });
+      return res.status(500).json({ status: false, message: 'Failed to generate file URL' });
+    }
+    return res.status(200).json({ status: true, url: signedUrl });
   } catch (error) {
     logError('Admin download document', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve document' });
@@ -1741,54 +1819,77 @@ export const getUserCars = async (req, res) => {
 // PUT /admin/transactions/:reference/mark-paid — manually mark a pending payment as successful
 // Used when gateway webhook fails but payment was confirmed out-of-band.
 export const markTransactionPaid = async (req, res) => {
+  const { reference } = req.params;
+  const transaction = await getTransactionByReference(reference).catch(() => null);
+
+  if (!transaction) {
+    return res.status(404).json({ status: false, message: 'Transaction not found' });
+  }
+
+  if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
+    // Check if the order was actually created — if not, create it now
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: existingOrder } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, order_number')
+      .eq('transaction_id', transaction.id)
+      .maybeSingle();
+
+    if (existingOrder) {
+      return res.status(400).json({
+        status: false,
+        message: 'Transaction is already successful and order already exists',
+        data: { orderId: existingOrder.id, orderNumber: existingOrder.order_number },
+      });
+    }
+    // Order is missing despite successful payment — fall through to create it
+  }
+
+  let metadata = {};
   try {
-    const { reference } = req.params;
-    const transaction = await getTransactionByReference(reference);
+    metadata = typeof transaction.metadata === 'string'
+      ? JSON.parse(transaction.metadata)
+      : (transaction.metadata || {});
+  } catch {
+    metadata = {};
+  }
 
-    if (!transaction) {
-      return res.status(404).json({ status: false, message: 'Transaction not found' });
-    }
+  const isPlateNumber = metadata.payment_type === 'plate_number';
+  const isDriverLicense = metadata.payment_type === 'driver_license';
+  const isSubscription = metadata.subscription_id || metadata.is_subscription;
+  const orderType = isDriverLicense
+    ? ORDER_TYPE.DRIVER_LICENSE
+    : isPlateNumber
+      ? ORDER_TYPE.PLATE_NUMBER
+      : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
+  const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
 
-    if (transaction.status === PAYMENT_STATUS.SUCCESSFUL) {
-      // Check if the order was actually created — if not, create it now
-      const supabaseAdmin = getSupabaseAdmin();
-      const { data: existingOrder } = await supabaseAdmin
-        .from('renewal_orders')
-        .select('id, order_number')
-        .eq('transaction_id', transaction.id)
-        .maybeSingle();
-
-      if (existingOrder) {
-        return res.status(400).json({
-          status: false,
-          message: 'Transaction is already successful and order already exists',
-          data: { orderId: existingOrder.id, orderNumber: existingOrder.order_number },
-        });
-      }
-      // Order is missing despite successful payment — fall through to create it
-    }
-
-    let metadata = {};
+  const alreadySuccessful = transaction.status === PAYMENT_STATUS.SUCCESSFUL;
+  const priorStatus = transaction.status;
+  // Track what we changed so we can revert on failure. The DB probe found one
+  // orphan txn — a payment marked successful by admin where order creation
+  // silently failed and left the user with a billed payment but no fulfilment.
+  // This guard makes that impossible: any failure past the status flip undoes it.
+  let txnFlippedToSuccessfulHere = false;
+  const revertTxn = async (reason) => {
+    if (!txnFlippedToSuccessfulHere) return;
     try {
-      metadata = typeof transaction.metadata === 'string'
-        ? JSON.parse(transaction.metadata)
-        : (transaction.metadata || {});
-    } catch {
-      metadata = {};
+      await updateTransactionStatus(reference, {
+        status: priorStatus,
+        channel: transaction.channel || null,
+        authorization_code: null,
+        paid_at: transaction.paid_at || null,
+      });
+      logInfo('[markTransactionPaid] Reverted txn to prior status after failure', { reference, priorStatus, reason });
+    } catch (revertErr) {
+      // Manual cleanup required — but at least it's audit-logged
+      logError('[markTransactionPaid] Revert FAILED — manual cleanup needed', {
+        reference, priorStatus, reason, error: revertErr.message
+      });
     }
+  };
 
-    const isPlateNumber = metadata.payment_type === 'plate_number';
-    const isDriverLicense = metadata.payment_type === 'driver_license';
-    const isSubscription = metadata.subscription_id || metadata.is_subscription;
-    const orderType = isDriverLicense
-      ? ORDER_TYPE.DRIVER_LICENSE
-      : isPlateNumber
-        ? ORDER_TYPE.PLATE_NUMBER
-        : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
-    const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
-
-    const alreadySuccessful = transaction.status === PAYMENT_STATUS.SUCCESSFUL;
-
+  try {
     if (!alreadySuccessful) {
       // For abandoned transactions: reset to pending first so the RPC can run its
       // normal flow (which expects status = 'pending' before creating the order)
@@ -1807,6 +1908,7 @@ export const markTransactionPaid = async (req, res) => {
         authorization_code: null,
         paid_at: new Date().toISOString(),
       });
+      txnFlippedToSuccessfulHere = true;
     }
 
     const processResult = await processPaymentSuccess({
@@ -1867,19 +1969,26 @@ export const markTransactionPaid = async (req, res) => {
       }
     }
 
-    const updatedTransaction = await getTransactionByReference(reference);
-    const createdOrder = finalOrderId ? await getOrderById(finalOrderId).catch(() => null) : null;
+    if (!finalOrderId) {
+      await revertTxn('order creation produced no orderId');
+      return res.status(500).json({
+        status: false,
+        message: 'Failed to create order for transaction. No changes saved — the transaction status is unchanged.'
+      });
+    }
 
-    if (finalOrderId) {
-      try {
-        await PaymentSuccessService.processPaymentSuccessSideEffects({
-          transaction: updatedTransaction,
-          gatewayData: { channel: transaction.channel || 'manual' },
-          order: createdOrder,
-        });
-      } catch (notifyError) {
-        logError('mark-paid: side-effects failed', { error: notifyError.message, reference });
-      }
+    const updatedTransaction = await getTransactionByReference(reference);
+    const createdOrder = await getOrderById(finalOrderId).catch(() => null);
+
+    try {
+      await PaymentSuccessService.processPaymentSuccessSideEffects({
+        transaction: updatedTransaction,
+        gatewayData: { channel: transaction.channel || 'manual' },
+        order: createdOrder,
+      });
+    } catch (notifyError) {
+      // Payment + order are committed; notifications must not block success
+      logError('mark-paid: side-effects failed', { error: notifyError.message, reference });
     }
 
     logInfo('[Admin] Transaction marked as paid', { reference, orderId: finalOrderId, alreadySuccessful });
@@ -1896,6 +2005,7 @@ export const markTransactionPaid = async (req, res) => {
       },
     });
   } catch (error) {
+    await revertTxn(`exception: ${error.message}`);
     logError('Admin mark transaction paid', error);
     return res.status(500).json({ status: false, message: 'Failed to process transaction' });
   }
@@ -2720,6 +2830,41 @@ export const adminUpdateCar = async (req, res) => {
   } catch (error) {
     logError('adminUpdateCar', error);
     return res.status(500).json({ status: false, message: 'Failed to update car' });
+  }
+};
+
+export const adminDeleteCar = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { slug } = req.params;
+
+    const { data: existingCar, error: fetchError } = await supabaseAdmin
+      .from('cars')
+      .select('id')
+      .eq('slug', slug)
+      .is('deleted_at', null)
+      .single();
+
+    if (fetchError || !existingCar) {
+      return res.status(404).json({ status: false, message: 'Car not found' });
+    }
+
+    const { error: deleteError } = await supabaseAdmin
+      .from('cars')
+      .update({ deleted_at: new Date().toISOString() })
+      .eq('id', existingCar.id);
+
+    if (deleteError) {
+      logError('adminDeleteCar DB', deleteError);
+      return res.status(500).json({ status: false, message: 'Failed to delete car' });
+    }
+
+    logInfo('Admin deleted car', { adminId: req.admin?.id, carSlug: slug });
+
+    return res.status(200).json({ status: true, message: 'Car deleted successfully' });
+  } catch (error) {
+    logError('adminDeleteCar', error);
+    return res.status(500).json({ status: false, message: 'Failed to delete car' });
   }
 };
 

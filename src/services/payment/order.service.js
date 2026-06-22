@@ -698,8 +698,64 @@ export async function getOrderStats() {
 }
 
 /**
+ * Look up an active order for the same logical purchase created in the recent past.
+ *
+ * Used as a double-credit guard before fulfilment. The hazard:
+ *   1. User clicks Pay → txn1 (Monicredit VA1, status=pending)
+ *   2. User clicks Pay again → txn1 → abandoned, txn2 (VA2, status=pending)
+ *   3. User pays VA1 *and* VA2. Both webhooks fire. Without this guard, we
+ *      create two renewal_orders and extend the car twice for one purchase.
+ *
+ * A 30-minute window is short enough to never collide with a legitimate
+ * consecutive renewal but wide enough to catch any realistic double-pay
+ * (Monicredit virtual accounts typically settle within minutes of transfer).
+ *
+ * Driver-license orders carry no `car_id`; for those, pass userId + paymentType
+ * so we can scope the guard to one application at a time.
+ *
+ * @param {Object} options
+ * @param {number} [options.carId] - Car ID for car-bound renewals/plates
+ * @param {string} [options.userId] - User UUID; required when carId is absent
+ * @param {string} [options.paymentType] - Order type discriminator for non-car orders
+ * @param {number} [options.withinMinutes=30] - Lookback window
+ * @returns {Promise<Object|null>} Existing order row when one is found, else null
+ */
+export async function findRecentActiveOrder({ carId, userId, paymentType, withinMinutes = 30 } = {}) {
+  if (!carId && (!userId || !paymentType)) {
+    return null;
+  }
+
+  const since = new Date(Date.now() - withinMinutes * 60 * 1000).toISOString();
+  const supabaseAdmin = getSupabaseAdmin();
+
+  let query = supabaseAdmin
+    .from('renewal_orders')
+    .select('id, order_number, status, created_at, car_id, user_id, order_type')
+    .in('status', [ORDER_STATUS.PENDING, ORDER_STATUS.PROCESSING, ORDER_STATUS.COMPLETED])
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  if (carId) {
+    query = query.eq('car_id', carId);
+  } else {
+    query = query.eq('user_id', userId).eq('order_type', paymentType).is('car_id', null);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    // Fail-open: a DB hiccup must not block a legitimate fulfilment. The
+    // alternative (fail-closed) creates support tickets for outages; a rare
+    // double-credit is recoverable via refund.
+    logError('Recent active order lookup failed', { error: error.message, carId, userId, paymentType });
+    return null;
+  }
+  return data && data.length > 0 ? data[0] : null;
+}
+
+/**
  * Check if a car has a pending order
- * 
+ *
  * @param {number} carId - Car ID
  * @returns {Promise<boolean>} True if pending order exists
  */

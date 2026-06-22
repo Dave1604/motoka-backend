@@ -29,6 +29,7 @@ import { apiLimiter } from './middleware/rateLimiter.js';
 import { getCorsConfig } from './config/cors.config.js';
 import paymentMetrics from './services/payment/metrics.service.js';
 import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
+import { monicreditPoller } from './services/payment/monicredit/poller.service.js';
 import { logInfo, logWarn } from './utils/logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -684,6 +685,10 @@ app.listen(PORT, '0.0.0.0', () => {
   );
 
   logInfo('Auto-billing job scheduled', { interval_minutes: AUTO_BILLING_INTERVAL_MS / 60000 });
+
+  // Monicredit pending-txn poller — fills in for the webhook (which hasn't
+  // fired in this account's history). See poller.service.js for the rationale.
+  monicreditPoller.start();
 });
 
 export default app;

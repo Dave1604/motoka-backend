@@ -272,40 +272,61 @@ export async function initializeTransaction({
  *
  * Uses the private key (server-side only) to authenticate the request.
  * This function must never be called from client-accessible code paths.
- * Returns the raw API response — pass through MonicreditNormalizer before
- * consuming the result.
+ *
+ * Monicredit responds with HTTP 200 + envelope `status: false` for any
+ * non-approved state (pending, failed, expired, "Invalid Transaction"), with
+ * the actual state in `data.status`. We unwrap that case and return the
+ * envelope so callers can branch on it — only transport-level errors,
+ * config errors, and non-200 responses propagate as throws. Without this,
+ * polling a not-yet-paid order would throw on every check.
  *
  * @param {string} transaction_id - Monicredit order_id or transaction reference
- * @returns {Promise<Object>} Raw Monicredit API response
+ * @returns {Promise<Object>} Raw Monicredit API response (approved or non-approved envelope)
  */
 export async function verifyTransaction(transaction_id) {
   if (!transaction_id) {
     throw new MonicreditError('Transaction ID is required', 400, 'VALIDATION_ERROR');
   }
-  
+
   const privateKey = getPrivateKey();
-  
-  // Wrap API call with retry logic for transient failures
-  const response = await retryWithBackoff(
-    () => monicreditRequest('/payment/transactions/verify-transaction', {
-      method: 'POST',
-      body: JSON.stringify({
+
+  try {
+    // Wrap API call with retry logic for transient failures
+    const response = await retryWithBackoff(
+      () => monicreditRequest('/payment/transactions/verify-transaction', {
+        method: 'POST',
+        body: JSON.stringify({
+          transaction_id,
+          private_key: privateKey
+        })
+      }),
+      {
+        context: 'Monicredit verifyTransaction',
+        maxRetries: 3,
+        initialDelay: 1000
+      }
+    );
+
+    logDebug('[Monicredit] Transaction verification completed (approved envelope)', { transaction_id });
+    return response;
+  } catch (error) {
+    // Domain-level "not yet approved" arrives as MonicreditError with HTTP 200.
+    // Return the envelope so the adapter can read the inner status.
+    if (
+      error instanceof MonicreditError &&
+      error.code === 'API_ERROR' &&
+      error.statusCode === 200 &&
+      error.data
+    ) {
+      logDebug('[Monicredit] Transaction verification completed (non-approved envelope)', {
         transaction_id,
-        private_key: privateKey
-      })
-    }),
-    {
-      context: 'Monicredit verifyTransaction',
-      maxRetries: 3,
-      initialDelay: 1000
+        inner_status: error.data?.data?.status,
+        envelope_message: error.data?.message
+      });
+      return error.data;
     }
-  );
-  
-  logDebug('[Monicredit] Transaction verification completed', {
-    transaction_id
-  });
-  
-  return response;
+    throw error;
+  }
 }
 
 /**

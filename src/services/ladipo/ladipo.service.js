@@ -47,21 +47,84 @@ export async function getCategories() {
 
 // ─── Parts ───────────────────────────────────────────────────────────────────
 
-export async function getParts({ page = 1, limit = 20, q, category_slug, make, model, year } = {}) {
+export async function getParts({
+  page = 1,
+  limit = 20,
+  q,
+  category_slug,
+  make,
+  model,
+  year,
+  brand,
+  condition,
+  part_type,
+  min_price_kobo,
+  max_price_kobo,
+  sort,
+} = {}) {
   const supabase = getSupabaseAdmin();
   const offset = (page - 1) * limit;
+
+  const sortConfig = (() => {
+    switch (sort) {
+      case 'oldest':
+        return { column: 'created_at', ascending: true };
+      case 'name_asc':
+        return { column: 'name', ascending: true };
+      case 'newest':
+      default:
+        return { column: 'created_at', ascending: false };
+    }
+  })();
+
+  const minPrice = Number.isFinite(Number(min_price_kobo)) && min_price_kobo !== ''
+    ? Math.max(0, Number(min_price_kobo))
+    : null;
+  const maxPrice = Number.isFinite(Number(max_price_kobo)) && max_price_kobo !== ''
+    ? Math.max(0, Number(max_price_kobo))
+    : null;
+
+  // When a price filter is active, mark the inventory join as `!inner` so the
+  // parent row drops out unless its inventory matches. That pushes the filter
+  // into the join and avoids prefetching a huge ID list via .in('id', ...).
+  const priceFilterActive = minPrice !== null || maxPrice !== null;
+  const inventoryEmbed = priceFilterActive
+    ? 'inventory:ladipo_part_inventory!inner(id, price_kobo, stock_qty, seller_label)'
+    : 'inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label)';
 
   let query = supabase
     .from('ladipo_parts')
     .select(`
       id, slug, name, description, brand, condition, part_type, images, is_active, is_universal,
       category:ladipo_categories(id, name, slug),
-      inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label),
+      ${inventoryEmbed},
       compatibility:ladipo_part_compatibility(id, make, model, year_min, year_max, engine_code, notes)
     `, { count: 'exact' })
     .eq('is_active', true)
     .range(offset, offset + limit - 1)
-    .order('created_at', { ascending: false });
+    .order(sortConfig.column, { ascending: sortConfig.ascending });
+
+  if (minPrice !== null) query = query.gte('inventory.price_kobo', minPrice);
+  if (maxPrice !== null) query = query.lte('inventory.price_kobo', maxPrice);
+
+  const brandList = Array.isArray(brand)
+    ? brand.filter(Boolean).map(String)
+    : (typeof brand === 'string' && brand.trim() ? [brand.trim()] : []);
+  const conditionList = Array.isArray(condition)
+    ? condition.filter(Boolean).map(String)
+    : (typeof condition === 'string' && condition.trim() ? [condition.trim()] : []);
+  const partTypeList = Array.isArray(part_type)
+    ? part_type.filter(Boolean).map(String)
+    : (typeof part_type === 'string' && part_type.trim() ? [part_type.trim()] : []);
+
+  if (brandList.length) query = query.in('brand', brandList);
+  if (conditionList.length) query = query.in('condition', conditionList);
+  if (partTypeList.length) query = query.in('part_type', partTypeList);
+
+  // Collect each set of allowed part IDs; intersect at the end and apply
+  // a single .in('id', ...) so multiple ID-based filters compose.
+  // (Price is handled via the inventory!inner embed above, so no entry here.)
+  const idConstraintSets = [];
 
   if (category_slug) {
     const { data: cat, error: catErr } = await supabase
@@ -133,12 +196,21 @@ export async function getParts({ page = 1, limit = 20, q, category_slug, make, m
       if (row?.id) compatibleIds.add(row.id);
     }
 
-    const allIds = Array.from(compatibleIds);
-    if (allIds.length === 0) {
+    if (compatibleIds.size === 0) {
       return { parts: [], total: 0 };
     }
 
-    query = query.in('id', allIds);
+    idConstraintSets.push(compatibleIds);
+  }
+
+  if (idConstraintSets.length) {
+    let intersection = idConstraintSets[0];
+    for (let i = 1; i < idConstraintSets.length; i++) {
+      const next = idConstraintSets[i];
+      intersection = new Set([...intersection].filter((id) => next.has(id)));
+      if (intersection.size === 0) return { parts: [], total: 0 };
+    }
+    query = query.in('id', Array.from(intersection));
   }
 
   if (q && q.trim()) {
@@ -189,6 +261,118 @@ export async function getParts({ page = 1, limit = 20, q, category_slug, make, m
   // Flatten inventory to primary row and add price/stock to root
   const parts = (data || []).map(flattenPart);
   return { parts, total: count ?? parts.length };
+}
+
+// Returns facet counts for the filter sidebar (brands, conditions, part types, price bounds).
+// Optionally scoped to a category — so the sidebar reflects only relevant options.
+export async function getPartFacets({ category_slug } = {}) {
+  const supabase = getSupabaseAdmin();
+
+  let categoryIds = null;
+  if (category_slug) {
+    const { data: cat, error: catErr } = await supabase
+      .from('ladipo_categories')
+      .select('id, parent_id')
+      .eq('slug', category_slug)
+      .single();
+    if (catErr || !cat) {
+      return { brands: [], conditions: [], part_types: [], price_kobo: { min: 0, max: 0 } };
+    }
+    categoryIds = [cat.id];
+    if (!cat.parent_id) {
+      const { data: kids } = await supabase
+        .from('ladipo_categories')
+        .select('id')
+        .eq('parent_id', cat.id);
+      categoryIds.push(...(kids || []).map((k) => k.id));
+    }
+  }
+
+  // Page through ladipo_parts so we get accurate facet counts past Supabase's
+  // 1000-row default limit. 2199 parts → 3 pages at PAGE_SIZE = 1000.
+  const PAGE_SIZE = 1000;
+  const parts = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    let partsQuery = supabase
+      .from('ladipo_parts')
+      .select('id, brand, condition, part_type')
+      .eq('is_active', true)
+      .range(from, from + PAGE_SIZE - 1);
+    if (categoryIds) partsQuery = partsQuery.in('category_id', categoryIds);
+    const { data: page, error: partsErr } = await partsQuery;
+    if (partsErr) {
+      logError('[Ladipo] getPartFacets parts query failed', partsErr);
+      throw new Error('Failed to fetch facets');
+    }
+    if (!page || page.length === 0) break;
+    parts.push(...page);
+    if (page.length < PAGE_SIZE) break;
+  }
+
+  const brandCounts = new Map();
+  const conditionCounts = new Map();
+  const partTypeCounts = new Map();
+  const partIds = [];
+  for (const p of parts || []) {
+    if (p.id) partIds.push(p.id);
+    if (p.brand) brandCounts.set(p.brand, (brandCounts.get(p.brand) || 0) + 1);
+    if (p.condition) conditionCounts.set(p.condition, (conditionCounts.get(p.condition) || 0) + 1);
+    if (p.part_type) partTypeCounts.set(p.part_type, (partTypeCounts.get(p.part_type) || 0) + 1);
+  }
+
+  let minPrice = 0;
+  let maxPrice = 0;
+  if (partIds.length) {
+    // Two cheap ORDER BY ... LIMIT 1 queries beat scanning every inventory row.
+    // For category-scoped facets we need a part_id IN filter; chunk to avoid URL limits.
+    const fetchExtreme = async (ascending) => {
+      const fetchOne = async (ids) => {
+        let q = supabase
+          .from('ladipo_part_inventory')
+          .select('price_kobo')
+          .order('price_kobo', { ascending })
+          .limit(1);
+        if (ids) q = q.in('part_id', ids);
+        const { data, error } = await q;
+        if (error) throw error;
+        return data?.[0]?.price_kobo;
+      };
+
+      if (!categoryIds) return fetchOne(null);
+      const CHUNK = 200;
+      let best = null;
+      for (let i = 0; i < partIds.length; i += CHUNK) {
+        const v = await fetchOne(partIds.slice(i, i + CHUNK));
+        if (!Number.isFinite(v)) continue;
+        if (best === null || (ascending ? v < best : v > best)) best = v;
+      }
+      return best;
+    };
+
+    try {
+      const [minVal, maxVal] = await Promise.all([
+        fetchExtreme(true),
+        fetchExtreme(false),
+      ]);
+      if (Number.isFinite(minVal)) minPrice = minVal;
+      if (Number.isFinite(maxVal)) maxPrice = maxVal;
+    } catch (invErr) {
+      logError('[Ladipo] getPartFacets inventory query failed', invErr);
+      throw new Error('Failed to fetch facets');
+    }
+  }
+
+  const toSortedCounts = (m) =>
+    Array.from(m.entries())
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+
+  return {
+    brands: toSortedCounts(brandCounts),
+    conditions: toSortedCounts(conditionCounts),
+    part_types: toSortedCounts(partTypeCounts),
+    price_kobo: { min: minPrice, max: maxPrice },
+  };
 }
 
 export async function getPartBySlug(slug) {

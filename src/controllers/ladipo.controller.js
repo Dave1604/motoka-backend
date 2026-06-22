@@ -1,6 +1,7 @@
 import {
   getCategories,
   getParts,
+  getPartFacets,
   getPartBySlug,
   getCartItems,
   addCartItem,
@@ -48,14 +49,50 @@ export const handleGetCategories = async (req, res) => {
 const SAFE_STRING_RE = /^[\w\s\-.,&()'/]+$/;
 
 // GET /ladipo/parts
+const ALLOWED_CONDITIONS = new Set(['new', 'used', 'refurbished']);
+const ALLOWED_PART_TYPES = new Set(['oem', 'aftermarket', 'genuine']);
+const ALLOWED_SORTS = new Set(['newest', 'oldest', 'name_asc']);
+
+function parseMultiParam(value, { maxItems = 25, maxLen = 100 } = {}) {
+  if (value == null || value === '') return undefined;
+  const raw = Array.isArray(value)
+    ? value
+    : String(value).split(',');
+  const cleaned = raw
+    .map((v) => String(v).slice(0, maxLen).trim())
+    .filter(Boolean)
+    .slice(0, maxItems);
+  return cleaned.length ? cleaned : undefined;
+}
+
 export const handleGetParts = async (req, res) => {
   try {
-    const { page, limit, q, category_slug, make, model, year } = req.query;
+    const {
+      page, limit, q, category_slug, make, model, year,
+      brand, condition, part_type, min_price_kobo, max_price_kobo, sort,
+    } = req.query;
 
     const rawQ = typeof q === 'string' ? q.slice(0, 200).trim() : undefined;
     const rawSlug = typeof category_slug === 'string' ? category_slug.slice(0, 120).trim() : undefined;
     const rawMake = typeof make === 'string' ? make.slice(0, 100).trim() : undefined;
     const rawModel = typeof model === 'string' ? model.slice(0, 100).trim() : undefined;
+
+    const brandList = parseMultiParam(brand);
+    const conditionList = parseMultiParam(condition)?.filter((c) =>
+      ALLOWED_CONDITIONS.has(c.toLowerCase())
+    );
+    const partTypeList = parseMultiParam(part_type)?.filter((p) =>
+      ALLOWED_PART_TYPES.has(p.toLowerCase())
+    );
+
+    const minPrice = min_price_kobo != null && min_price_kobo !== ''
+      ? Math.max(0, parseInt(min_price_kobo, 10) || 0)
+      : undefined;
+    const maxPrice = max_price_kobo != null && max_price_kobo !== ''
+      ? Math.max(0, parseInt(max_price_kobo, 10) || 0)
+      : undefined;
+
+    const sortValue = typeof sort === 'string' && ALLOWED_SORTS.has(sort) ? sort : undefined;
 
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
@@ -67,10 +104,31 @@ export const handleGetParts = async (req, res) => {
       make: rawMake,
       model: rawModel,
       year,
+      brand: brandList,
+      condition: conditionList,
+      part_type: partTypeList,
+      min_price_kobo: minPrice,
+      max_price_kobo: maxPrice,
+      sort: sortValue,
     });
     return res.json({ success: true, data: result });
   } catch (error) {
     logError('[Ladipo] handleGetParts', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// GET /ladipo/parts/facets — distinct brands/conditions/part_types + price bounds
+export const handleGetPartFacets = async (req, res) => {
+  try {
+    const { category_slug } = req.query;
+    const rawSlug = typeof category_slug === 'string'
+      ? category_slug.slice(0, 120).trim()
+      : undefined;
+    const data = await getPartFacets({ category_slug: rawSlug });
+    return res.json({ success: true, data });
+  } catch (error) {
+    logError('[Ladipo] handleGetPartFacets', error);
     return res.status(500).json({ success: false, message: error.message });
   }
 };
