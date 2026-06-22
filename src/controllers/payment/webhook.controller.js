@@ -14,6 +14,7 @@ import {
 import {
   getOrderById,
   getOrderByTransactionId,
+  findRecentActiveOrder,
   OrderError
 } from '../../services/payment/order.service.js';
 import {
@@ -281,6 +282,22 @@ async function handleChargeSuccess(data, eventId) {
       ? ORDER_TYPE.PLATE_NUMBER
       : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
+
+  const duplicateOrder = await findRecentActiveOrder({
+    carId: transaction.car_id,
+    userId: transaction.user_id,
+    paymentType: orderType
+  });
+  if (duplicateOrder) {
+    logError('[Paystack Webhook] Recent active order exists — refusing duplicate credit', {
+      reference,
+      car_id: transaction.car_id,
+      existing_order: duplicateOrder.order_number,
+      existing_order_status: duplicateOrder.status,
+      existing_order_age_minutes: Math.round((Date.now() - new Date(duplicateOrder.created_at).getTime()) / 60000)
+    });
+    return;
+  }
 
   const processResult = await processPaymentSuccess({
     reference: transaction.reference,
@@ -584,48 +601,51 @@ async function handleMonicreditPaymentSuccess(data) {
   }
   
   // Re-verify with Monicredit API (defense in depth — webhook signature already
-  // verified by middleware).  If the verify call fails or returns non-approved
-  // we log a warning and continue: the signature verification is the primary
-  // trust anchor.  We only hard-abort on a *confirmed* amount mismatch.
-  let verificationResult = null;
-  let verifySkipped = false;
-
+  // verified by middleware). The signature proves the webhook came from
+  // Monicredit; the verify call proves the underlying payment actually settled.
+  // We refuse to credit on transport error or non-approved state — those are
+  // the cases where a forged-but-signed webhook would slip through, or where
+  // a webhook race could fire ahead of settlement.
+  let verificationResult;
   try {
     verificationResult = await MonicreditAdapter.verifyPayment(orderId);
-
-    const responseStatus = verificationResult.raw_response?.status;
-    const dataStatus = verificationResult.status?.toLowerCase();
-
-    const isApproved = (
-      (responseStatus === true || responseStatus === 'success') &&
-      (dataStatus === 'approved' || dataStatus === 'success')
-    );
-
-    if (!isApproved) {
-      logWarn('[Monicredit Webhook] Verify returned non-approved — continuing on webhook signature', {
-        orderId, responseStatus, dataStatus
-      });
-      verifySkipped = true;
-    }
   } catch (error) {
-    logWarn('[Monicredit Webhook] Verify API call failed — continuing on webhook signature', {
+    // Transport / config error. Don't credit. The poller (or Monicredit's own
+    // webhook retry) will bring this through on a subsequent attempt.
+    logError('[Monicredit Webhook] Verify API call failed — refusing to credit', {
       orderId, error: error.message
     });
-    verifySkipped = true;
+    return;
   }
 
-  // Only check amount when we have a confirmed verification result
-  const monicreditAmount = verificationResult?.amount || 0;
-  if (!verifySkipped && monicreditAmount > 0) {
+  if (verificationResult.state !== 'approved') {
+    logError('[Monicredit Webhook] Verify returned non-approved state — refusing to credit', {
+      orderId,
+      state: verificationResult.state,
+      inner_status: verificationResult.status
+    });
+    return;
+  }
+
+  // Amount tolerance is configurable in basis points (1 bps = 0.01%).
+  // Monicredit may return the amount net of their processing fee; until that
+  // is confirmed with their team, the default 200 bps (2%) absorbs typical
+  // PSP fees. Set MONICREDIT_AMOUNT_TOLERANCE_BPS=0 to require exact match.
+  const monicreditAmount = verificationResult.amount || 0;
+  if (monicreditAmount > 0) {
+    const toleranceBps = parseInt(process.env.MONICREDIT_AMOUNT_TOLERANCE_BPS || '200', 10);
+    const toleranceKobo = Math.max(1, Math.round((transaction.amount * toleranceBps) / 10000));
     try {
-      validatePaymentAmount(transaction.amount, monicreditAmount, 1);
+      validatePaymentAmount(transaction.amount, monicreditAmount, toleranceKobo);
     } catch (error) {
       if (error instanceof AmountValidationError) {
-        logError('Monicredit webhook amount mismatch — aborting', {
+        logError('[Monicredit Webhook] Amount mismatch beyond tolerance — refusing to credit', {
           orderId,
           expected_kobo: transaction.amount,
           actual_kobo: monicreditAmount,
-          difference_kobo: error.difference
+          difference_kobo: error.difference,
+          tolerance_kobo: toleranceKobo,
+          tolerance_bps: toleranceBps
         });
         return;
       }
@@ -652,7 +672,24 @@ async function handleMonicreditPaymentSuccess(data) {
       ? ORDER_TYPE.PLATE_NUMBER
       : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
   const paymentScheduleIds = metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
-  
+
+  const duplicateOrder = await findRecentActiveOrder({
+    carId: transaction.car_id,
+    userId: transaction.user_id,
+    paymentType: orderType
+  });
+  if (duplicateOrder) {
+    logError('[Monicredit Webhook] Recent active order exists — refusing duplicate credit', {
+      orderId,
+      reference: transaction.reference,
+      car_id: transaction.car_id,
+      existing_order: duplicateOrder.order_number,
+      existing_order_status: duplicateOrder.status,
+      existing_order_age_minutes: Math.round((Date.now() - new Date(duplicateOrder.created_at).getTime()) / 60000)
+    });
+    return;
+  }
+
   await updateTransactionStatus(transaction.reference, {
     status: PAYMENT_STATUS.SUCCESSFUL,
     channel: verificationResult?.channel || data.channel || 'bank_transfer',

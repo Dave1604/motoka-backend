@@ -244,25 +244,71 @@ export class MonicreditAdapter {
 
   /**
    * Verifies a Monicredit transaction via the private-key-authenticated
-   * verify endpoint. Returns a normalised response; callers must inspect
-   * the `status` field to determine whether the payment was approved.
+   * verify endpoint.
+   *
+   * Returns a `state` enum so callers can branch without string-matching
+   * across Monicredit's various status spellings ('approved', 'PENDING',
+   * 'FAILED', envelope `status: true/false`, etc.):
+   *   - 'approved' — payment settled, safe to credit
+   *   - 'pending'  — virtual account provisioned, customer hasn't paid yet
+   *   - 'failed'   — declined / expired / reversed
+   *   - 'unknown'  — Monicredit returned a shape we don't recognise
+   *                  (e.g. "Invalid Transaction" — order_id not on their side)
+   *
+   * The full normalised payload is spread alongside `state` so existing
+   * callers reading `status`, `amount`, `channel`, etc. keep working.
    *
    * @param {string} transactionId - Monicredit order_id or transaction reference
-   * @returns {Promise<Object>} Normalised verification response
+   * @returns {Promise<{state: string, status: string, amount: number, channel: string, date_paid: string, raw_response: Object}>}
    */
   static async verifyPayment(transactionId) {
     const response = await verifyTransaction(transactionId);
-    const normalizedResponse = MonicreditNormalizer.normalizeVerifyResponse(response);
-    
-    // Validate normalized response
+    const normalized = MonicreditNormalizer.normalizeVerifyResponse(response);
+
+    const innerStatus = String(normalized.status || '').toLowerCase();
+    const envelopeStatus = normalized.raw_response?.status;
+    const envelopeMessage = normalized.raw_response?.message || '';
+
+    let state;
+    if (
+      envelopeStatus === true ||
+      innerStatus === 'approved' ||
+      innerStatus === 'success' ||
+      innerStatus === 'successful'
+    ) {
+      state = 'approved';
+    } else if (innerStatus === 'pending' || innerStatus === 'initiated') {
+      state = 'pending';
+    } else if (
+      innerStatus === 'failed' ||
+      innerStatus === 'declined' ||
+      innerStatus === 'expired' ||
+      innerStatus === 'reversed' ||
+      innerStatus === 'cancelled'
+    ) {
+      state = 'failed';
+    } else {
+      state = 'unknown';
+    }
+
+    // Pass a non-empty status string to the schema validator even when
+    // Monicredit returned only an envelope message (e.g. "Invalid Transaction").
+    const statusForValidation = (typeof normalized.status === 'string' && normalized.status)
+      ? normalized.status
+      : (envelopeMessage || 'unknown');
+
     validateVerifyResponse({
-      success: normalizedResponse.status === 'approved' || normalizedResponse.status === 'success',
-      status: normalizedResponse.status,
-      amount: normalizedResponse.amount,
-      currency: normalizedResponse.currency || 'NGN'
+      success: state === 'approved',
+      status: statusForValidation,
+      amount: normalized.amount || 0,
+      currency: normalized.currency || 'NGN'
     });
-    
-    return normalizedResponse;
+
+    return {
+      state,
+      success: state === 'approved',
+      ...normalized
+    };
   }
 
   /**

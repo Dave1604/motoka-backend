@@ -67,14 +67,32 @@ export async function getUserDocuments(userId, { carId, documentType, status } =
 }
 
 /**
- * Get documents for a car (user-facing)
+ * Get documents for a car (user-facing).
+ *
+ * Rejected documents are hidden from users by design: once admin rejects a
+ * doc the user shouldn't see it lingering — they should re-upload a fresh one.
+ * Admin views (adminListDocuments) still see all statuses.
  */
 export async function getCarDocuments(userId, carId) {
-  return getUserDocuments(userId, { carId, documentType: DOCUMENT_TYPE.CAR });
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from('documents')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('car_id', carId)
+    .eq('document_type', DOCUMENT_TYPE.CAR)
+    .neq('status', DOCUMENT_STATUS.REJECTED)
+    .order('created_at', { ascending: false });
+  if (error) {
+    logError('Get car documents error', { error, userId, carId });
+    throw error;
+  }
+  return data || [];
 }
 
 /**
  * Get driver's license documents for a user, optionally filtered by year.
+ * Rejected documents are hidden — see getCarDocuments comment for rationale.
  * @param {string} userId
  * @param {number|string|null} year  - optional 4-digit year, e.g. 2025
  */
@@ -85,6 +103,7 @@ export async function getDriverLicenseDocuments(userId, year = null) {
     .select('*')
     .eq('user_id', userId)
     .eq('document_type', DOCUMENT_TYPE.DRIVER_LICENSE)
+    .neq('status', DOCUMENT_STATUS.REJECTED)
     .order('created_at', { ascending: false });
 
   if (year) {

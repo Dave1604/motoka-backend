@@ -63,6 +63,7 @@ router.post('/cars', authenticateAdmin, admin.adminAddCar);
 router.get('/cars', authenticate, checkAdmin, admin.listCars);
 router.get('/cars/:slug', authenticate, checkAdmin, admin.getCarDetails);
 router.put('/cars/:slug', authenticateAdmin, admin.adminUpdateCar);
+router.delete('/cars/:slug', authenticateAdmin, admin.adminDeleteCar);
 
 // ── Payment system monitoring ─────────────────────────────────────────────────
 router.get('/metrics/payments', authenticate, checkAdmin, admin.getPaymentMetrics);

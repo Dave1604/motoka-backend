@@ -5,6 +5,7 @@ import { ladipoCartLimiter, ladipoCheckoutLimiter } from '../middleware/rateLimi
 import {
   handleGetCategories,
   handleGetParts,
+  handleGetPartFacets,
   handleGetPartBySlug,
   handleGetCompatibility,
   handleUpsertCompatibility,
@@ -25,6 +26,8 @@ const router = express.Router();
 // ─── Public: browsing ────────────────────────────────────────────────────────
 router.get('/ladipo/categories', handleGetCategories);
 router.get('/ladipo/parts', handleGetParts);
+// NOTE: /parts/facets must be declared before /parts/:slug to avoid being captured as a slug
+router.get('/ladipo/parts/facets', handleGetPartFacets);
 router.get('/ladipo/parts/:slug', handleGetPartBySlug);
 router.get('/ladipo/parts/:id/compatibility', handleGetCompatibility);
 router.post('/ladipo/parts/:id/compatibility', authenticateAdmin, handleUpsertCompatibility);
