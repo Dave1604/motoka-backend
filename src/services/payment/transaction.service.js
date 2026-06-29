@@ -305,19 +305,27 @@ export async function updateTransactionStatus(reference, {
   status,
   channel,
   authorization_code,
-  paid_at
+  paid_at,
+  cancellation_reason
 }) {
   if (!Object.values(PAYMENT_STATUS).includes(status)) {
     throw new TransactionError('Invalid transaction status', HTTP_STATUS.BAD_REQUEST);
   }
-  
+
   const supabaseAdmin = getSupabaseAdmin();
-  
+
   const updateData = { status };
-  
+
   if (channel) updateData.channel = channel;
   if (authorization_code) updateData.authorization_code = authorization_code;
   if (paid_at) updateData.paid_at = paid_at;
+  // cancellation_reason populates the column added in migration 064. Caller is
+  // expected to pass one of: duplicate_init | gateway_failure | user_abandoned
+  // | manual_cleanup. NULL is allowed (preserves legacy behavior for the
+  // success path where no reason makes sense).
+  if (cancellation_reason !== undefined && cancellation_reason !== null) {
+    updateData.cancellation_reason = String(cancellation_reason).slice(0, 255);
+  }
   
   // Atomic conditional UPDATE: prevent updating already-successful transactions
   // This replaces the read-check-write pattern with a single atomic operation
@@ -642,8 +650,11 @@ export async function getLatestSuccessfulTransaction(carId) {
   return transaction || null;
 }
 
-export async function markTransactionAbandoned(reference) {
-  return updateTransactionStatus(reference, { status: PAYMENT_STATUS.ABANDONED });
+export async function markTransactionAbandoned(reference, cancellation_reason = null) {
+  return updateTransactionStatus(reference, {
+    status: PAYMENT_STATUS.ABANDONED,
+    cancellation_reason
+  });
 }
 
 export async function markTransactionRefunded(reference, refundData = {}) {

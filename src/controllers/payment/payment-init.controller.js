@@ -422,11 +422,18 @@ export const initializePayment = async (req, res) => {
       car = carRow;
     }
 
-    // Abandon stale pending transactions in a single atomic UPDATE (no prior SELECT needed).
+    // Abandon stale pending transactions in a single atomic UPDATE. Tag the
+    // abandoned rows with cancellation_reason='duplicate_init' so the admin
+    // Payments view can hide them by default — they're not gateway failures
+    // or genuine drop-offs, just the user re-clicking Pay or switching gateways.
     if (car) {
       const { data: abandoned } = await supabaseAdmin
         .from('payment_transactions')
-        .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
+        .update({
+          status: PAYMENT_STATUS.ABANDONED,
+          cancellation_reason: 'duplicate_init',
+          updated_at: new Date().toISOString()
+        })
         .eq('car_id', car.id)
         .eq('user_id', userId)
         .eq('status', PAYMENT_STATUS.PENDING)
@@ -437,7 +444,11 @@ export const initializePayment = async (req, res) => {
     } else if (isDriverLicensePayment) {
       const { data: abandoned } = await supabaseAdmin
         .from('payment_transactions')
-        .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
+        .update({
+          status: PAYMENT_STATUS.ABANDONED,
+          cancellation_reason: 'duplicate_init',
+          updated_at: new Date().toISOString()
+        })
         .eq('user_id', userId)
         .eq('payment_type', PAYMENT_TYPE.DRIVER_LICENSE)
         .is('car_id', null)

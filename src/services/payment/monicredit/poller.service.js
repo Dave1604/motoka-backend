@@ -117,7 +117,11 @@ class MonicreditPoller {
       // Sweep stale pendings — keeps the poll set bounded and frees virtual accounts
       const { data: swept } = await supabaseAdmin
         .from('payment_transactions')
-        .update({ status: PAYMENT_STATUS.ABANDONED, updated_at: new Date().toISOString() })
+        .update({
+          status: PAYMENT_STATUS.ABANDONED,
+          cancellation_reason: 'user_abandoned', // 24h+ old pending — customer never paid
+          updated_at: new Date().toISOString()
+        })
         .eq('payment_gateway', PAYMENT_GATEWAY.MONICREDIT)
         .eq('status', PAYMENT_STATUS.PENDING)
         .lt('created_at', cutoff)

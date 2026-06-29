@@ -1218,7 +1218,7 @@ export const updateOrderStatus = async (req, res) => {
 export const listTransactions = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all', gateway = 'all', search } = req.query;
+    const { page = 1, per_page = 15, status = 'all', gateway = 'all', search, include_duplicates } = req.query;
 
     const limit = Math.min(100, Math.max(1, parseInt(per_page)));
     const offset = (Math.max(1, parseInt(page)) - 1) * limit;
@@ -1232,6 +1232,12 @@ export const listTransactions = async (req, res) => {
 
     const dbGateway = (gateway === 'paystack' || gateway === 'monicredit') ? gateway : null;
 
+    // Hide rows tagged as duplicate_init by default — they're noise from users
+    // re-initialising payment (gateway switches, rapid retries). Pass
+    // ?include_duplicates=true to see everything. Applied to BOTH the list
+    // query and the summary aggregates so the cards reflect what's displayed.
+    const hideDuplicates = include_duplicates !== 'true' && include_duplicates !== '1';
+
     let query = supabaseAdmin
       .from('payment_transactions')
       .select('*', { count: 'exact' })
@@ -1241,6 +1247,7 @@ export const listTransactions = async (req, res) => {
     if (dbStatus) query = query.eq('status', dbStatus);
     if (dbGateway) query = query.eq('payment_gateway', dbGateway);
     if (search) query = query.ilike('reference', `%${search}%`);
+    if (hideDuplicates) query = query.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init');
 
     const { data: transactions, count, error } = await query;
     if (error) {
@@ -1258,8 +1265,19 @@ export const listTransactions = async (req, res) => {
     //
     // NOTE: Supabase JS requires .select() before any filter chain (.eq, etc).
     // Build each query as `from().select(...)` first, then apply filters.
+    // Each query also respects the `hideDuplicates` flag so the cards match
+    // what's visible in the table — admin sees the same numbers as the rows.
+    const applyDupFilter = (q) =>
+      hideDuplicates ? q.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init') : q;
     const headCount = (filterFn) => {
       let q = supabaseAdmin.from('payment_transactions').select('id', { count: 'exact', head: true });
+      q = applyDupFilter(q);
+      if (filterFn) q = filterFn(q);
+      return q;
+    };
+    const sumQuery = (filterFn) => {
+      let q = supabaseAdmin.from('payment_transactions').select('amount');
+      q = applyDupFilter(q);
       if (filterFn) q = filterFn(q);
       return q;
     };
@@ -1281,8 +1299,8 @@ export const listTransactions = async (req, res) => {
       headCount(q => q.eq('status', 'abandoned')),
       headCount(q => q.eq('payment_gateway', 'paystack')),
       headCount(q => q.eq('payment_gateway', 'monicredit')),
-      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
-      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'pending'),
+      sumQuery(q => q.eq('status', 'successful')),
+      sumQuery(q => q.eq('status', 'pending')),
     ]);
 
     const sumKobo = (rows) => (rows || []).reduce((s, r) => s + parseFloat(r.amount || 0), 0);
