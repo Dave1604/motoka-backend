@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
+
 import { authenticate } from '../middleware/authenticate.js';
 import { checkAdmin } from '../middleware/checkAdmin.js';
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
@@ -123,5 +124,9 @@ router.get('/guest-orders/:orderId', authenticateAdmin, admin.getGuestOrderDetai
 router.get('/driver-license-applications', authenticateAdmin, admin.listDriverLicenseApplications);
 router.get('/driver-license-applications/:id', authenticateAdmin, admin.getDriverLicenseApplicationDetails);
 router.patch('/driver-license-applications/:id/status', authenticateAdmin, admin.updateDriverLicenseApplicationStatus);
+
+// ── Vehicle document (renewal item) pricing ───────────────────────────────────
+router.get('/vehicle-doc-prices', authenticateAdmin, admin.getRenewalItemPrices);
+router.put('/vehicle-doc-prices/:itemKey', authenticateAdmin, admin.updateRenewalItemPrice);
 
 export default router;
