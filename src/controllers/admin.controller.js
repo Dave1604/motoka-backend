@@ -3060,3 +3060,95 @@ export const adminBulkImportCars = async (req, res) => {
     return res.status(500).json({ status: false, message: 'Bulk import failed' });
   }
 };
+
+// ─── Vehicle Document (Renewal Item) Pricing ─────────────────────────────────
+
+/**
+ * GET /api/admin/vehicle-doc-prices
+ * Returns all renewal items (including inactive) so admin can manage them.
+ */
+export const getRenewalItemPrices = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+
+    const { data, error } = await supabase
+      .from('renewal_items')
+      .select('item_key, name, price, required, active')
+      .order('required', { ascending: false })
+      .order('name', { ascending: true });
+
+    if (error) {
+      logError('[Admin] getRenewalItemPrices error', error);
+      return response.serverError(res, 'Failed to retrieve renewal item prices');
+    }
+
+    return response.success(res, data || [], 'Renewal item prices retrieved');
+  } catch (err) {
+    logError('[Admin] getRenewalItemPrices error', err);
+    return response.serverError(res, 'Failed to retrieve renewal item prices');
+  }
+};
+
+/**
+ * PUT /api/admin/vehicle-doc-prices/:itemKey
+ * Update the price (and optionally name/active) of a renewal item.
+ * Price is stored in kobo so we accept kobo directly.
+ */
+export const updateRenewalItemPrice = async (req, res) => {
+  try {
+    const { itemKey } = req.params;
+    const { price, name, active } = req.body;
+    const supabase = getSupabaseAdmin();
+
+    if (price === undefined && name === undefined && active === undefined) {
+      return res.status(400).json({ status: false, message: 'At least one of price, name, or active must be provided' });
+    }
+
+    if (price !== undefined) {
+      const parsed = Number(price);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return res.status(400).json({ status: false, message: 'price must be a non-negative integer (in kobo)' });
+      }
+    }
+
+    // Verify the item exists
+    const { data: existing, error: fetchErr } = await supabase
+      .from('renewal_items')
+      .select('item_key, name, price, required, active')
+      .eq('item_key', itemKey)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ status: false, message: 'Renewal item not found' });
+    }
+
+    const updatePayload = { updated_at: new Date().toISOString() };
+    if (price !== undefined) updatePayload.price = Number(price);
+    if (name !== undefined) updatePayload.name = String(name).trim();
+    if (active !== undefined) updatePayload.active = Boolean(active);
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('renewal_items')
+      .update(updatePayload)
+      .eq('item_key', itemKey)
+      .select('item_key, name, price, required, active')
+      .single();
+
+    if (updateErr) {
+      logError('[Admin] updateRenewalItemPrice update error', updateErr);
+      return response.serverError(res, 'Failed to update renewal item price');
+    }
+
+    logInfo('[Admin] Renewal item price updated', {
+      itemKey,
+      previousPrice: existing.price,
+      newPrice: updated.price,
+      adminId: req.admin?.id,
+    });
+
+    return response.success(res, updated, 'Renewal item price updated successfully');
+  } catch (err) {
+    logError('[Admin] updateRenewalItemPrice error', err);
+    return response.serverError(res, 'Failed to update renewal item price');
+  }
+};
