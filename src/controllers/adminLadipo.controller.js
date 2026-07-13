@@ -127,6 +127,12 @@ function normalizeProductPayload(payload = {}) {
   const isUniversal = payload.is_universal !== undefined
     ? String(payload.is_universal).toLowerCase() === 'true' || payload.is_universal === true
     : false;
+  const isEssential = payload.is_essential !== undefined
+    ? String(payload.is_essential).toLowerCase() === 'true' || payload.is_essential === true
+    : false;
+  const isMustHave = payload.is_must_have !== undefined
+    ? String(payload.is_must_have).toLowerCase() === 'true' || payload.is_must_have === true
+    : false;
   let images = [];
   if (Array.isArray(payload.images)) {
     images = payload.images;
@@ -195,6 +201,8 @@ function normalizeProductPayload(payload = {}) {
       condition,
       part_type: partType,
       is_universal: isUniversal,
+      is_essential: isEssential,
+      is_must_have: isMustHave,
       is_active: isActive,
       images,
       specifications,
@@ -776,7 +784,7 @@ export async function listLadipoProducts(req, res) {
     let query = supabase
       .from('ladipo_parts')
       .select(`
-        id, slug, name, description, brand, condition, part_type, images, is_active, is_universal, category_id, created_at, updated_at,
+        id, slug, name, description, brand, condition, part_type, images, is_active, is_universal, is_essential, is_must_have, category_id, created_at, updated_at,
         category:ladipo_categories(id, name, slug),
         inventory:ladipo_part_inventory(id, part_id, price_kobo, stock_qty, seller_label)
       `, { count: 'exact' })
@@ -966,5 +974,94 @@ export async function deleteLadipoProduct(req, res) {
   } catch (error) {
     logError('[Admin Ladipo] deleteLadipoProduct', error);
     return res.status(500).json({ status: false, message: 'Failed to delete Ladipo product' });
+  }
+}
+
+export async function listLadipoCategories(req, res) {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from('ladipo_categories')
+      .select('id, name, slug, parent_id, sort_order, image_url')
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    return res.status(200).json({
+      status: true,
+      message: 'Categories retrieved',
+      data: data || [],
+    });
+  } catch (error) {
+    logError('[Admin Ladipo] listLadipoCategories', error);
+    return res.status(500).json({ status: false, message: 'Failed to fetch categories' });
+  }
+}
+
+export async function updateLadipoCategoryImage(req, res) {
+  let uploadedUrl = null;
+  try {
+    const supabase = getSupabaseAdmin();
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ status: false, message: 'Category id is required' });
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('ladipo_categories')
+      .select('id, image_url')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ status: false, message: 'Category not found' });
+    }
+
+    let imageUrl = null;
+
+    if (req.file) {
+      uploadedUrl = await uploadToCloudinary(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+      );
+      imageUrl = uploadedUrl;
+    } else if (req.body?.image_url) {
+      const raw = String(req.body.image_url).trim();
+      try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== 'https:') throw new Error('URL must be https');
+      } catch {
+        return res.status(400).json({ status: false, message: 'image_url must be a valid https URL' });
+      }
+      imageUrl = raw;
+    } else {
+      return res.status(400).json({ status: false, message: 'Provide image_file or image_url' });
+    }
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('ladipo_categories')
+      .update({ image_url: imageUrl, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, name, slug, parent_id, sort_order, image_url')
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    if (req.file && existing.image_url && existing.image_url.includes('cloudinary')) {
+      deleteFromCloudinary(existing.image_url).catch(() => {});
+    }
+
+    logInfo('[Admin Ladipo] category_image_updated', { category_id: id, image_url: imageUrl });
+    return res.status(200).json({
+      status: true,
+      message: 'Category image updated',
+      data: updated,
+    });
+  } catch (error) {
+    if (uploadedUrl) {
+      deleteFromCloudinary(uploadedUrl).catch(() => {});
+    }
+    logError('[Admin Ladipo] updateLadipoCategoryImage', error);
+    return res.status(500).json({ status: false, message: error.message || 'Failed to update category image' });
   }
 }

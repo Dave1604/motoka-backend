@@ -17,6 +17,8 @@ import {
   createLadipoProduct,
   updateLadipoProduct,
   deleteLadipoProduct,
+  listLadipoCategories,
+  updateLadipoCategoryImage,
 } from '../controllers/adminLadipo.controller.js';
 
 // Multer for CSV uploads — memory storage, 5 MB cap, CSV only
@@ -90,6 +92,8 @@ router.get('/ladipo/products', authenticateAdmin, listLadipoProducts);
 router.post('/ladipo/products', authenticateAdmin, handleLadipoProductImageUpload, createLadipoProduct);
 router.put('/ladipo/products/:productId', authenticateAdmin, handleLadipoProductImageUpload, updateLadipoProduct);
 router.delete('/ladipo/products/:productId', authenticateAdmin, deleteLadipoProduct);
+router.get('/ladipo/categories', authenticateAdmin, listLadipoCategories);
+router.patch('/ladipo/categories/:id/image', authenticateAdmin, handleLadipoProductImageUpload, updateLadipoCategoryImage);
 
 // ── Transaction management (authenticateAdmin) ────────────────────────────────
 router.get('/transactions/failed', authenticateAdmin, admin.getFailedTransactions);

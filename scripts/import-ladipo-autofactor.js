@@ -2,6 +2,51 @@ import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSupabaseAdmin } from '../src/config/supabase.js';
+import { CANONICAL } from './lib/ladipoCanonicalCategories.js';
+
+// Maps raw autofactorng.com category slugs onto the canonical taxonomy from
+// supabase/migrations/065_ladipo_catalog_reseed.sql instead of spawning new
+// top-level categories. Only genuinely vehicle-agnostic categories (generic
+// car-care/tools/accessories) are eligible for is_universal=true - mechanical
+// parts, batteries, tyres and lubricants are vehicle-specific and must rely
+// on real ladipo_part_compatibility rows instead.
+const CATEGORY_SLUG_MAP = {
+  'accessories-exterior-accessories': CANONICAL.EXTERIOR,
+  'accessories-interior-accessories': CANONICAL.INTERIOR,
+  batteries: CANONICAL.CAR_BATTERIES,
+  'car-care-tools-car-care': CANONICAL.INTERIOR,
+  'car-care-tools-tools-gadget-safety-products': CANONICAL.INTERIOR,
+  'lubricants-fluids-additives': CANONICAL.ENGINE_OIL,
+  'lubricants-fluids-coolants-appearance-products': CANONICAL.BRAKE_FLUID_COOLANT,
+  'lubricants-fluids-engine-oil': CANONICAL.ENGINE_OIL,
+  'lubricants-fluids-grease-gum': CANONICAL.ENGINE_OIL,
+  'lubricants-fluids-steering-brake-fluid': CANONICAL.BRAKE_FLUID_COOLANT,
+  'lubricants-fluids-transmission-fluid': CANONICAL.GEAR_OIL,
+  'servicing-parts-air-filters': CANONICAL.AIR_FILTER,
+  'servicing-parts-oil-filter': CANONICAL.OIL_FILTER,
+  'servicing-parts-spark-plugs': CANONICAL.SPARK_PLUGS,
+  'spare-parts-air-intake': CANONICAL.ENGINE_PARTS,
+  'spare-parts-body-light-parts': CANONICAL.BULBS_LIGHTING,
+  'spare-parts-brake-wheel-hub-bearings': CANONICAL.BRAKE_WHEEL_HUB,
+  'spare-parts-cooling-heating-system': CANONICAL.ENGINE_PARTS,
+  'spare-parts-drivetrain': CANONICAL.GEAR_OIL,
+  'spare-parts-electrical': CANONICAL.ALTERNATORS,
+  'spare-parts-engine-parts': CANONICAL.ENGINE_PARTS,
+  'spare-parts-exhaust-emission': CANONICAL.EXHAUST,
+  'spare-parts-fuel-system-fuel-injection': CANONICAL.ENGINE_PARTS,
+  'spare-parts-steering-parts': CANONICAL.STEERING_PARTS,
+  'spare-parts-suspension-parts': CANONICAL.SUSPENSION,
+  'spare-parts-transmission': CANONICAL.GEAR_OIL,
+  tyres: CANONICAL.CAR_TYRES,
+};
+
+// Only these canonical buckets hold genuinely vehicle-agnostic products
+// (car-care liquids, tools, generic interior/exterior accessories).
+const UNIVERSAL_CATEGORY_IDS = new Set([CANONICAL.INTERIOR]);
+
+function resolveCanonicalCategoryId(categorySlug) {
+  return CATEGORY_SLUG_MAP[categorySlug] || CANONICAL.SPARE_PARTS;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -190,30 +235,10 @@ function categorySlugFromProductUrl(productUrl) {
   return match ? match[1] : null;
 }
 
-function buildCategoryNameFromSlug(slug) {
-  return String(slug || '')
-    .split('-')
-    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
-    .join(' ');
-}
-
 function inferBrand(title) {
   const normalized = normalizeSpace(title);
   const firstToken = normalized.split(' ')[0] || 'Autofactor';
   return firstToken.replace(/[^A-Za-z0-9/&.-]/g, '') || 'Autofactor';
-}
-
-function inferParentSlug(slug, knownSlugs) {
-  const value = String(slug || '').trim();
-  if (!value || !value.includes('-')) return null;
-
-  const parts = value.split('-');
-  for (let i = parts.length - 1; i >= 1; i -= 1) {
-    const candidate = parts.slice(0, i).join('-');
-    if (knownSlugs.has(candidate)) return candidate;
-  }
-
-  return null;
 }
 
 async function crawlAutofactorProducts(limit, maxPages, perCategoryLimit) {
@@ -293,71 +318,6 @@ async function crawlAutofactorProducts(limit, maxPages, perCategoryLimit) {
   return products;
 }
 
-async function upsertCategories(supabase, categorySlugs) {
-  const unique = [...new Set(categorySlugs.filter(Boolean))];
-  if (unique.length === 0) return new Map();
-
-  const existing = await supabase
-    .from('ladipo_categories')
-    .select('id, slug, name, parent_id');
-  if (existing.error) throw new Error(`Failed reading categories: ${existing.error.message}`);
-  const bySlug = new Map((existing.data || []).map((c) => [c.slug, c]));
-
-  const inserts = [];
-  for (const slug of unique) {
-    if (!bySlug.has(slug)) {
-      inserts.push({
-        name: buildCategoryNameFromSlug(slug),
-        slug,
-        parent_id: null,
-        sort_order: 99,
-      });
-    }
-  }
-
-  if (inserts.length > 0) {
-    const inserted = await supabase
-      .from('ladipo_categories')
-      .insert(inserts)
-      .select('id, slug, name, parent_id');
-    if (inserted.error) throw new Error(`Failed creating categories: ${inserted.error.message}`);
-    for (const c of inserted.data || []) bySlug.set(c.slug, c);
-  }
-
-  // Ensure nested slugs (e.g. spare-parts-air-intake) are attached to the
-  // closest existing slug prefix (e.g. spare-parts) as parent categories.
-  const knownSlugs = new Set(bySlug.keys());
-  const updates = [];
-  for (const category of bySlug.values()) {
-    const parentSlug = inferParentSlug(category.slug, knownSlugs);
-    if (!parentSlug) continue;
-
-    const parent = bySlug.get(parentSlug);
-    if (!parent || parent.id === category.id) continue;
-    if (category.parent_id === parent.id) continue;
-
-    updates.push({ id: category.id, parent_id: parent.id });
-  }
-
-  for (const update of updates) {
-    const { error: updateError } = await supabase
-      .from('ladipo_categories')
-      .update({ parent_id: update.parent_id })
-      .eq('id', update.id);
-    if (updateError) throw new Error(`Failed updating category hierarchy: ${updateError.message}`);
-  }
-
-  if (updates.length > 0) {
-    const refreshed = await supabase
-      .from('ladipo_categories')
-      .select('id, slug, name, parent_id');
-    if (refreshed.error) throw new Error(`Failed refreshing categories: ${refreshed.error.message}`);
-    return new Map((refreshed.data || []).map((c) => [c.slug, c]));
-  }
-
-  return bySlug;
-}
-
 async function syncToDatabase(products, options) {
   const supabase = getSupabaseAdmin();
 
@@ -367,23 +327,18 @@ async function syncToDatabase(products, options) {
     await supabase.from('ladipo_parts').delete().not('id', 'is', null);
   }
 
-  const categoryMap = await upsertCategories(supabase, products.map((p) => p.category_slug));
   let created = 0;
   let skipped = 0;
 
   for (const product of products) {
-    const category = categoryMap.get(product.category_slug);
-    if (!category) {
-      skipped += 1;
-      continue;
-    }
+    const categoryId = resolveCanonicalCategoryId(product.category_slug);
 
     const partPayload = {
       sku: product.sku,
       slug: product.slug,
       name: product.title,
       description: product.description,
-      category_id: category.id,
+      category_id: categoryId,
       brand: product.brand,
       condition: 'new',
       part_type: 'aftermarket',
@@ -391,13 +346,11 @@ async function syncToDatabase(products, options) {
       specifications: {
         source: 'autofactorng.com',
         source_url: product.source_url,
+        raw_category_slug: product.category_slug,
       },
       key_features: [],
       is_active: true,
-      is_universal: product.category_slug.includes('lubricants')
-        || product.category_slug.includes('accessories')
-        || product.category_slug.includes('car-care')
-        || product.category_slug.includes('battery'),
+      is_universal: UNIVERSAL_CATEGORY_IDS.has(categoryId),
     };
 
     const { data: part, error: partError } = await supabase

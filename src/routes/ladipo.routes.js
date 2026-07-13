@@ -4,6 +4,7 @@ import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
 import { ladipoCartLimiter, ladipoCheckoutLimiter } from '../middleware/rateLimiter.js';
 import {
   handleGetCategories,
+  handleGetMerchandisedSections,
   handleGetParts,
   handleGetPartFacets,
   handleGetPartBySlug,
@@ -25,6 +26,7 @@ const router = express.Router();
 
 // ─── Public: browsing ────────────────────────────────────────────────────────
 router.get('/ladipo/categories', handleGetCategories);
+router.get('/ladipo/sections', handleGetMerchandisedSections);
 router.get('/ladipo/parts', handleGetParts);
 // NOTE: /parts/facets must be declared before /parts/:slug to avoid being captured as a slug
 router.get('/ladipo/parts/facets', handleGetPartFacets);

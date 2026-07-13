@@ -32,7 +32,7 @@ export async function getCategories() {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
     .from('ladipo_categories')
-    .select('id, name, slug, parent_id, sort_order')
+    .select('id, name, slug, parent_id, sort_order, image_url')
     .order('sort_order', { ascending: true });
 
   if (error) {
@@ -61,6 +61,7 @@ export async function getParts({
   min_price_kobo,
   max_price_kobo,
   sort,
+  tag,
 } = {}) {
   const supabase = getSupabaseAdmin();
   const offset = (page - 1) * limit;
@@ -103,6 +104,9 @@ export async function getParts({
     .eq('is_active', true)
     .range(offset, offset + limit - 1)
     .order(sortConfig.column, { ascending: sortConfig.ascending });
+
+  if (tag === 'essential') query = query.eq('is_essential', true);
+  if (tag === 'must_have') query = query.eq('is_must_have', true);
 
   if (minPrice !== null) query = query.gte('inventory.price_kobo', minPrice);
   if (maxPrice !== null) query = query.lte('inventory.price_kobo', maxPrice);
@@ -203,16 +207,6 @@ export async function getParts({
     idConstraintSets.push(compatibleIds);
   }
 
-  if (idConstraintSets.length) {
-    let intersection = idConstraintSets[0];
-    for (let i = 1; i < idConstraintSets.length; i++) {
-      const next = idConstraintSets[i];
-      intersection = new Set([...intersection].filter((id) => next.has(id)));
-      if (intersection.size === 0) return { parts: [], total: 0 };
-    }
-    query = query.in('id', Array.from(intersection));
-  }
-
   if (q && q.trim()) {
     // Strip characters that break PostgREST filter syntax before building ilike clauses.
     // Single quotes, commas, and parentheses are PostgREST filter delimiters.
@@ -248,7 +242,52 @@ export async function getParts({
       `brand.ilike.%${t}%`,
       `description.ilike.%${t}%`,
     ]);
-    query = query.or(orClauses.join(','));
+
+    const { data: literalMatches, error: literalErr } = await supabase
+      .from('ladipo_parts')
+      .select('id')
+      .eq('is_active', true)
+      .or(orClauses.join(','));
+
+    if (literalErr) {
+      logError('[Ladipo] getParts literal search failed', literalErr);
+      throw new Error('Failed to fetch parts');
+    }
+
+    let matchedIds = new Set((literalMatches || []).map((r) => r.id));
+
+    // Fallback: the literal/synonym search found nothing — the term is
+    // most likely a typo, so try trigram fuzzy matching instead. This is
+    // the "did you mean…" layer: it only kicks in when the exact search
+    // comes up empty, so normal clean searches are unaffected.
+    if (matchedIds.size === 0) {
+      const { data: fuzzyMatches, error: fuzzyErr } = await supabase
+        .rpc('search_ladipo_parts_fuzzy', { p_query: term, p_limit: 30 });
+
+      if (fuzzyErr) {
+        logError('[Ladipo] getParts fuzzy search fallback failed', fuzzyErr);
+        // Don't hard-fail the whole search just because the fuzzy fallback
+        // errored — fall through with the (empty) literal match set.
+      } else {
+        matchedIds = new Set((fuzzyMatches || []).map((r) => r.id));
+      }
+    }
+
+    if (matchedIds.size === 0) {
+      return { parts: [], total: 0 };
+    }
+
+    idConstraintSets.push(matchedIds);
+  }
+
+  if (idConstraintSets.length) {
+    let intersection = idConstraintSets[0];
+    for (let i = 1; i < idConstraintSets.length; i++) {
+      const next = idConstraintSets[i];
+      intersection = new Set([...intersection].filter((id) => next.has(id)));
+      if (intersection.size === 0) return { parts: [], total: 0 };
+    }
+    query = query.in('id', Array.from(intersection));
   }
 
   const { data, error, count } = await query;
@@ -396,6 +435,51 @@ export async function getPartBySlug(slug) {
   }
 
   return flattenPart(data);
+}
+
+// Returns admin-curated "Essential Products" and "Must Have" sections for
+// the Ladipo landing view. Membership is explicit (is_essential / is_must_have
+// flags set by an admin), never inferred from sales or heuristics, so the
+// sections always reflect what an admin actually chose to feature.
+export async function getMerchandisedSections({ essentialLimit = 8, mustHaveLimit = 8 } = {}) {
+  const supabase = getSupabaseAdmin();
+
+  const baseSelect = `
+    id, slug, name, description, brand, condition, part_type, images, is_active, is_universal,
+    category:ladipo_categories(id, name, slug),
+    inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label)
+  `;
+
+  const [essentialResult, mustHaveResult] = await Promise.all([
+    supabase
+      .from('ladipo_parts')
+      .select(baseSelect)
+      .eq('is_active', true)
+      .eq('is_essential', true)
+      .order('created_at', { ascending: false })
+      .limit(essentialLimit),
+    supabase
+      .from('ladipo_parts')
+      .select(baseSelect)
+      .eq('is_active', true)
+      .eq('is_must_have', true)
+      .order('created_at', { ascending: false })
+      .limit(mustHaveLimit),
+  ]);
+
+  if (essentialResult.error) {
+    logError('[Ladipo] getMerchandisedSections essentials failed', essentialResult.error);
+    throw new Error('Failed to fetch essential products');
+  }
+  if (mustHaveResult.error) {
+    logError('[Ladipo] getMerchandisedSections must-haves failed', mustHaveResult.error);
+    throw new Error('Failed to fetch must-have products');
+  }
+
+  return {
+    essentials: (essentialResult.data || []).map(flattenPart),
+    mustHaves: (mustHaveResult.data || []).map(flattenPart),
+  };
 }
 
 export async function getCompatibility(partId) {
