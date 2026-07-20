@@ -165,24 +165,15 @@ export async function getParts({
     : Number.parseInt(year, 10);
 
   if (normalizedMake) {
-    // Push model + year filtering into the DB query rather than fetching all rows and filtering in JS.
-    let compatQuery = supabase
-      .from('ladipo_part_compatibility')
-      .select('part_id')
-      .ilike('make', normalizedMake);
-
-    if (normalizedModel) {
-      compatQuery = compatQuery.ilike('model', normalizedModel);
-    }
-    if (Number.isFinite(parsedYear) && parsedYear !== null) {
-      compatQuery = compatQuery
-        .or(`year_min.is.null,year_min.lte.${parsedYear}`)
-        .or(`year_max.is.null,year_max.gte.${parsedYear}`);
-    }
-
-    // Fetch compatible IDs and universal parts in parallel
+    // Fitment is resolved in PostgreSQL so the API, admin tooling and every
+    // client use the same case/spacing/punctuation normalisation.  The RPC is
+    // intentionally strict: it never infers a part's fitment from its title.
     const [compatResult, universalResult] = await Promise.all([
-      compatQuery,
+      supabase.rpc('get_ladipo_compatible_part_ids', {
+        p_make: normalizedMake,
+        p_model: normalizedModel || null,
+        p_year: Number.isFinite(parsedYear) ? parsedYear : null,
+      }),
       supabase.from('ladipo_parts').select('id').eq('is_active', true).eq('is_universal', true),
     ]);
 

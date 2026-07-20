@@ -26,6 +26,7 @@ import {
   ladipoPayOrderBodySchema,
   ladipoUpdateCartItemBodySchema,
   ladipoVerifyPaymentBodySchema,
+  ladipoCompatibilityBodySchema,
 } from '../validators/ladipo.validation.js';
 
 function invalidInput(res, zodError) {
@@ -180,8 +181,9 @@ export const handleGetCompatibility = async (req, res) => {
 export const handleUpsertCompatibility = async (req, res) => {
   try {
     const { id } = req.params;
-    const { entries = [] } = req.body;
-    const data = await upsertCompatibilityEntries(id, entries);
+    const parsed = ladipoCompatibilityBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidInput(res, parsed.error);
+    const data = await upsertCompatibilityEntries(id, parsed.data.entries);
     return res.json({ success: true, data });
   } catch (error) {
     logError('[Ladipo] handleUpsertCompatibility', error);

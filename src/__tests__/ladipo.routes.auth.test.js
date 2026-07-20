@@ -31,7 +31,9 @@ jest.unstable_mockModule('../middleware/authenticateAdmin.js', () => ({
 
 jest.unstable_mockModule('../controllers/ladipo.controller.js', () => ({
   handleGetCategories: (_req, res) => res.json({ ok: true }),
+  handleGetMerchandisedSections: (_req, res) => res.json({ ok: true }),
   handleGetParts: (_req, res) => res.json({ ok: true }),
+  handleGetPartFacets: (_req, res) => res.json({ ok: true }),
   handleGetPartBySlug: (_req, res) => res.json({ ok: true }),
   handleGetCompatibility: (_req, res) => res.json({ ok: true }),
   handleUpsertCompatibility: (_req, res) => res.json({ ok: true }),

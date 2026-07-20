@@ -13,6 +13,7 @@ import {
   updateLadipoOrderStatus,
   updateLadipoOrderAssignee,
   updateLadipoOrderWorkflow,
+  getLadipoProductFilters,
   listLadipoProducts,
   createLadipoProduct,
   updateLadipoProduct,
@@ -88,6 +89,7 @@ router.get('/ladipo/orders/:orderNumber', authenticateAdmin, getLadipoOrderDetai
 router.put('/ladipo/orders/:orderNumber/status', authenticateAdmin, updateLadipoOrderStatus);
 router.put('/ladipo/orders/:orderNumber/assignee', authenticateAdmin, updateLadipoOrderAssignee);
 router.put('/ladipo/orders/:orderNumber/workflow', authenticateAdmin, updateLadipoOrderWorkflow);
+router.get('/ladipo/products/filters', authenticateAdmin, getLadipoProductFilters);
 router.get('/ladipo/products', authenticateAdmin, listLadipoProducts);
 router.post('/ladipo/products', authenticateAdmin, handleLadipoProductImageUpload, createLadipoProduct);
 router.put('/ladipo/products/:productId', authenticateAdmin, handleLadipoProductImageUpload, updateLadipoProduct);

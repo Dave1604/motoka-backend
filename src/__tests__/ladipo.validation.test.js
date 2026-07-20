@@ -6,6 +6,7 @@ import {
   ladipoPayOrderBodySchema,
   ladipoVerifyPaymentBodySchema,
   ladipoCartItemIdParamSchema,
+  ladipoCompatibilityBodySchema,
 } from '../validators/ladipo.validation.js';
 
 describe('Ladipo Zod validators', () => {
@@ -67,5 +68,19 @@ describe('Ladipo Zod validators', () => {
     expect(
       ladipoCartItemIdParamSchema.safeParse({ id: '550e8400-e29b-41d4-a716-446655440099' }).success
     ).toBe(true);
+  });
+
+  it('accepts optional model/year bounds for an explicit fitment rule', () => {
+    const r = ladipoCompatibilityBodySchema.safeParse({
+      entries: [{ make: 'Mercedes Benz', model: 'C-Class', year_min: 2015, year_max: 2020 }],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it('rejects an inverted compatibility year range', () => {
+    const r = ladipoCompatibilityBodySchema.safeParse({
+      entries: [{ make: 'Toyota', model: 'Camry', year_min: 2021, year_max: 2020 }],
+    });
+    expect(r.success).toBe(false);
   });
 });

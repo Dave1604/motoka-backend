@@ -780,6 +780,13 @@ export async function listLadipoProducts(req, res) {
     const from = (page - 1) * limit;
     const to = from + limit - 1;
     const search = String(req.query.search || '').trim();
+    const collection = String(req.query.collection || 'all').trim().toLowerCase();
+    const brand = String(req.query.brand || '').trim();
+    const make = String(req.query.make || '').trim();
+
+    if (!['all', 'essential', 'must_have'].includes(collection)) {
+      return res.status(400).json({ status: false, message: 'collection must be all, essential, or must_have' });
+    }
 
     let query = supabase
       .from('ladipo_parts')
@@ -794,6 +801,32 @@ export async function listLadipoProducts(req, res) {
     if (search) {
       query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%,brand.ilike.%${search}%`);
     }
+    if (brand) query = query.eq('brand', brand);
+
+    if (make) {
+      const [{ data: compatibleRows, error: compatibilityError }, { data: universalRows, error: universalError }] = await Promise.all([
+        supabase.rpc('get_ladipo_compatible_part_ids', { p_make: make, p_model: null, p_year: null }),
+        supabase.from('ladipo_parts').select('id').eq('is_universal', true),
+      ]);
+      if (compatibilityError) throw compatibilityError;
+      if (universalError) throw universalError;
+      const partIds = [...new Set([
+        ...(compatibleRows || []).map((row) => row.part_id),
+        ...(universalRows || []).map((row) => row.id),
+      ].filter(Boolean))];
+      if (partIds.length === 0) {
+        return res.status(200).json({
+          status: true,
+          message: 'Ladipo products retrieved successfully',
+          data: { data: [], collection, current_page: page, per_page: limit, total: 0, last_page: 0 },
+        });
+      }
+      query = query.in('id', partIds);
+    }
+    // These are explicit flags chosen by an admin; never inferred from sales,
+    // search ranking or product category.
+    if (collection === 'essential') query = query.eq('is_essential', true);
+    if (collection === 'must_have') query = query.eq('is_must_have', true);
 
     const { data, count, error } = await query;
     if (error) throw error;
@@ -808,6 +841,7 @@ export async function listLadipoProducts(req, res) {
       message: 'Ladipo products retrieved successfully',
       data: {
         data: products,
+        collection,
         current_page: page,
         per_page: limit,
         total: count || 0,
@@ -817,6 +851,33 @@ export async function listLadipoProducts(req, res) {
   } catch (error) {
     logError('[Admin Ladipo] listLadipoProducts', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve Ladipo products' });
+  }
+}
+
+export async function getLadipoProductFilters(_req, res) {
+  try {
+    const supabase = getSupabaseAdmin();
+    const [{ data: parts, error: partsError }, { data: compatibility, error: compatibilityError }] = await Promise.all([
+      supabase.from('ladipo_parts').select('brand').not('brand', 'is', null),
+      supabase.from('ladipo_part_compatibility').select('make'),
+    ]);
+    if (partsError) throw partsError;
+    if (compatibilityError) throw compatibilityError;
+
+    const uniqueSorted = (values) => [...new Set(
+      values.map((value) => String(value || '').trim()).filter(Boolean),
+    )].sort((a, b) => a.localeCompare(b));
+
+    return res.status(200).json({
+      status: true,
+      data: {
+        brands: uniqueSorted((parts || []).map((part) => part.brand)),
+        makes: uniqueSorted((compatibility || []).map((entry) => entry.make)),
+      },
+    });
+  } catch (error) {
+    logError('[Admin Ladipo] getLadipoProductFilters', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve product filters' });
   }
 }
 
