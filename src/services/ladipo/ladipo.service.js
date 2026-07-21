@@ -11,6 +11,7 @@ import {
   notifyLadipoPaymentSuccess,
   notifyLadipoPaymentFailed,
 } from './ladipoNotifications.service.js';
+import { compatibilityConflictsWithTitle } from '../../utils/ladipoCarBrand.js';
 
 // ─── Categories ──────────────────────────────────────────────────────────────
 // Categories are near-static — cache for 5 minutes so the catalog browse
@@ -187,6 +188,25 @@ export async function getParts({
     }
 
     const compatibleIds = new Set((compatResult.data || []).map((r) => r.part_id).filter(Boolean));
+
+    // Drop corrupt fitment rows where the product title/brand clearly names a
+    // different OEM than the selected car (e.g. "Mercedes …" tagged as BMW).
+    if (compatibleIds.size > 0) {
+      const { data: compatParts, error: compatPartsError } = await supabase
+        .from('ladipo_parts')
+        .select('id, name, brand')
+        .in('id', [...compatibleIds]);
+      if (compatPartsError) {
+        logError('[Ladipo] getParts compatibility title check failed', compatPartsError);
+        throw new Error('Failed to fetch parts');
+      }
+      for (const part of compatParts || []) {
+        if (compatibilityConflictsWithTitle(normalizedMake, part.name, part.brand)) {
+          compatibleIds.delete(part.id);
+        }
+      }
+    }
+
     for (const row of universalResult.data || []) {
       if (row?.id) compatibleIds.add(row.id);
     }

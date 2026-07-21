@@ -9,6 +9,10 @@ import {
   notifyLadipoOrderOutForDelivery,
   notifyLadipoOrderProcessing,
 } from '../services/ladipo/ladipoNotifications.service.js';
+import {
+  carBrandSearchTerms,
+  textMentionsCarBrand,
+} from '../utils/ladipoCarBrand.js';
 
 export const LADIPO_ADMIN_API_VERSION = '2.1.0';
 
@@ -38,6 +42,31 @@ const ALLOWED_STATUS_TRANSITIONS = {
 
 const PRODUCT_CONDITIONS = new Set(['new', 'tokunbo', 'nigerian_used']);
 const PRODUCT_PART_TYPES = new Set(['oem', 'oes', 'aftermarket']);
+
+async function resolveAdminCarBrandPartIds(supabase, make) {
+  const terms = carBrandSearchTerms(make);
+  if (!terms.length) return [];
+
+  const nameFilter = terms.map((term) => `name.ilike.%${term}%`).join(',');
+  const brandFilter = terms.map((term) => `brand.ilike.%${term}%`).join(',');
+
+  // Admin "Car brand" means the product is clearly for that OEM (name/brand),
+  // not silent/corrupt compatibility rows (those still power the user car picker).
+  const [namedResult, brandedResult] = await Promise.all([
+    supabase.from('ladipo_parts').select('id, name, brand').or(nameFilter),
+    supabase.from('ladipo_parts').select('id, name, brand').or(brandFilter),
+  ]);
+  if (namedResult.error) throw namedResult.error;
+  if (brandedResult.error) throw brandedResult.error;
+
+  const ids = new Set();
+  for (const row of [...(namedResult.data || []), ...(brandedResult.data || [])]) {
+    if (textMentionsCarBrand(row.name, make) || textMentionsCarBrand(row.brand, make)) {
+      ids.add(row.id);
+    }
+  }
+  return [...ids];
+}
 
 const formatKoboToNaira = (kobo) => (Number(kobo || 0) / 100).toLocaleString('en-NG');
 const normalizeHandlerName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
@@ -804,16 +833,9 @@ export async function listLadipoProducts(req, res) {
     if (brand) query = query.eq('brand', brand);
 
     if (make) {
-      const [{ data: compatibleRows, error: compatibilityError }, { data: universalRows, error: universalError }] = await Promise.all([
-        supabase.rpc('get_ladipo_compatible_part_ids', { p_make: make, p_model: null, p_year: null }),
-        supabase.from('ladipo_parts').select('id').eq('is_universal', true),
-      ]);
-      if (compatibilityError) throw compatibilityError;
-      if (universalError) throw universalError;
-      const partIds = [...new Set([
-        ...(compatibleRows || []).map((row) => row.part_id),
-        ...(universalRows || []).map((row) => row.id),
-      ].filter(Boolean))];
+      // Admin "car brand" filter: compatibility rows + titles that mention that make.
+      // (Does not use part-manufacturer brand — that was confusing Toyota/Mercedes with Bosch.)
+      const partIds = await resolveAdminCarBrandPartIds(supabase, make);
       if (partIds.length === 0) {
         return res.status(200).json({
           status: true,
@@ -871,8 +893,25 @@ export async function getLadipoProductFilters(_req, res) {
     return res.status(200).json({
       status: true,
       data: {
+        // Car brands for the admin products filter (from compatibility + common NG fleet).
+        makes: uniqueSorted([
+          ...(compatibility || []).map((entry) => entry.make),
+          'Toyota',
+          'Honda',
+          'Mercedes-Benz',
+          'Nissan',
+          'Hyundai',
+          'Kia',
+          'Lexus',
+          'Ford',
+          'BMW',
+          'Volkswagen',
+          'Mazda',
+          'Mitsubishi',
+          'Peugeot',
+        ]),
+        // Kept for API compatibility; admin UI no longer uses part-manufacturer brand.
         brands: uniqueSorted((parts || []).map((part) => part.brand)),
-        makes: uniqueSorted((compatibility || []).map((entry) => entry.make)),
       },
     });
   } catch (error) {

@@ -1,3 +1,13 @@
+/**
+ * Backfill ladipo_part_compatibility from product titles (make/model/year).
+ *
+ * Run after Autofactor / Ladipo Market imports (or via
+ * `node scripts/seed_motoka_catalog.js --with-backfill`) so scraped rows
+ * without RockAuto fitment still participate in car-filter matching.
+ *
+ *   node scripts/backfill-ladipo-compatibility.js --dry-run --limit 100
+ *   node scripts/backfill-ladipo-compatibility.js --limit 5000
+ */
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
@@ -7,7 +17,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 config({ path: join(__dirname, '..', '.env') });
 
-const DEFAULT_SOURCE = 'ladipomarket.com.ng';
+const DEFAULT_SOURCE = 'all';
+
+const NG_SOURCES = [
+  'ladipomarket.com.ng',
+  'autofactorng.com',
+];
 
 // Maps the lowercase first word of a title to a canonical make name.
 const MAKE_ALIASES = new Map([
@@ -119,15 +134,25 @@ async function main() {
   const options = parseArgs(process.argv.slice(2));
   const supabase = getSupabaseAdmin();
 
-  console.log(`[backfill-compatibility] Fetching parts from source=${options.source}`);
-  const { data: parts, error } = await supabase
-    .from('ladipo_parts')
-    .select('id, name, is_universal')
-    .contains('specifications', { source: options.source })
-    .eq('is_active', true)
-    .limit(options.limit);
+  const sources = options.source === 'all' ? NG_SOURCES : [options.source];
+  console.log(`[backfill-compatibility] Fetching parts from sources=${sources.join(',')}`);
 
-  if (error) throw new Error(`Failed reading parts: ${error.message}`);
+  let parts = [];
+  for (const source of sources) {
+    const { data, error } = await supabase
+      .from('ladipo_parts')
+      .select('id, name, brand, is_universal')
+      .contains('specifications', { source })
+      .eq('is_active', true)
+      .limit(options.limit);
+    if (error) throw new Error(`Failed reading parts (${source}): ${error.message}`);
+    parts = parts.concat(data || []);
+  }
+
+  // Deduplicate if a part somehow matched multiple source queries.
+  const byId = new Map();
+  for (const part of parts) byId.set(part.id, part);
+  parts = [...byId.values()];
   console.log(`[backfill-compatibility] Found ${parts.length} parts`);
 
   const { data: existingCompat, error: compatError } = await supabase

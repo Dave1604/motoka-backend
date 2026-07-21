@@ -20,6 +20,14 @@ Usage (local validation — Camry + C300 only by default):
   .venv-seed/bin/python scripts/seed_motoka_inventory.py --dry-run
   .venv-seed/bin/python scripts/seed_motoka_inventory.py --limit 50
 
+Secondary fitment enrichment (merge Camry/C300 compatibility onto existing NG catalog rows;
+does not replace Autofactor / Ladipo Market images or NGN prices):
+  .venv-seed/bin/python scripts/seed_motoka_inventory.py --enrich-fitment --limit 50
+
+Prefer the multi-source orchestrator for full Motoka catalog runs:
+  node scripts/seed_motoka_catalog.js --dry-run --limit 30
+  node scripts/seed_motoka_catalog.js --source all --limit 200
+
 Production / full Nigerian fleet (after local is proven):
   .venv-seed/bin/python scripts/seed_motoka_inventory.py --full --years-per-model 2
 
@@ -32,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import os
 import random
 import re
@@ -86,6 +95,7 @@ CANONICAL = {
     "ENGINE_PARTS": "c1000000-0000-0000-0000-000000000004",
     "STEERING_PARTS": "c1000000-0000-0000-0000-000000000005",
     "EXHAUST": "c1000000-0000-0000-0000-000000000006",
+    "TRANSMISSION_DRIVETRAIN": "c1000000-0000-0000-0000-000000000027",
     "SERVICING_PARTS": "c1000000-0000-0000-0000-000000000007",
     "OIL_FILTER": "c1000000-0000-0000-0000-000000000008",
     "AIR_FILTER": "c1000000-0000-0000-0000-000000000009",
@@ -115,6 +125,7 @@ CATEGORY_PATH = {
     CANONICAL["ENGINE_PARTS"]: "Spare Parts · Engine Parts",
     CANONICAL["STEERING_PARTS"]: "Spare Parts · Steering Parts",
     CANONICAL["EXHAUST"]: "Spare Parts · Exhaust System",
+    CANONICAL["TRANSMISSION_DRIVETRAIN"]: "Spare Parts · Transmission & Drivetrain",
     CANONICAL["OIL_FILTER"]: "Servicing Parts · Oil Filter",
     CANONICAL["AIR_FILTER"]: "Servicing Parts · Air Filter",
     CANONICAL["SPARK_PLUGS"]: "Servicing Parts · Spark Plugs",
@@ -144,8 +155,8 @@ ROCKAUTO_CATEGORY_MAP: Dict[str, str] = {
     "Belts & Cooling": CANONICAL["TIMING_BELTS"],
     "Electrical": CANONICAL["ALTERNATORS"],
     "Ignition": CANONICAL["SPARK_PLUGS"],
-    "Transmission-Automatic": CANONICAL["GEAR_OIL"],
-    "Transmission-Manual": CANONICAL["GEAR_OIL"],
+    "Transmission-Automatic": CANONICAL["TRANSMISSION_DRIVETRAIN"],
+    "Transmission-Manual": CANONICAL["TRANSMISSION_DRIVETRAIN"],
     "Wheels & Tires": CANONICAL["CAR_TYRES"],
     "Body & Lamp Assembly": CANONICAL["BULBS_LIGHTING"],
     "Cooling System": CANONICAL["ENGINE_PARTS"],
@@ -293,6 +304,62 @@ def slugify(value: str, max_len: int = 180) -> str:
     return text[:max_len] or "part"
 
 
+BAD_PART_NUMBER_TOKENS = {
+    "UNKNOWN",
+    "TOYOTA",
+    "HONDA",
+    "LEXUS",
+    "NISSAN",
+    "FORD",
+    "BMW",
+    "GENERIC",
+    "STANDARD",
+    "DENSO",
+    "BOSCH",
+    "ULTRA",
+    "POWER",
+    "HOLSTEIN",
+    "DELPHI",
+    "MOTOR",
+    "PRODUCTS",
+}
+
+
+def clean_part_text(value: str) -> str:
+    """Strip RockAuto breadcrumb / nav noise from scraped titles."""
+    text = (value or "").strip()
+    if ">" in text:
+        text = text.split(">")[-1].strip()
+    return re.sub(r"\s+", " ", text)[:4000]
+
+
+def normalize_part_number(raw: Optional[str], brand: str) -> Optional[str]:
+    pn = (raw or "").strip()
+    if not pn:
+        return None
+    upper = pn.upper()
+    if upper in BAD_PART_NUMBER_TOKENS:
+        return None
+    if upper == (brand or "").strip().upper():
+        return None
+    # Must contain a digit to look like a real OEM/aftermarket PN
+    if not re.search(r"\d", pn):
+        return None
+    if len(pn) < 3:
+        return None
+    return pn[:100]
+
+
+def build_sku(brand: str, part_number: str, category_name: str, raw_name: str) -> str:
+    """Unique SKU even when RockAuto returns weak/duplicate part numbers."""
+    digest = hashlib.sha1(
+        f"{brand}|{part_number}|{category_name}|{raw_name}".encode("utf-8")
+    ).hexdigest()[:10].upper()
+    brand_bit = (slugify(brand)[:12] or "gen").upper()
+    pn_bit = (slugify(part_number)[:16] or "pn").upper()
+    return f"RA-{brand_bit}-{pn_bit}-{digest}"[:100]
+
+
 def parse_usd_price(raw: Optional[str]) -> Optional[float]:
     if not raw:
         return None
@@ -329,7 +396,64 @@ def https_only(url: Optional[str]) -> Optional[str]:
         return None
     if parsed.scheme != "https" or not parsed.netloc:
         return None
-    return url.strip()
+    cleaned = url.strip()
+    lower = cleaned.lower()
+    # Non-product / placeholder assets from RockAuto listings
+    junk_markers = (
+        "/heart.png",
+        "catalog/images/heart.png",
+        "flag_",
+        "loading.gif",
+        "spacer.gif",
+        "blank.gif",
+        "1x1",
+        "pixel.gif",
+    )
+    if any(marker in lower for marker in junk_markers):
+        return None
+    return cleaned
+
+
+def absolutize_rockauto_url(url: Optional[str]) -> Optional[str]:
+    if not url or not isinstance(url, str):
+        return None
+    raw = url.strip()
+    if not raw or raw.startswith("data:"):
+        return None
+    if raw.startswith("//"):
+        raw = f"https:{raw}"
+    elif raw.startswith("/"):
+        raw = f"https://www.rockauto.com{raw}"
+    elif not raw.startswith("http"):
+        raw = f"https://www.rockauto.com/{raw.lstrip('./')}"
+    return https_only(raw)
+
+
+def extract_part_image_url(part: Any) -> Optional[str]:
+    """Pick the best product image RockAuto exposed on the listing row."""
+    candidates: List[Optional[str]] = [
+        getattr(part, "image_url", None),
+        getattr(part, "info_url", None),  # sometimes parsers mis-assign
+    ]
+    # Some PartInfo dumps stash extras in model_extra / __dict__
+    extra = getattr(part, "__dict__", {}) or {}
+    for key in ("image", "img", "photo_url", "thumbnail"):
+        candidates.append(extra.get(key))
+
+    for candidate in candidates:
+        if not candidate or not isinstance(candidate, str):
+            continue
+        # info.php pages are not images
+        if "moreinfo.php" in candidate.lower() or candidate.lower().endswith(".php"):
+            continue
+        absolute = absolutize_rockauto_url(candidate)
+        if absolute and any(ext in absolute.lower() for ext in (".jpg", ".jpeg", ".png", ".webp", ".gif")):
+            return absolute
+        # RockAuto CDN paths without extension
+        if absolute and ("/info/" in absolute.lower() or "rockauto.com" in absolute.lower()):
+            if "heart" not in absolute.lower():
+                return absolute
+    return None
 
 
 def infer_part_type(brand: Optional[str], name: str) -> str:
@@ -346,7 +470,7 @@ def infer_part_type(brand: Optional[str], name: str) -> str:
 def build_display_name(brand: Optional[str], description: str, part_number: str) -> str:
     """NAME: [Brand] [Part Description] ([Part Number/OEM Specs]) — max 255."""
     brand_bit = (brand or "").strip()
-    desc = (description or "").strip() or "Auto Part"
+    desc = clean_part_text(description) or "Auto Part"
     pn = (part_number or "").strip()
     if brand_bit and not desc.upper().startswith(brand_bit.upper()):
         base = f"{brand_bit} {desc}"
@@ -574,19 +698,19 @@ def part_to_row(
         return None
 
     brand = (getattr(part, "brand", None) or "").strip() or "Generic"
-    part_number = (getattr(part, "part_number", None) or "").strip() or "UNKNOWN"
-    if part_number.upper() == "UNKNOWN":
+    part_number = normalize_part_number(getattr(part, "part_number", None), brand)
+    if not part_number:
         return None
 
-    raw_name = (getattr(part, "name", None) or "").strip() or part_number
+    raw_name = clean_part_text(getattr(part, "name", None) or "") or part_number
     price_kobo = usd_to_ngn_kobo(usd, exchange_rate, markup, round_to)
     display_name = build_display_name(brand, raw_name, part_number)
-    sku_key = slugify(f"{brand}-{part_number}")[:40].upper()
-    slug = slugify(f"{brand}-{part_number}-{category_name}")
+    sku = build_sku(brand, part_number, category_name, raw_name)
+    slug = slugify(f"{brand}-{part_number}-{category_name}-{sku[-10:].lower()}")
 
     return {
         "brand": brand[:100],
-        "part_number": part_number[:100],
+        "part_number": part_number,
         "name": display_name,
         "description": raw_name[:4000],
         "category_id": category_id,
@@ -598,7 +722,7 @@ def part_to_row(
         "usd_price": usd,
         "image_url": https_only(getattr(part, "image_url", None)),
         "source_url": https_only(getattr(part, "url", None)),
-        "sku": f"RA-{sku_key}"[:100],
+        "sku": sku,
         "slug": slug,
         "make": display_make,
         "model": display_model,
@@ -781,6 +905,49 @@ def aggregate_rows(rows: List[Dict[str, Any]]) -> List[AggregatedPart]:
 # Supabase ingestion (matches existing JS importer pattern)
 # ---------------------------------------------------------------------------
 
+NG_CATALOG_SOURCES = frozenset({"autofactorng.com", "ladipomarket.com.ng"})
+
+_OEM_TITLE_PATTERNS: List[Tuple[str, re.Pattern[str]]] = [
+    ("mercedesbenz", re.compile(r"\b(?:mercedes(?:[-\s]?benz)?|benz)\b", re.I)),
+    ("volkswagen", re.compile(r"\b(?:volkswagen|vw)\b", re.I)),
+    ("bmw", re.compile(r"\bbmw\b", re.I)),
+    ("toyota", re.compile(r"\btoyota\b", re.I)),
+    ("honda", re.compile(r"\bhonda\b", re.I)),
+    ("nissan", re.compile(r"\bnissan\b", re.I)),
+    ("hyundai", re.compile(r"\bhyundai\b", re.I)),
+    ("kia", re.compile(r"\bkia\b", re.I)),
+    ("ford", re.compile(r"\bford\b", re.I)),
+    ("lexus", re.compile(r"\blexus\b", re.I)),
+    ("mazda", re.compile(r"\bmazda\b", re.I)),
+    ("mitsubishi", re.compile(r"\bmitsubishi\b", re.I)),
+    ("peugeot", re.compile(r"\bpeugeot\b", re.I)),
+    ("audi", re.compile(r"\baudi\b", re.I)),
+]
+
+
+def _make_key(value: str) -> str:
+    key = re.sub(r"[^a-z0-9]+", "", (value or "").lower())
+    if key in {"mercedes", "benz"}:
+        return "mercedesbenz"
+    if key == "vw":
+        return "volkswagen"
+    return key
+
+
+def _detect_oem_make_key(text: str) -> Optional[str]:
+    raw = text or ""
+    for key, pattern in _OEM_TITLE_PATTERNS:
+        if pattern.search(raw):
+            return key
+    return None
+
+
+def _compat_conflicts_with_title(compat_make: str, name: str, brand: str) -> bool:
+    stated = _detect_oem_make_key(name) or _detect_oem_make_key(brand)
+    if not stated or not compat_make:
+        return False
+    return stated != _make_key(compat_make)
+
 
 def get_supabase() -> Client:
     url = os.getenv("SUPABASE_URL", "").strip()
@@ -793,9 +960,158 @@ def get_supabase() -> Client:
     return create_client(url, key)
 
 
-def upsert_part(supabase: Client, part: AggregatedPart, stock_qty: int, seller_label: str) -> Optional[str]:
+def images_are_usable(images: Any) -> bool:
+    if not isinstance(images, list) or not images:
+        return False
+    return https_only(images[0]) is not None
+
+
+def find_existing_catalog_part(supabase: Client, part: AggregatedPart) -> Optional[Dict[str, Any]]:
+    by_slug = (
+        supabase.table("ladipo_parts")
+        .select("id, sku, images, specifications, brand, name")
+        .eq("slug", part.slug)
+        .limit(1)
+        .execute()
+    )
+    if by_slug.data:
+        return by_slug.data[0]
+
+    part_number = (part.part_number or "").strip()
+    if not part_number:
+        return None
+
+    by_pn = (
+        supabase.table("ladipo_parts")
+        .select("id, sku, images, specifications, brand, name")
+        .filter("specifications->>part_number", "eq", part_number)
+        .limit(5)
+        .execute()
+    )
+    rows = by_pn.data or []
+    if not rows:
+        return None
+    brand_l = (part.brand or "").strip().lower()
+    if brand_l:
+        for row in rows:
+            if (row.get("brand") or "").strip().lower() == brand_l:
+                return row
+    return rows[0]
+
+
+def merge_compatibility_entries(
+    supabase: Client,
+    part_id: str,
+    incoming: List[Dict[str, Any]],
+) -> None:
+    """Union make/model year ranges; do not wipe existing fitment."""
+    if not incoming:
+        return
+
+    existing = (
+        supabase.table("ladipo_part_compatibility")
+        .select("id, make, model, year_min, year_max")
+        .eq("part_id", part_id)
+        .execute()
+    )
+    buckets: Dict[Tuple[str, str], CompatibilityYear] = {}
+    for row in existing.data or []:
+        key = (row["make"], row["model"])
+        bucket = CompatibilityYear()
+        ymin = row.get("year_min")
+        ymax = row.get("year_max")
+        if ymin is not None and ymax is not None:
+            for year in range(int(ymin), int(ymax) + 1):
+                bucket.add(year)
+        elif ymin is not None:
+            bucket.add(int(ymin))
+        buckets[key] = bucket
+
+    for entry in incoming:
+        key = (entry["make"], entry["model"])
+        if key not in buckets:
+            buckets[key] = CompatibilityYear()
+        ymin = entry.get("year_min")
+        ymax = entry.get("year_max")
+        if ymin is not None and ymax is not None:
+            for year in range(int(ymin), int(ymax) + 1):
+                buckets[key].add(year)
+        elif ymin is not None:
+            buckets[key].add(int(ymin))
+
+    supabase.table("ladipo_part_compatibility").delete().eq("part_id", part_id).execute()
+    payload = []
+    for (make, model), bucket in buckets.items():
+        entry = bucket.as_entry(make, model)
+        if entry["year_min"] is None:
+            continue
+        payload.append(
+            {
+                "part_id": part_id,
+                "make": make,
+                "model": model,
+                "year_min": entry["year_min"],
+                "year_max": entry["year_max"],
+            }
+        )
+    if payload:
+        supabase.table("ladipo_part_compatibility").insert(payload).execute()
+
+
+def upsert_part(
+    supabase: Client,
+    part: AggregatedPart,
+    stock_qty: int,
+    seller_label: str,
+    *,
+    enrich_fitment: bool = False,
+) -> Optional[str]:
+    existing = find_existing_catalog_part(supabase, part)
+    existing_specs = existing.get("specifications") if existing else None
+    if not isinstance(existing_specs, dict):
+        existing_specs = {}
+    existing_source = str(existing_specs.get("source") or "")
+
+    # Prefer Autofactor / Ladipo Market catalog rows: only attach RockAuto fitment
+    # (and fill missing images). Never overwrite their NGN prices or good images.
+    if existing and (enrich_fitment or existing_source in NG_CATALOG_SOURCES):
+        part_id = existing["id"]
+        # Never attach Camry fitment onto a Mercedes-titled NG row (and vice versa).
+        existing_name = str(existing.get("name") or "")
+        existing_brand = str(existing.get("brand") or "")
+        conflicting = False
+        for entry in part.compatibility_entries():
+            entry_make = str(entry.get("make") or "")
+            if _compat_conflicts_with_title(entry_make, existing_name, existing_brand):
+                conflicting = True
+                break
+        if conflicting:
+            return part_id
+
+        patch: Dict[str, Any] = {
+            "specifications": {
+                **existing_specs,
+                "rockauto_part_number": part.part_number,
+                "rockauto_source_url": part.source_url,
+                "rockauto_category": part.rockauto_category,
+            }
+        }
+        if not images_are_usable(existing.get("images")) and part.image_url:
+            patch["images"] = [part.image_url]
+        supabase.table("ladipo_parts").update(patch).eq("id", part_id).execute()
+        merge_compatibility_entries(supabase, part_id, part.compatibility_entries())
+        return part_id
+
+    if enrich_fitment and not existing:
+        # Secondary mode: do not create RockAuto-only catalog rows.
+        return None
+
+    images = [part.image_url] if part.image_url else []
+    if existing and images_are_usable(existing.get("images")) and not images:
+        images = existing["images"]
+
     part_payload = {
-        "sku": part.sku,
+        "sku": (existing or {}).get("sku") or part.sku,
         "slug": part.slug,
         "name": part.name,
         "description": part.description,
@@ -803,8 +1119,9 @@ def upsert_part(supabase: Client, part: AggregatedPart, stock_qty: int, seller_l
         "brand": part.brand,
         "condition": part.condition,
         "part_type": part.part_type,
-        "images": [part.image_url] if part.image_url else [],
+        "images": images,
         "specifications": {
+            **existing_specs,
             "source": "rockauto.com",
             "source_url": part.source_url,
             "part_number": part.part_number,
@@ -835,41 +1152,29 @@ def upsert_part(supabase: Client, part: AggregatedPart, stock_qty: int, seller_l
         "seller_label": seller_label[:100],
     }
 
-    existing = (
+    existing_inv = (
         supabase.table("ladipo_part_inventory")
-        .select("id")
+        .select("id, price_kobo")
         .eq("part_id", part_id)
         .limit(1)
         .execute()
     )
-    if existing.data:
-        supabase.table("ladipo_part_inventory").update(
-            {
-                "price_kobo": inventory_payload["price_kobo"],
-                "stock_qty": inventory_payload["stock_qty"],
-                "seller_label": inventory_payload["seller_label"],
-            }
-        ).eq("id", existing.data[0]["id"]).execute()
+    if existing_inv.data:
+        # Keep an existing NGN price when this row already came from NG catalog.
+        keep_price = existing_source in NG_CATALOG_SOURCES
+        update_payload: Dict[str, Any] = {
+            "stock_qty": inventory_payload["stock_qty"],
+            "seller_label": inventory_payload["seller_label"],
+        }
+        if not keep_price:
+            update_payload["price_kobo"] = inventory_payload["price_kobo"]
+        supabase.table("ladipo_part_inventory").update(update_payload).eq(
+            "id", existing_inv.data[0]["id"]
+        ).execute()
     else:
         supabase.table("ladipo_part_inventory").insert(inventory_payload).execute()
 
-    # Same pattern as upsertCompatibilityEntries: replace rows for this part
-    entries = part.compatibility_entries()
-    supabase.table("ladipo_part_compatibility").delete().eq("part_id", part_id).execute()
-    if entries:
-        supabase.table("ladipo_part_compatibility").insert(
-            [
-                {
-                    "part_id": part_id,
-                    "make": e["make"],
-                    "model": e["model"],
-                    "year_min": e["year_min"],
-                    "year_max": e["year_max"],
-                }
-                for e in entries
-            ]
-        ).execute()
-
+    merge_compatibility_entries(supabase, part_id, part.compatibility_entries())
     return part_id
 
 
@@ -946,6 +1251,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Tiny smoke test: Camry + C300, 1 year, 2 categories only",
     )
+    parser.add_argument(
+        "--enrich-fitment",
+        action="store_true",
+        help=(
+            "Secondary mode: merge Camry/C300 compatibility onto matching existing "
+            "catalog rows (by slug or part number). Does not create RockAuto-only "
+            "parts and does not replace Autofactor/Ladipo Market images or NGN prices."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -986,6 +1300,7 @@ async def run(options: argparse.Namespace) -> None:
 
     print(
         f"[seed_motoka_inventory] start dry_run={options.dry_run} "
+        f"enrich_fitment={options.enrich_fitment} "
         f"mode={'full' if options.full else ('quick' if options.quick else 'local')} "
         f"vehicles={len(vehicles)} categories={len(categories)} "
         f"fx={options.exchange_rate} markup={options.markup} round_to={options.round_to}"
@@ -1078,6 +1393,7 @@ async def run(options: argparse.Namespace) -> None:
                 part,
                 stock_qty=options.stock_qty,
                 seller_label=options.seller_label,
+                enrich_fitment=options.enrich_fitment,
             )
             if part_id:
                 created += 1
