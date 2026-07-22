@@ -1,6 +1,12 @@
 # Dependencies
 node_modules/
 
+# Python seed / inventory venv
+.venv-seed/
+.venv/
+__pycache__/
+*.pyc
+
 # Environment files
 .env
 .env.local

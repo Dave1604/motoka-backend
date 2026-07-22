@@ -3,6 +3,7 @@ import {
   getParts,
   getPartFacets,
   getPartBySlug,
+  getMerchandisedSections,
   getCartItems,
   addCartItem,
   updateCartItemQuantity,
@@ -25,6 +26,7 @@ import {
   ladipoPayOrderBodySchema,
   ladipoUpdateCartItemBodySchema,
   ladipoVerifyPaymentBodySchema,
+  ladipoCompatibilityBodySchema,
 } from '../validators/ladipo.validation.js';
 
 function invalidInput(res, zodError) {
@@ -46,12 +48,24 @@ export const handleGetCategories = async (req, res) => {
   }
 };
 
+// GET /ladipo/sections — admin-curated Essential Products + Must Have, for the landing view
+export const handleGetMerchandisedSections = async (req, res) => {
+  try {
+    const data = await getMerchandisedSections();
+    return res.json({ success: true, data });
+  } catch (error) {
+    logError('[Ladipo] handleGetMerchandisedSections', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 const SAFE_STRING_RE = /^[\w\s\-.,&()'/]+$/;
 
 // GET /ladipo/parts
 const ALLOWED_CONDITIONS = new Set(['new', 'used', 'refurbished']);
 const ALLOWED_PART_TYPES = new Set(['oem', 'aftermarket', 'genuine']);
 const ALLOWED_SORTS = new Set(['newest', 'oldest', 'name_asc']);
+const ALLOWED_TAGS = new Set(['essential', 'must_have']);
 
 function parseMultiParam(value, { maxItems = 25, maxLen = 100 } = {}) {
   if (value == null || value === '') return undefined;
@@ -69,7 +83,7 @@ export const handleGetParts = async (req, res) => {
   try {
     const {
       page, limit, q, category_slug, make, model, year,
-      brand, condition, part_type, min_price_kobo, max_price_kobo, sort,
+      brand, condition, part_type, min_price_kobo, max_price_kobo, sort, tag,
     } = req.query;
 
     const rawQ = typeof q === 'string' ? q.slice(0, 200).trim() : undefined;
@@ -93,6 +107,7 @@ export const handleGetParts = async (req, res) => {
       : undefined;
 
     const sortValue = typeof sort === 'string' && ALLOWED_SORTS.has(sort) ? sort : undefined;
+    const tagValue = typeof tag === 'string' && ALLOWED_TAGS.has(tag) ? tag : undefined;
 
     const parsedPage = Math.max(1, parseInt(page, 10) || 1);
     const parsedLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
@@ -110,6 +125,7 @@ export const handleGetParts = async (req, res) => {
       min_price_kobo: minPrice,
       max_price_kobo: maxPrice,
       sort: sortValue,
+      tag: tagValue,
     });
     return res.json({ success: true, data: result });
   } catch (error) {
@@ -165,8 +181,9 @@ export const handleGetCompatibility = async (req, res) => {
 export const handleUpsertCompatibility = async (req, res) => {
   try {
     const { id } = req.params;
-    const { entries = [] } = req.body;
-    const data = await upsertCompatibilityEntries(id, entries);
+    const parsed = ladipoCompatibilityBodySchema.safeParse(req.body);
+    if (!parsed.success) return invalidInput(res, parsed.error);
+    const data = await upsertCompatibilityEntries(id, parsed.data.entries);
     return res.json({ success: true, data });
   } catch (error) {
     logError('[Ladipo] handleUpsertCompatibility', error);

@@ -2,6 +2,7 @@ import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSupabaseAdmin } from '../src/config/supabase.js';
+import { uploadToCloudinary } from '../src/services/fileUpload.service.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -101,7 +102,39 @@ function randomInt(min, max) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function buildProductData(categories, count, sellerLabel) {
+function escapeXml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function buildImageSvg(productName, categoryName, brand) {
+  const label = `${brand} ${categoryName} ${productName}`.replace(/\s+/g, ' ').trim();
+  const safeLabel = escapeXml(label.slice(0, 90));
+  return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800" viewBox="0 0 1200 800">
+      <rect width="1200" height="800" fill="#0f172a" />
+      <rect x="48" y="48" width="1104" height="704" rx="24" fill="#111827" stroke="#3b82f6" stroke-width="6" />
+      <circle cx="280" cy="280" r="140" fill="#2563eb" opacity="0.75" />
+      <circle cx="890" cy="520" r="180" fill="#1d4ed8" opacity="0.6" />
+      <rect x="180" y="520" width="840" height="120" rx="18" fill="#f8fafc" opacity="0.16" />
+      <text x="600" y="310" text-anchor="middle" font-family="Arial, sans-serif" font-size="56" font-weight="700" fill="#f8fafc">${safeLabel}</text>
+      <text x="600" y="390" text-anchor="middle" font-family="Arial, sans-serif" font-size="34" fill="#bfdbfe">Ladipo Auto Parts</text>
+      <text x="600" y="590" text-anchor="middle" font-family="Arial, sans-serif" font-size="32" fill="#e2e8f0">High-quality parts for vehicle compatibility</text>
+    </svg>
+  `.trim();
+}
+
+async function buildImageUrl(productName, categoryName, brand, slug) {
+  const svg = buildImageSvg(productName, categoryName, brand);
+  const buffer = Buffer.from(svg, 'utf8');
+  return uploadToCloudinary(buffer, `${slug}.svg`, 'image/svg+xml');
+}
+
+async function buildProductData(categories, count, sellerLabel) {
   const nowSeed = Date.now();
   const childCategories = categories.filter((c) => c.parent_id);
   const categoriesById = new Map(categories.map((c) => [c.id, c]));
@@ -140,6 +173,8 @@ function buildProductData(categories, count, sellerLabel) {
     const partType = pickRandom(['aftermarket', 'oem', 'oes']);
     const priceKobo = randomInt(2500, 300000) * 100;
     const stockQty = randomInt(5, 250);
+    const categoryName = parent?.name || category.name;
+    const imageUrl = await buildImageUrl(productName, categoryName, brand, slug);
 
     parts.push({
       sku,
@@ -152,7 +187,7 @@ function buildProductData(categories, count, sellerLabel) {
       brand,
       condition,
       part_type: partType,
-      images: [],
+      images: [imageUrl],
       specifications: {
         origin: pickRandom(['Germany', 'Japan', 'Korea', 'USA', 'China']),
         warranty: `${randomInt(3, 12)} months`,
@@ -192,7 +227,7 @@ async function main() {
     throw new Error(`Failed to fetch categories: ${categoryError.message}`);
   }
 
-  const generated = buildProductData(categories || [], count, seller);
+  const generated = await buildProductData(categories || [], count, seller);
   const parts = generated.parts;
 
   if (dryRun) {

@@ -67,10 +67,19 @@ export const ladipoVerifyPaymentBodySchema = z.object({
 
 const compatibilityEntrySchema = z.object({
   make: z.string().trim().min(1).max(100),
-  model: z.string().trim().min(1).max(100),
-  year_from: z.coerce.number().int().min(1900).max(2100),
-  year_to: z.coerce.number().int().min(1900).max(2100),
+  model: z.string().trim().max(100).optional().nullable(),
+  year_min: z.coerce.number().int().min(1900).max(2100).optional().nullable(),
+  year_max: z.coerce.number().int().min(1900).max(2100).optional().nullable(),
+  engine_code: z.string().trim().max(50).optional().nullable(),
   notes: z.string().trim().max(500).optional().nullable(),
+}).superRefine((entry, ctx) => {
+  if (entry.year_min != null && entry.year_max != null && entry.year_min > entry.year_max) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['year_max'],
+      message: 'year_max must be greater than or equal to year_min',
+    });
+  }
 });
 
 export const ladipoCompatibilityBodySchema = z.object({

@@ -9,6 +9,10 @@ import {
   notifyLadipoOrderOutForDelivery,
   notifyLadipoOrderProcessing,
 } from '../services/ladipo/ladipoNotifications.service.js';
+import {
+  carBrandSearchTerms,
+  textMentionsCarBrand,
+} from '../utils/ladipoCarBrand.js';
 
 export const LADIPO_ADMIN_API_VERSION = '2.1.0';
 
@@ -38,6 +42,31 @@ const ALLOWED_STATUS_TRANSITIONS = {
 
 const PRODUCT_CONDITIONS = new Set(['new', 'tokunbo', 'nigerian_used']);
 const PRODUCT_PART_TYPES = new Set(['oem', 'oes', 'aftermarket']);
+
+async function resolveAdminCarBrandPartIds(supabase, make) {
+  const terms = carBrandSearchTerms(make);
+  if (!terms.length) return [];
+
+  const nameFilter = terms.map((term) => `name.ilike.%${term}%`).join(',');
+  const brandFilter = terms.map((term) => `brand.ilike.%${term}%`).join(',');
+
+  // Admin "Car brand" means the product is clearly for that OEM (name/brand),
+  // not silent/corrupt compatibility rows (those still power the user car picker).
+  const [namedResult, brandedResult] = await Promise.all([
+    supabase.from('ladipo_parts').select('id, name, brand').or(nameFilter),
+    supabase.from('ladipo_parts').select('id, name, brand').or(brandFilter),
+  ]);
+  if (namedResult.error) throw namedResult.error;
+  if (brandedResult.error) throw brandedResult.error;
+
+  const ids = new Set();
+  for (const row of [...(namedResult.data || []), ...(brandedResult.data || [])]) {
+    if (textMentionsCarBrand(row.name, make) || textMentionsCarBrand(row.brand, make)) {
+      ids.add(row.id);
+    }
+  }
+  return [...ids];
+}
 
 const formatKoboToNaira = (kobo) => (Number(kobo || 0) / 100).toLocaleString('en-NG');
 const normalizeHandlerName = (value) => String(value || '').trim().replace(/\s+/g, ' ');
@@ -127,6 +156,12 @@ function normalizeProductPayload(payload = {}) {
   const isUniversal = payload.is_universal !== undefined
     ? String(payload.is_universal).toLowerCase() === 'true' || payload.is_universal === true
     : false;
+  const isEssential = payload.is_essential !== undefined
+    ? String(payload.is_essential).toLowerCase() === 'true' || payload.is_essential === true
+    : false;
+  const isMustHave = payload.is_must_have !== undefined
+    ? String(payload.is_must_have).toLowerCase() === 'true' || payload.is_must_have === true
+    : false;
   let images = [];
   if (Array.isArray(payload.images)) {
     images = payload.images;
@@ -195,6 +230,8 @@ function normalizeProductPayload(payload = {}) {
       condition,
       part_type: partType,
       is_universal: isUniversal,
+      is_essential: isEssential,
+      is_must_have: isMustHave,
       is_active: isActive,
       images,
       specifications,
@@ -772,11 +809,18 @@ export async function listLadipoProducts(req, res) {
     const from = (page - 1) * limit;
     const to = from + limit - 1;
     const search = String(req.query.search || '').trim();
+    const collection = String(req.query.collection || 'all').trim().toLowerCase();
+    const brand = String(req.query.brand || '').trim();
+    const make = String(req.query.make || '').trim();
+
+    if (!['all', 'essential', 'must_have'].includes(collection)) {
+      return res.status(400).json({ status: false, message: 'collection must be all, essential, or must_have' });
+    }
 
     let query = supabase
       .from('ladipo_parts')
       .select(`
-        id, slug, name, description, brand, condition, part_type, images, is_active, is_universal, category_id, created_at, updated_at,
+        id, slug, name, description, brand, condition, part_type, images, is_active, is_universal, is_essential, is_must_have, category_id, created_at, updated_at,
         category:ladipo_categories(id, name, slug),
         inventory:ladipo_part_inventory(id, part_id, price_kobo, stock_qty, seller_label)
       `, { count: 'exact' })
@@ -786,6 +830,25 @@ export async function listLadipoProducts(req, res) {
     if (search) {
       query = query.or(`name.ilike.%${search}%,slug.ilike.%${search}%,brand.ilike.%${search}%`);
     }
+    if (brand) query = query.eq('brand', brand);
+
+    if (make) {
+      // Admin "car brand" filter: compatibility rows + titles that mention that make.
+      // (Does not use part-manufacturer brand — that was confusing Toyota/Mercedes with Bosch.)
+      const partIds = await resolveAdminCarBrandPartIds(supabase, make);
+      if (partIds.length === 0) {
+        return res.status(200).json({
+          status: true,
+          message: 'Ladipo products retrieved successfully',
+          data: { data: [], collection, current_page: page, per_page: limit, total: 0, last_page: 0 },
+        });
+      }
+      query = query.in('id', partIds);
+    }
+    // These are explicit flags chosen by an admin; never inferred from sales,
+    // search ranking or product category.
+    if (collection === 'essential') query = query.eq('is_essential', true);
+    if (collection === 'must_have') query = query.eq('is_must_have', true);
 
     const { data, count, error } = await query;
     if (error) throw error;
@@ -800,6 +863,7 @@ export async function listLadipoProducts(req, res) {
       message: 'Ladipo products retrieved successfully',
       data: {
         data: products,
+        collection,
         current_page: page,
         per_page: limit,
         total: count || 0,
@@ -809,6 +873,50 @@ export async function listLadipoProducts(req, res) {
   } catch (error) {
     logError('[Admin Ladipo] listLadipoProducts', error);
     return res.status(500).json({ status: false, message: 'Failed to retrieve Ladipo products' });
+  }
+}
+
+export async function getLadipoProductFilters(_req, res) {
+  try {
+    const supabase = getSupabaseAdmin();
+    const [{ data: parts, error: partsError }, { data: compatibility, error: compatibilityError }] = await Promise.all([
+      supabase.from('ladipo_parts').select('brand').not('brand', 'is', null),
+      supabase.from('ladipo_part_compatibility').select('make'),
+    ]);
+    if (partsError) throw partsError;
+    if (compatibilityError) throw compatibilityError;
+
+    const uniqueSorted = (values) => [...new Set(
+      values.map((value) => String(value || '').trim()).filter(Boolean),
+    )].sort((a, b) => a.localeCompare(b));
+
+    return res.status(200).json({
+      status: true,
+      data: {
+        // Car brands for the admin products filter (from compatibility + common NG fleet).
+        makes: uniqueSorted([
+          ...(compatibility || []).map((entry) => entry.make),
+          'Toyota',
+          'Honda',
+          'Mercedes-Benz',
+          'Nissan',
+          'Hyundai',
+          'Kia',
+          'Lexus',
+          'Ford',
+          'BMW',
+          'Volkswagen',
+          'Mazda',
+          'Mitsubishi',
+          'Peugeot',
+        ]),
+        // Kept for API compatibility; admin UI no longer uses part-manufacturer brand.
+        brands: uniqueSorted((parts || []).map((part) => part.brand)),
+      },
+    });
+  } catch (error) {
+    logError('[Admin Ladipo] getLadipoProductFilters', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve product filters' });
   }
 }
 
@@ -966,5 +1074,94 @@ export async function deleteLadipoProduct(req, res) {
   } catch (error) {
     logError('[Admin Ladipo] deleteLadipoProduct', error);
     return res.status(500).json({ status: false, message: 'Failed to delete Ladipo product' });
+  }
+}
+
+export async function listLadipoCategories(req, res) {
+  try {
+    const supabase = getSupabaseAdmin();
+    const { data, error } = await supabase
+      .from('ladipo_categories')
+      .select('id, name, slug, parent_id, sort_order, image_url')
+      .order('sort_order', { ascending: true });
+    if (error) throw error;
+    return res.status(200).json({
+      status: true,
+      message: 'Categories retrieved',
+      data: data || [],
+    });
+  } catch (error) {
+    logError('[Admin Ladipo] listLadipoCategories', error);
+    return res.status(500).json({ status: false, message: 'Failed to fetch categories' });
+  }
+}
+
+export async function updateLadipoCategoryImage(req, res) {
+  let uploadedUrl = null;
+  try {
+    const supabase = getSupabaseAdmin();
+    const { id } = req.params;
+
+    if (!id) {
+      return res.status(400).json({ status: false, message: 'Category id is required' });
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('ladipo_categories')
+      .select('id, image_url')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ status: false, message: 'Category not found' });
+    }
+
+    let imageUrl = null;
+
+    if (req.file) {
+      uploadedUrl = await uploadToCloudinary(
+        req.file.buffer,
+        req.file.originalname,
+        req.file.mimetype,
+      );
+      imageUrl = uploadedUrl;
+    } else if (req.body?.image_url) {
+      const raw = String(req.body.image_url).trim();
+      try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== 'https:') throw new Error('URL must be https');
+      } catch {
+        return res.status(400).json({ status: false, message: 'image_url must be a valid https URL' });
+      }
+      imageUrl = raw;
+    } else {
+      return res.status(400).json({ status: false, message: 'Provide image_file or image_url' });
+    }
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('ladipo_categories')
+      .update({ image_url: imageUrl, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, name, slug, parent_id, sort_order, image_url')
+      .single();
+
+    if (updateErr) throw updateErr;
+
+    if (req.file && existing.image_url && existing.image_url.includes('cloudinary')) {
+      deleteFromCloudinary(existing.image_url).catch(() => {});
+    }
+
+    logInfo('[Admin Ladipo] category_image_updated', { category_id: id, image_url: imageUrl });
+    return res.status(200).json({
+      status: true,
+      message: 'Category image updated',
+      data: updated,
+    });
+  } catch (error) {
+    if (uploadedUrl) {
+      deleteFromCloudinary(uploadedUrl).catch(() => {});
+    }
+    logError('[Admin Ladipo] updateLadipoCategoryImage', error);
+    return res.status(500).json({ status: false, message: error.message || 'Failed to update category image' });
   }
 }
