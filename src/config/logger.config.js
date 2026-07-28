@@ -1,4 +1,5 @@
 import pino from 'pino';
+import pretty from 'pino-pretty';
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 const logLevel = process.env.LOG_LEVEL || (isDevelopment ? 'debug' : 'info');
@@ -119,19 +120,18 @@ const pinoConfig = {
   }
 };
 
-if (isDevelopment) {
-  pinoConfig.transport = {
-    target: 'pino-pretty',
-    options: {
+// Use a sync pretty stream in development. pino's worker-thread transport
+// crashes under `node --watch` (thread-stream), which breaks local `npm run dev`.
+const destination = isDevelopment
+  ? pretty({
       colorize: true,
       translateTime: 'HH:MM:ss.l',
       ignore: 'pid,hostname',
       singleLine: false
-    }
-  };
-}
+    })
+  : undefined;
 
-export const logger = pino(pinoConfig);
+export const logger = pino(pinoConfig, destination);
 
 export const safeLogData = (data) => {
   return redactSensitiveData(data);
