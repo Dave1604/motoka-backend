@@ -31,6 +31,7 @@ import {
   ERROR_MESSAGES
 } from '../../constants/payment.constants.js';
 import { PaymentSuccessService } from '../../services/payment/payment-success.service.js';
+import { handleWalletFundingSuccess } from '../../services/wallet/wallet.service.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { sendPaymentFailedEmail } from '../../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
@@ -270,6 +271,13 @@ async function handleChargeSuccess(data, eventId) {
   // Activate the subscription, refund immediately, and skip order creation.
   if (metadata.is_tokenization === true) {
     await handleTokenizationSuccess(transaction, data, metadata);
+    return;
+  }
+
+  // Wallet funding: credit the ledger instead of creating a renewal order. This
+  // deliberately does NOT touch process_payment_success.
+  if (metadata.payment_type === PAYMENT_TYPE.WALLET_FUNDING) {
+    await handleWalletFundingSuccess(transaction, data, metadata);
     return;
   }
 
