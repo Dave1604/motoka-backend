@@ -155,12 +155,21 @@ async function main() {
   parts = [...byId.values()];
   console.log(`[backfill-compatibility] Found ${parts.length} parts`);
 
-  const { data: existingCompat, error: compatError } = await supabase
-    .from('ladipo_part_compatibility')
-    .select('part_id')
-    .in('part_id', parts.map((p) => p.id));
-  if (compatError) throw new Error(`Failed reading existing compatibility: ${compatError.message}`);
-  const hasCompat = new Set((existingCompat || []).map((c) => c.part_id));
+  // Read existing compatibility in chunks. A single .in() with hundreds of
+  // UUIDs overflows the request URL length and fails with "fetch failed",
+  // so batch the id list instead of sending it all at once.
+  const hasCompat = new Set();
+  const partIds = parts.map((p) => p.id);
+  const READ_CHUNK = 100;
+  for (let i = 0; i < partIds.length; i += READ_CHUNK) {
+    const slice = partIds.slice(i, i + READ_CHUNK);
+    const { data: existingCompat, error: compatError } = await supabase
+      .from('ladipo_part_compatibility')
+      .select('part_id')
+      .in('part_id', slice);
+    if (compatError) throw new Error(`Failed reading existing compatibility: ${compatError.message}`);
+    for (const c of existingCompat || []) hasCompat.add(c.part_id);
+  }
 
   let parsed = 0;
   let skippedUnparsed = 0;
