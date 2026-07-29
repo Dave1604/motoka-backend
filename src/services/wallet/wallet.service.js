@@ -66,6 +66,100 @@ export async function creditWallet({ userId, amountKobo, reason, reference, tran
   };
 }
 
+// ─── Admin operations (Phase 3) ─────────────────────────────────────────────
+
+// Attach { user } (name/email) to a list of wallet/ledger rows keyed by user_id.
+async function attachUsers(rows) {
+  if (!rows.length) return rows;
+  const supabase = getSupabaseAdmin();
+  const ids = [...new Set(rows.map((r) => r.user_id).filter(Boolean))];
+  const { data: profiles } = await supabase
+    .from('profiles')
+    .select('id, first_name, last_name, email')
+    .in('id', ids);
+  const byId = new Map((profiles || []).map((p) => [p.id, p]));
+  return rows.map((r) => {
+    const p = byId.get(r.user_id);
+    return { ...r, user: p ? { name: [p.first_name, p.last_name].filter(Boolean).join(' ') || null, email: p.email } : null };
+  });
+}
+
+// Total wallet liability (money owed to users) + wallet count.
+export async function getWalletLiability() {
+  const supabase = getSupabaseAdmin();
+  const { data, error, count } = await supabase
+    .from('wallets')
+    .select('balance_kobo', { count: 'exact' });
+  if (error) throw new WalletError(`Failed to read liability: ${error.message}`);
+  const totalKobo = (data || []).reduce((s, w) => s + Number(w.balance_kobo || 0), 0);
+  return { total_liability_kobo: totalKobo, wallet_count: count || 0 };
+}
+
+// Admin: paginated wallet list with owner info. Optional search on name/email.
+export async function listWalletsForAdmin({ page = 1, limit = 20, search } = {}) {
+  const supabase = getSupabaseAdmin();
+  const from = (page - 1) * limit;
+  let userIds = null;
+  if (search) {
+    const { data: profs } = await supabase
+      .from('profiles')
+      .select('id')
+      .or(`first_name.ilike.%${search}%,last_name.ilike.%${search}%,email.ilike.%${search}%`)
+      .limit(500);
+    userIds = (profs || []).map((p) => p.id);
+    if (userIds.length === 0) return { wallets: [], total: 0, page, limit };
+  }
+  let query = supabase
+    .from('wallets')
+    .select('id, user_id, balance_kobo, status, currency, created_at, updated_at', { count: 'exact' })
+    .order('balance_kobo', { ascending: false })
+    .range(from, from + limit - 1);
+  if (userIds) query = query.in('user_id', userIds);
+  const { data, error, count } = await query;
+  if (error) throw new WalletError(`Failed to list wallets: ${error.message}`);
+  return { wallets: await attachUsers(data || []), total: count || 0, page, limit };
+}
+
+// Admin: a specific user's ledger.
+export async function getUserLedgerForAdmin(userId, { page = 1, limit = 25 } = {}) {
+  const result = await getWalletLedger(userId, { page, limit });
+  return result;
+}
+
+// Admin: manual credit/debit adjustment (mandatory note). Atomic + ledgered.
+export async function adminAdjustWallet({ userId, direction, amountKobo, adminId, note, reference }) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.rpc('wallet_admin_adjust', {
+    p_user_id: userId,
+    p_direction: direction,
+    p_amount_kobo: amountKobo,
+    p_admin_id: adminId,
+    p_note: note,
+    p_reference: reference,
+  });
+  if (error) {
+    if (/INSUFFICIENT_BALANCE/.test(error.message)) throw new WalletError('Cannot debit more than the wallet balance.', 400, 'INSUFFICIENT_BALANCE');
+    throw new WalletError(`wallet_admin_adjust failed: ${error.message}`);
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  return { walletId: row?.out_wallet_id, ledgerId: row?.out_ledger_id, balanceAfter: row?.out_balance_after };
+}
+
+// Admin: freeze / unfreeze a wallet.
+export async function setWalletStatus(userId, status) {
+  if (!['active', 'frozen'].includes(status)) throw new WalletError('Invalid wallet status.', 400);
+  const supabase = getSupabaseAdmin();
+  // Ensure the wallet exists (create a zero wallet if the user never funded).
+  const { data: existing } = await supabase.from('wallets').select('id').eq('user_id', userId).maybeSingle();
+  if (!existing) {
+    await supabase.from('wallets').insert({ user_id: userId, balance_kobo: 0, status });
+  } else {
+    const { error } = await supabase.from('wallets').update({ status }).eq('user_id', userId);
+    if (error) throw new WalletError(`Failed to update wallet status: ${error.message}`);
+  }
+  return { userId, status };
+}
+
 /**
  * Pay for a service from the wallet. Debits and fulfills atomically in one DB
  * transaction (pay_with_wallet RPC → process_payment_success), so money never
