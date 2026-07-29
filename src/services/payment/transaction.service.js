@@ -49,7 +49,7 @@ export async function createTransaction({
     throw new TransactionError('Invalid payment type', HTTP_STATUS.BAD_REQUEST, 'INVALID_TYPE');
   }
   
-  if (paymentGateway !== 'paystack' && paymentGateway !== 'monicredit') {
+  if (paymentGateway !== 'paystack' && paymentGateway !== 'monicredit' && paymentGateway !== 'wallet') {
     throw new TransactionError('Invalid payment gateway', HTTP_STATUS.BAD_REQUEST, 'INVALID_GATEWAY');
   }
   

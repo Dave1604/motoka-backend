@@ -2,6 +2,7 @@ import { logError, logDebug, logWarn, logger } from '../../utils/logger.js';
 import { getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
 import { paymentResponse } from './payment-response.util.js';
+import { handleWalletFundingSuccess } from '../../services/wallet/wallet.service.js';
 import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
 import { GatewayError } from '../../services/payment/gateway/gateway.interface.js';
 import {
@@ -182,6 +183,17 @@ export const verifyPayment = async (req, res) => {
     }
     
     if (transaction.status === PAYMENT_STATUS.PENDING) {
+      // Wallet funding credits the ledger instead of creating an order.
+      if (metaData?.payment_type === PAYMENT_TYPE.WALLET_FUNDING) {
+        const fundingResult = await handleWalletFundingSuccess(transaction, gatewayResult, metaData);
+        return paymentResponse.success(res, {
+          reference: transaction.reference,
+          payment_type: PAYMENT_TYPE.WALLET_FUNDING,
+          credited: fundingResult.credited,
+          balance_kobo: fundingResult.balanceAfter
+        }, 'Wallet funded successfully');
+      }
+
       const isSubscription = metaData?.subscription_id || metaData?.is_subscription;
       const isPlateNumber = metaData?.payment_type === 'plate_number';
       const isDriverLicense = metaData?.payment_type === 'driver_license';
