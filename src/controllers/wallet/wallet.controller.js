@@ -265,7 +265,11 @@ export const initFunding = async (req, res) => {
         fee_kobo: feeKobo,
         user_id: userId
       },
-      channels: ['card']
+      // Card + bank transfer + USSD by default. Override via env without a redeploy.
+      // The fee gross-up is computed at the (higher) card rate, so the wallet is
+      // always fully funded regardless of which channel the user picks.
+      channels: (process.env.WALLET_FUNDING_CHANNELS || 'card,bank_transfer,ussd')
+        .split(',').map((c) => c.trim()).filter(Boolean)
     });
 
     await updateTransactionWithPaystackInit(transaction.reference, init);
