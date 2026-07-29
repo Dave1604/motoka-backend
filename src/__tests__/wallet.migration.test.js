@@ -68,3 +68,42 @@ describe('wallet migration guard', () => {
     expect(def.sql).toMatch(/ALTER\s+TABLE\s+public\.wallet_ledger\s+ENABLE\s+ROW\s+LEVEL\s+SECURITY/i);
   });
 });
+
+// ── Phase 2: pay_with_wallet ────────────────────────────────────────────────
+function latestPayWithWallet() {
+  const files = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort((a, b) => (parseInt(b.match(/^(\d+)/)?.[1] ?? '0', 10)) - (parseInt(a.match(/^(\d+)/)?.[1] ?? '0', 10)));
+  for (const f of files) {
+    const raw = readFileSync(join(migrationsDir, f), 'utf8');
+    if (/FUNCTION\s+(public\.)?pay_with_wallet/i.test(raw)) return { file: f, sql: stripSqlComments(raw) };
+  }
+  return null;
+}
+
+describe('pay_with_wallet migration guard', () => {
+  const def = latestPayWithWallet();
+
+  it('a migration defining pay_with_wallet exists', () => {
+    expect(def).not.toBeNull();
+  });
+
+  it('locks the wallet row before checking/spending balance', () => {
+    expect(def.sql).toMatch(/FOR\s+UPDATE/i);
+  });
+
+  it('rejects spending more than the balance', () => {
+    expect(def.sql).toMatch(/balance_kobo\s*<\s*p_amount_kobo/i);
+    expect(def.sql).toMatch(/INSUFFICIENT_BALANCE/);
+  });
+
+  it('fulfills via the shared process_payment_success path (atomic reuse, not a reimplementation)', () => {
+    expect(def.sql).toMatch(/process_payment_success\s*\(/i);
+    // Must NOT insert renewal_orders directly — that would duplicate the fragile path.
+    expect(def.sql).not.toMatch(/INSERT\s+INTO\s+public\.renewal_orders/i);
+  });
+
+  it('is idempotent on a prior debit for the reference (no double-debit on retry)', () => {
+    expect(def.sql).toMatch(/wallet_ledger\s+WHERE\s+reference\s*=\s*p_reference\s+AND\s+direction\s*=\s*'debit'/i);
+  });
+});

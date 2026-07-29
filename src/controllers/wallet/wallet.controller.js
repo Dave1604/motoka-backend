@@ -1,6 +1,12 @@
-import { getWallet, getWalletLedger, WalletError } from '../../services/wallet/wallet.service.js';
-import { createTransaction, updateTransactionWithPaystackInit } from '../../services/payment/transaction.service.js';
+import { getWallet, getWalletLedger, payWithWallet as payWithWalletService, WalletError } from '../../services/wallet/wallet.service.js';
+import { createTransaction, updateTransactionWithPaystackInit, getTransactionByReference, markTransactionAbandoned } from '../../services/payment/transaction.service.js';
 import { initializeTransaction, PaystackError } from '../../services/payment/paystack.service.js';
+import { validateRenewalItemsSelection } from '../../services/payment/renewalItems.service.js';
+import { resolveStateAndLGA } from '../../services/location.service.js';
+import { getOrderById, findRecentActiveOrder } from '../../services/payment/order.service.js';
+import { PaymentSuccessService } from '../../services/payment/payment-success.service.js';
+import { buildPaymentMetadata } from '../../utils/paymentHelpers.js';
+import { getSupabaseAdmin } from '../../config/supabase.js';
 import {
   computeFunding,
   validateFundingAmount,
@@ -8,7 +14,7 @@ import {
   WALLET_FUNDING_MAX_KOBO
 } from '../../utils/walletFee.js';
 import { paymentResponse } from '../payment/payment-response.util.js';
-import { PAYMENT_TYPE, PAYMENT_GATEWAY, HTTP_STATUS } from '../../constants/payment.constants.js';
+import { PAYMENT_TYPE, PAYMENT_GATEWAY, ORDER_TYPE, ERROR_MESSAGES, HTTP_STATUS } from '../../constants/payment.constants.js';
 import { logError, logInfo } from '../../utils/logger.js';
 
 // Resolve a requested kobo amount from either amount_kobo (preferred) or a naira
@@ -80,6 +86,136 @@ export const getFundingQuote = async (req, res) => {
   } catch (error) {
     logError('[Wallet] getFundingQuote error', { error: error.message });
     return paymentResponse.serverError(res, 'Failed to compute quote');
+  }
+};
+
+// POST /api/wallet/pay  → pay for a car renewal from wallet balance.
+// Body mirrors /payments/initialize (renewal): car_slug, payment_schedule_id,
+// renewal_months, delivery_details, renewal_state.
+export const payWithWallet = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const {
+      car_slug,
+      payment_schedule_id = [],
+      renewal_months: rawRenewalMonths,
+      delivery_details,
+      meta_data,
+      renewal_state = null
+    } = req.body;
+
+    // Renewal items → amount (kobo). Same validation as the gateway flow.
+    const validation = await validateRenewalItemsSelection(payment_schedule_id);
+    if (!validation.valid) return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
+
+    const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
+    const parsedMonths = parseInt(rawRenewalMonths);
+    const renewalMonths = !rawRenewalMonths || isNaN(parsedMonths) ? 12
+      : (VALID_RENEWAL_MONTHS.includes(parsedMonths) ? parsedMonths : null);
+    if (renewalMonths === null) {
+      return paymentResponse.error(res, `Invalid renewal_months. Must be one of: ${VALID_RENEWAL_MONTHS.join(', ')}`, HTTP_STATUS.BAD_REQUEST);
+    }
+
+    const supabaseAdmin = getSupabaseAdmin();
+    if (!car_slug) return paymentResponse.error(res, 'car_slug is required', HTTP_STATUS.BAD_REQUEST);
+    const { data: car, error: carError } = await supabaseAdmin
+      .from('cars')
+      .select('id, slug, user_id')
+      .eq('slug', car_slug)
+      .eq('user_id', userId)
+      .is('deleted_at', null)
+      .single();
+    if (carError || !car) return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
+
+    // Optional delivery — validate + fee, same as init.
+    const deliveryData = delivery_details || meta_data || {};
+    let deliveryFee = 0;
+    let hasDeliveryDetails = !!(deliveryData && (deliveryData.address || deliveryData.state || deliveryData.state_id || deliveryData.lga || deliveryData.lga_id || deliveryData.contact));
+    if (hasDeliveryDetails) {
+      const stateInput = deliveryData.state_id !== undefined ? deliveryData.state_id : deliveryData.state;
+      const lgaInput = deliveryData.lga_id !== undefined ? deliveryData.lga_id : deliveryData.lga;
+      const stateValidation = await resolveStateAndLGA(stateInput, lgaInput);
+      if (!stateValidation.valid) return paymentResponse.error(res, stateValidation.error, HTTP_STATUS.BAD_REQUEST);
+      deliveryFee = stateValidation.delivery_fee || 0;
+      deliveryData.state = stateValidation.stateCode || deliveryData.state;
+      deliveryData.lga = stateValidation.lgaName || deliveryData.lga;
+    }
+
+    const renewalAmount = validation.total;
+    const amount = renewalAmount + deliveryFee;
+
+    // Fast, friendly pre-checks (the RPC is the source of truth and re-checks atomically).
+    const wallet = await getWallet(userId);
+    if (wallet.status === 'frozen') return paymentResponse.error(res, 'Your wallet is frozen. Please contact support.', HTTP_STATUS.FORBIDDEN);
+    if (wallet.balance_kobo < amount) {
+      return paymentResponse.error(res, `Insufficient wallet balance. You have ₦${(wallet.balance_kobo / 100).toLocaleString()} but need ₦${(amount / 100).toLocaleString()}.`, HTTP_STATUS.BAD_REQUEST);
+    }
+
+    // Refuse a duplicate active order for this car (mirrors the gateway success guard).
+    const duplicate = await findRecentActiveOrder({ carId: car.id, userId, paymentType: ORDER_TYPE.RENEWAL_MANUAL });
+    if (duplicate) {
+      return paymentResponse.error(res, `An active renewal order already exists for this car (${duplicate.order_number}).`, HTTP_STATUS.CONFLICT);
+    }
+
+    const metadata = buildPaymentMetadata({
+      carId: car.id, carSlug: car.slug, paymentType: PAYMENT_TYPE.RENEWAL_MANUAL,
+      renewalMonths, paymentScheduleId: payment_schedule_id, renewalAmount, deliveryFee,
+      deliveryDetails: hasDeliveryDetails ? deliveryData : null, userId, renewalState: renewal_state
+    });
+
+    const transaction = await createTransaction({
+      userId, carId: car.id, amount, paymentType: PAYMENT_TYPE.RENEWAL_MANUAL,
+      paymentGateway: PAYMENT_GATEWAY.WALLET, metadata
+    });
+
+    let result;
+    try {
+      result = await payWithWalletService({
+        userId, reference: transaction.reference, amountKobo: amount, transactionId: transaction.id,
+        orderType: ORDER_TYPE.RENEWAL_MANUAL, renewalMonths, selectedItems: payment_schedule_id,
+        renewalAmount, deliveryFee,
+        deliveryAddress: hasDeliveryDetails ? (deliveryData.address || null) : null,
+        deliveryState: hasDeliveryDetails ? (deliveryData.state || null) : null,
+        deliveryLGA: hasDeliveryDetails ? (deliveryData.lga || null) : null,
+        deliveryContact: hasDeliveryDetails ? (deliveryData.contact || deliveryData.delivery_contact || null) : null,
+        metadata, renewalState: renewal_state
+      });
+    } catch (payErr) {
+      // Debit + fulfillment are atomic in the RPC, so a failure means nothing was
+      // debited. Just abandon the pending transaction row.
+      await markTransactionAbandoned(transaction.reference, 'gateway_failure').catch(() => {});
+      throw payErr;
+    }
+
+    const order = result.orderId ? await getOrderById(result.orderId).catch(() => null) : null;
+
+    if (!result.alreadyProcessed) {
+      try {
+        const updatedTransaction = await getTransactionByReference(transaction.reference);
+        await PaymentSuccessService.processPaymentSuccessSideEffects({
+          transaction: updatedTransaction, gatewayData: { channel: 'wallet' }, order
+        });
+      } catch (sideErr) {
+        logError('[Wallet Pay] side effects failed (non-fatal)', { error: sideErr.message, reference: transaction.reference });
+      }
+    }
+
+    logInfo('[Wallet Pay] Paid from wallet', { reference: transaction.reference, userId, amount, balanceAfter: result.balanceAfter, orderId: result.orderId });
+
+    return paymentResponse.success(res, {
+      reference: transaction.reference,
+      order_id: result.orderId,
+      order_number: order?.order_number || null,
+      amount_kobo: amount,
+      balance_kobo: result.balanceAfter,
+      already_processed: result.alreadyProcessed
+    }, 'Payment successful');
+  } catch (error) {
+    if (error instanceof WalletError) {
+      return paymentResponse.error(res, error.message, error.statusCode || 500);
+    }
+    logError('[Wallet Pay] error', { error: error.message });
+    return paymentResponse.serverError(res, 'Failed to complete wallet payment');
   }
 };
 

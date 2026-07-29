@@ -6,7 +6,8 @@ import {
   getWalletBalance,
   getLedger,
   getFundingQuote,
-  initFunding
+  initFunding,
+  payWithWallet
 } from '../controllers/wallet/wallet.controller.js';
 
 const router = express.Router();
@@ -25,5 +26,6 @@ router.get('/wallet', authenticate, apiLimiter, getWalletBalance);
 router.get('/wallet/ledger', authenticate, apiLimiter, getLedger);
 router.get('/wallet/fund/quote', authenticate, apiLimiter, getFundingQuote);
 router.post('/wallet/fund', authenticate, checkEmailVerified, paymentLimiter, initFunding);
+router.post('/wallet/pay', authenticate, checkEmailVerified, paymentLimiter, payWithWallet);
 
 export default router;

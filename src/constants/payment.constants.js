@@ -140,7 +140,8 @@ export const PAYMENT_LIMITS = {
 
 export const PAYMENT_GATEWAY = {
   PAYSTACK: 'paystack',
-  MONICREDIT: 'monicredit'
+  MONICREDIT: 'monicredit',
+  WALLET: 'wallet'
 };
 
 export const PAYSTACK_EVENTS = {

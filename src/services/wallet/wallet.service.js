@@ -67,6 +67,45 @@ export async function creditWallet({ userId, amountKobo, reason, reference, tran
 }
 
 /**
+ * Pay for a service from the wallet. Debits and fulfills atomically in one DB
+ * transaction (pay_with_wallet RPC → process_payment_success), so money never
+ * leaves the wallet without an order. Idempotent on the reference.
+ */
+export async function payWithWallet(params) {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase.rpc('pay_with_wallet', {
+    p_user_id: params.userId,
+    p_reference: params.reference,
+    p_amount_kobo: params.amountKobo,
+    p_transaction_id: params.transactionId,
+    p_order_type: params.orderType,
+    p_renewal_months: params.renewalMonths,
+    p_selected_items: params.selectedItems,
+    p_renewal_amount: params.renewalAmount,
+    p_delivery_fee: params.deliveryFee,
+    p_delivery_address: params.deliveryAddress ?? null,
+    p_delivery_state: params.deliveryState ?? null,
+    p_delivery_lga: params.deliveryLGA ?? null,
+    p_delivery_contact: params.deliveryContact ?? null,
+    p_metadata: params.metadata ?? {},
+    p_renewal_state: params.renewalState ?? null
+  });
+  if (error) {
+    if (/INSUFFICIENT_BALANCE/.test(error.message)) throw new WalletError('Insufficient wallet balance.', 400, 'INSUFFICIENT_BALANCE');
+    if (/WALLET_FROZEN/.test(error.message)) throw new WalletError('Your wallet is frozen. Please contact support.', 403, 'WALLET_FROZEN');
+    if (/WALLET_NOT_FOUND/.test(error.message)) throw new WalletError('No wallet found. Fund your wallet first.', 404, 'WALLET_NOT_FOUND');
+    throw new WalletError(`pay_with_wallet failed: ${error.message}`);
+  }
+  const row = Array.isArray(data) ? data[0] : data;
+  return {
+    transactionId: row?.out_transaction_id,
+    orderId: row?.out_order_id,
+    alreadyProcessed: !!row?.out_already_processed,
+    balanceAfter: row?.out_balance_after
+  };
+}
+
+/**
  * Shared success handler for a Paystack wallet-funding charge. Called from both
  * the webhook and the verify path. Marks the transaction successful and credits
  * the wallet with the amount the user chose to land in it (stored at init in
