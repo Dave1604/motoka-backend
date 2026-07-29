@@ -91,7 +91,8 @@ export const PAYMENT_TYPE = {
   NEW_REGISTRATION: 'new_registration',
   PLATE_NUMBER: 'plate_number',
   DRIVER_LICENSE: 'driver_license',
-  TOKENIZATION: 'tokenization'
+  TOKENIZATION: 'tokenization',
+  WALLET_FUNDING: 'wallet_funding'
 };
 
 export const SUBSCRIPTION_STATUS = {
