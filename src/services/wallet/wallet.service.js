@@ -86,11 +86,18 @@ export async function handleWalletFundingSuccess(transaction, gatewayData, metad
     return { credited: false };
   }
 
-  await updateTransactionStatus(transaction.reference, {
-    status: PAYMENT_STATUS.SUCCESSFUL,
-    channel: gatewayData?.channel,
-    paid_at: gatewayData?.paid_at
-  });
+  // Mark successful. Tolerate the already-final case (409) so a webhook+verify
+  // race — both firing for one funding — doesn't throw before the credit. The
+  // credit below is idempotent on the reference regardless.
+  try {
+    await updateTransactionStatus(transaction.reference, {
+      status: PAYMENT_STATUS.SUCCESSFUL,
+      channel: gatewayData?.channel,
+      paid_at: gatewayData?.paid_at
+    });
+  } catch (err) {
+    if (err?.statusCode !== 409) throw err;
+  }
 
   const result = await creditWallet({
     userId: transaction.user_id,
