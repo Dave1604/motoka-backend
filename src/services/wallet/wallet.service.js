@@ -145,6 +145,61 @@ export async function adminAdjustWallet({ userId, direction, amountKobo, adminId
   return { walletId: row?.out_wallet_id, ledgerId: row?.out_ledger_id, balanceAfter: row?.out_balance_after };
 }
 
+// Admin: reconciliation — verify the wallet ledger is internally consistent and
+// that every funding credit maps to a real Paystack payment (and vice-versa).
+// Read-only. Uses only our own data (wallets, wallet_ledger, payment_transactions).
+// Note: fetches full tables — fine at current scale; move to SQL aggregation if
+// the ledger grows very large.
+export async function getWalletReconciliation() {
+  const supabase = getSupabaseAdmin();
+
+  const [{ data: wallets, error: wErr }, { data: ledger, error: lErr }, { data: fundingTx, error: tErr }] = await Promise.all([
+    supabase.from('wallets').select('id, user_id, balance_kobo').limit(10000),
+    supabase.from('wallet_ledger').select('wallet_id, direction, amount_kobo, reason, reference').limit(50000),
+    supabase.from('payment_transactions').select('reference, amount').eq('payment_type', 'wallet_funding').eq('status', 'successful').limit(50000),
+  ]);
+  if (wErr || lErr || tErr) throw new WalletError(`Reconciliation read failed: ${(wErr || lErr || tErr).message}`);
+
+  // 1. Ledger integrity: cached balance must equal sum(credits) − sum(debits).
+  const netByWallet = new Map();
+  for (const e of ledger || []) {
+    const n = e.direction === 'credit' ? e.amount_kobo : -e.amount_kobo;
+    netByWallet.set(e.wallet_id, (netByWallet.get(e.wallet_id) || 0) + n);
+  }
+  const integrityMismatches = (wallets || [])
+    .filter((w) => (netByWallet.get(w.id) || 0) !== w.balance_kobo)
+    .map((w) => ({ wallet_id: w.id, user_id: w.user_id, cached_kobo: w.balance_kobo, ledger_kobo: netByWallet.get(w.id) || 0 }));
+
+  // 2 & 3. Funding reconciliation — match by reference.
+  const fundingCredits = (ledger || []).filter((e) => e.reason === 'funding');
+  const creditRefs = new Set(fundingCredits.map((e) => e.reference));
+  const txRefs = new Set((fundingTx || []).map((t) => t.reference));
+  const orphans = (fundingTx || []).filter((t) => !creditRefs.has(t.reference))
+    .map((t) => ({ reference: t.reference, amount_kobo: t.amount }));           // paid, never credited
+  const phantoms = fundingCredits.filter((e) => !txRefs.has(e.reference))
+    .map((e) => ({ reference: e.reference, amount_kobo: e.amount_kobo }));       // credited, no payment
+
+  const totalCredited = (ledger || []).filter((e) => e.direction === 'credit').reduce((s, e) => s + e.amount_kobo, 0);
+  const totalDebited = (ledger || []).filter((e) => e.direction === 'debit').reduce((s, e) => s + e.amount_kobo, 0);
+  const totalLiability = (wallets || []).reduce((s, w) => s + Number(w.balance_kobo || 0), 0);
+
+  return {
+    checks: {
+      ledger_integrity: { ok: integrityMismatches.length === 0, count: integrityMismatches.length, items: integrityMismatches.slice(0, 50) },
+      funding_orphans: { ok: orphans.length === 0, count: orphans.length, items: orphans.slice(0, 50) },
+      phantom_credits: { ok: phantoms.length === 0, count: phantoms.length, items: phantoms.slice(0, 50) },
+    },
+    totals: {
+      total_credited_kobo: totalCredited,
+      total_debited_kobo: totalDebited,
+      total_liability_kobo: totalLiability,
+      wallet_count: (wallets || []).length,
+      funding_payments: (fundingTx || []).length,
+    },
+    generated_at: new Date().toISOString(),
+  };
+}
+
 // Admin: freeze / unfreeze a wallet.
 export async function setWalletStatus(userId, status) {
   if (!['active', 'frozen'].includes(status)) throw new WalletError('Invalid wallet status.', 400);

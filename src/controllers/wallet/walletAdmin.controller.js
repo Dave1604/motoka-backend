@@ -5,6 +5,7 @@ import {
   getUserLedgerForAdmin,
   adminAdjustWallet,
   setWalletStatus,
+  getWalletReconciliation,
   getWallet,
   WalletError,
 } from '../../services/wallet/wallet.service.js';
@@ -45,6 +46,17 @@ export const listWallets = async (req, res) => {
   } catch (error) {
     logError('[Admin Wallets] list error', { error: error.message });
     return response.serverError(res, 'Failed to retrieve wallets');
+  }
+};
+
+// GET /admin/wallets/reconciliation
+export const getReconciliation = async (req, res) => {
+  try {
+    const report = await getWalletReconciliation();
+    return response.success(res, report, 'Reconciliation report');
+  } catch (error) {
+    logError('[Admin Wallets] reconciliation error', { error: error.message });
+    return response.serverError(res, 'Failed to run reconciliation');
   }
 };
 

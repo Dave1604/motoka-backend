@@ -134,6 +134,7 @@ router.patch('/driver-license-applications/:id/status', authenticateAdmin, admin
 
 // ── Wallets (Phase 3 admin ops) ───────────────────────────────────────────────
 router.get('/wallets', authenticateAdmin, walletAdmin.listWallets);
+router.get('/wallets/reconciliation', authenticateAdmin, walletAdmin.getReconciliation);
 router.get('/wallets/:userId/ledger', authenticateAdmin, walletAdmin.getUserLedger);
 router.post('/wallets/:userId/adjust', authenticateAdmin, walletAdmin.adjustWallet);
 router.post('/wallets/:userId/status', authenticateAdmin, walletAdmin.updateWalletStatus);
