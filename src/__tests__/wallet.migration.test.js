@@ -107,3 +107,38 @@ describe('pay_with_wallet migration guard', () => {
     expect(def.sql).toMatch(/wallet_ledger\s+WHERE\s+reference\s*=\s*p_reference\s+AND\s+direction\s*=\s*'debit'/i);
   });
 });
+
+// ── Phase 3: wallet_admin_adjust ────────────────────────────────────────────
+function latestAdminAdjust() {
+  const files = readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort((a, b) => (parseInt(b.match(/^(\d+)/)?.[1] ?? '0', 10)) - (parseInt(a.match(/^(\d+)/)?.[1] ?? '0', 10)));
+  for (const f of files) {
+    const raw = readFileSync(join(migrationsDir, f), 'utf8');
+    if (/FUNCTION\s+(public\.)?wallet_admin_adjust/i.test(raw)) return { file: f, sql: stripSqlComments(raw) };
+  }
+  return null;
+}
+
+describe('wallet_admin_adjust migration guard', () => {
+  const def = latestAdminAdjust();
+
+  it('a migration defining wallet_admin_adjust exists', () => {
+    expect(def).not.toBeNull();
+  });
+
+  it('locks the wallet row before adjusting', () => {
+    expect(def.sql).toMatch(/FOR\s+UPDATE/i);
+  });
+
+  it('cannot debit below zero', () => {
+    expect(def.sql).toMatch(/balance_kobo\s*<\s*p_amount_kobo/i);
+    expect(def.sql).toMatch(/INSUFFICIENT_BALANCE/);
+  });
+
+  it('records the admin and the reason in the ledger', () => {
+    expect(def.sql).toMatch(/admin_id/i);
+    expect(def.sql).toMatch(/p_note/i);
+    expect(def.sql).toMatch(/'admin_adjustment'/i);
+  });
+});
