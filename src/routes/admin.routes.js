@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
+import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
+
 import { authenticate } from '../middleware/authenticate.js';
 import { checkAdmin } from '../middleware/checkAdmin.js';
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
@@ -129,5 +131,16 @@ router.get('/guest-orders/:orderId', authenticateAdmin, admin.getGuestOrderDetai
 router.get('/driver-license-applications', authenticateAdmin, admin.listDriverLicenseApplications);
 router.get('/driver-license-applications/:id', authenticateAdmin, admin.getDriverLicenseApplicationDetails);
 router.patch('/driver-license-applications/:id/status', authenticateAdmin, admin.updateDriverLicenseApplicationStatus);
+
+// ── Wallets (Phase 3 admin ops) ───────────────────────────────────────────────
+router.get('/wallets', authenticateAdmin, walletAdmin.listWallets);
+router.get('/wallets/reconciliation', authenticateAdmin, walletAdmin.getReconciliation);
+router.get('/wallets/:userId/ledger', authenticateAdmin, walletAdmin.getUserLedger);
+router.post('/wallets/:userId/adjust', authenticateAdmin, walletAdmin.adjustWallet);
+router.post('/wallets/:userId/status', authenticateAdmin, walletAdmin.updateWalletStatus);
+
+// ── Vehicle document (renewal item) pricing ───────────────────────────────────
+router.get('/vehicle-doc-prices', authenticateAdmin, admin.getRenewalItemPrices);
+router.put('/vehicle-doc-prices/:itemKey', authenticateAdmin, admin.updateRenewalItemPrice);
 
 export default router;

@@ -2,6 +2,7 @@ import { logError, logDebug, logWarn, logger } from '../../utils/logger.js';
 import { getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
 import { paymentResponse } from './payment-response.util.js';
+import { handleWalletFundingSuccess } from '../../services/wallet/wallet.service.js';
 import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
 import { GatewayError } from '../../services/payment/gateway/gateway.interface.js';
 import {
@@ -182,6 +183,17 @@ export const verifyPayment = async (req, res) => {
     }
     
     if (transaction.status === PAYMENT_STATUS.PENDING) {
+      // Wallet funding credits the ledger instead of creating an order.
+      if (metaData?.payment_type === PAYMENT_TYPE.WALLET_FUNDING) {
+        const fundingResult = await handleWalletFundingSuccess(transaction, gatewayResult, metaData);
+        return paymentResponse.success(res, {
+          reference: transaction.reference,
+          payment_type: PAYMENT_TYPE.WALLET_FUNDING,
+          credited: fundingResult.credited,
+          balance_kobo: fundingResult.balanceAfter
+        }, 'Wallet funded successfully');
+      }
+
       const isSubscription = metaData?.subscription_id || metaData?.is_subscription;
       const isPlateNumber = metaData?.payment_type === 'plate_number';
       const isDriverLicense = metaData?.payment_type === 'driver_license';
@@ -443,17 +455,17 @@ export const cancelPayment = async (req, res) => {
     const { reference } = req.params;
     const userId = req.user.id;
     // Sanitize and cap reason to prevent injection / excessive payload
-    const reason = req.body?.reason ? String(req.body.reason).trim().slice(0, 255) : null;
-    
+    const rawReason = req.body?.reason ? String(req.body.reason).trim().slice(0, 255) : null;
+
     if (!reference) {
       return paymentResponse.error(res, 'Payment reference is required', HTTP_STATUS.BAD_REQUEST);
     }
-    
+
     const transaction = await getTransactionByReference(reference);
-    
+
     if (!transaction) return paymentResponse.notFound(res, ERROR_MESSAGES.PAYMENT_NOT_FOUND);
     if (transaction.user_id !== userId) return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
-    
+
     if (transaction.status !== PAYMENT_STATUS.PENDING) {
       return paymentResponse.error(
         res,
@@ -461,13 +473,21 @@ export const cancelPayment = async (req, res) => {
         HTTP_STATUS.CONFLICT
       );
     }
-    
-    await markTransactionAbandoned(reference);
-    
+
+    // Map the free-text reason from the client into one of the canonical
+    // cancellation_reason values (migration 064). The frontend currently
+    // sends one of three strings; anything else falls back to user_abandoned.
+    const canonicalReason =
+      rawReason?.startsWith('User switched payment method')              ? 'duplicate_init' :
+      rawReason?.startsWith('Monicredit init failed, user switched')     ? 'duplicate_init' :
+      'user_abandoned';
+
+    await markTransactionAbandoned(reference, canonicalReason);
+
     return paymentResponse.success(res, {
       reference: transaction.reference,
       status: PAYMENT_STATUS.ABANDONED,
-      message: reason || 'Payment cancelled by user'
+      message: rawReason || 'Payment cancelled by user'
     }, 'Payment cancelled successfully');
     
   } catch (error) {

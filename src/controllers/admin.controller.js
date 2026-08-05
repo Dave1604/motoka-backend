@@ -1218,7 +1218,7 @@ export const updateOrderStatus = async (req, res) => {
 export const listTransactions = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all', gateway = 'all', search } = req.query;
+    const { page = 1, per_page = 15, status = 'all', gateway = 'all', search, include_duplicates } = req.query;
 
     const limit = Math.min(100, Math.max(1, parseInt(per_page)));
     const offset = (Math.max(1, parseInt(page)) - 1) * limit;
@@ -1232,6 +1232,12 @@ export const listTransactions = async (req, res) => {
 
     const dbGateway = (gateway === 'paystack' || gateway === 'monicredit') ? gateway : null;
 
+    // Hide rows tagged as duplicate_init by default — they're noise from users
+    // re-initialising payment (gateway switches, rapid retries). Pass
+    // ?include_duplicates=true to see everything. Applied to BOTH the list
+    // query and the summary aggregates so the cards reflect what's displayed.
+    const hideDuplicates = include_duplicates !== 'true' && include_duplicates !== '1';
+
     let query = supabaseAdmin
       .from('payment_transactions')
       .select('*', { count: 'exact' })
@@ -1241,6 +1247,7 @@ export const listTransactions = async (req, res) => {
     if (dbStatus) query = query.eq('status', dbStatus);
     if (dbGateway) query = query.eq('payment_gateway', dbGateway);
     if (search) query = query.ilike('reference', `%${search}%`);
+    if (hideDuplicates) query = query.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init');
 
     const { data: transactions, count, error } = await query;
     if (error) {
@@ -1258,8 +1265,19 @@ export const listTransactions = async (req, res) => {
     //
     // NOTE: Supabase JS requires .select() before any filter chain (.eq, etc).
     // Build each query as `from().select(...)` first, then apply filters.
+    // Each query also respects the `hideDuplicates` flag so the cards match
+    // what's visible in the table — admin sees the same numbers as the rows.
+    const applyDupFilter = (q) =>
+      hideDuplicates ? q.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init') : q;
     const headCount = (filterFn) => {
       let q = supabaseAdmin.from('payment_transactions').select('id', { count: 'exact', head: true });
+      q = applyDupFilter(q);
+      if (filterFn) q = filterFn(q);
+      return q;
+    };
+    const sumQuery = (filterFn) => {
+      let q = supabaseAdmin.from('payment_transactions').select('amount');
+      q = applyDupFilter(q);
       if (filterFn) q = filterFn(q);
       return q;
     };
@@ -1281,8 +1299,8 @@ export const listTransactions = async (req, res) => {
       headCount(q => q.eq('status', 'abandoned')),
       headCount(q => q.eq('payment_gateway', 'paystack')),
       headCount(q => q.eq('payment_gateway', 'monicredit')),
-      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
-      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'pending'),
+      sumQuery(q => q.eq('status', 'successful')),
+      sumQuery(q => q.eq('status', 'pending')),
     ]);
 
     const sumKobo = (rows) => (rows || []).reduce((s, r) => s + parseFloat(r.amount || 0), 0);
@@ -3040,5 +3058,97 @@ export const adminBulkImportCars = async (req, res) => {
   } catch (error) {
     logError('adminBulkImportCars', error);
     return res.status(500).json({ status: false, message: 'Bulk import failed' });
+  }
+};
+
+// ─── Vehicle Document (Renewal Item) Pricing ─────────────────────────────────
+
+/**
+ * GET /api/admin/vehicle-doc-prices
+ * Returns all renewal items (including inactive) so admin can manage them.
+ */
+export const getRenewalItemPrices = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+
+    const { data, error } = await supabase
+      .from('renewal_items')
+      .select('item_key, name, price, required, active')
+      .order('required', { ascending: false })
+      .order('name', { ascending: true });
+
+    if (error) {
+      logError('[Admin] getRenewalItemPrices error', error);
+      return response.serverError(res, 'Failed to retrieve renewal item prices');
+    }
+
+    return response.success(res, data || [], 'Renewal item prices retrieved');
+  } catch (err) {
+    logError('[Admin] getRenewalItemPrices error', err);
+    return response.serverError(res, 'Failed to retrieve renewal item prices');
+  }
+};
+
+/**
+ * PUT /api/admin/vehicle-doc-prices/:itemKey
+ * Update the price (and optionally name/active) of a renewal item.
+ * Price is stored in kobo so we accept kobo directly.
+ */
+export const updateRenewalItemPrice = async (req, res) => {
+  try {
+    const { itemKey } = req.params;
+    const { price, name, active } = req.body;
+    const supabase = getSupabaseAdmin();
+
+    if (price === undefined && name === undefined && active === undefined) {
+      return res.status(400).json({ status: false, message: 'At least one of price, name, or active must be provided' });
+    }
+
+    if (price !== undefined) {
+      const parsed = Number(price);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return res.status(400).json({ status: false, message: 'price must be a non-negative integer (in kobo)' });
+      }
+    }
+
+    // Verify the item exists
+    const { data: existing, error: fetchErr } = await supabase
+      .from('renewal_items')
+      .select('item_key, name, price, required, active')
+      .eq('item_key', itemKey)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ status: false, message: 'Renewal item not found' });
+    }
+
+    const updatePayload = { updated_at: new Date().toISOString() };
+    if (price !== undefined) updatePayload.price = Number(price);
+    if (name !== undefined) updatePayload.name = String(name).trim();
+    if (active !== undefined) updatePayload.active = Boolean(active);
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('renewal_items')
+      .update(updatePayload)
+      .eq('item_key', itemKey)
+      .select('item_key, name, price, required, active')
+      .single();
+
+    if (updateErr) {
+      logError('[Admin] updateRenewalItemPrice update error', updateErr);
+      return response.serverError(res, 'Failed to update renewal item price');
+    }
+
+    logInfo('[Admin] Renewal item price updated', {
+      itemKey,
+      previousPrice: existing.price,
+      newPrice: updated.price,
+      adminId: req.admin?.id,
+    });
+
+    return response.success(res, updated, 'Renewal item price updated successfully');
+  } catch (err) {
+    logError('[Admin] updateRenewalItemPrice error', err);
+    return response.serverError(res, 'Failed to update renewal item price');
   }
 };
