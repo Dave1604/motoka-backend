@@ -2,6 +2,10 @@ import { getSupabase, getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
 import * as twoFactorService from '../services/twoFactor.service.js';
 import { sendPasswordResetOTP as sendPasswordResetEmail } from '../services/email/email.service.js';
+import {
+  attributeReferral,
+  ensureReferralCode,
+} from '../services/referral/referral.service.js';
 
 // Fields that must never appear in any API response (KAGE-003, KAGE-005)
 const SAFE_PROFILE_FIELDS = [
@@ -22,7 +26,7 @@ const SAFE_PROFILE_SELECT = 'id, user_id, first_name, last_name, phone_number, e
 
 export const register = async (req, res) => {
   try {
-    const { first_name, last_name, email, phone, password } = req.body;
+    const { first_name, last_name, email, phone, password, referral_code } = req.body;
     const supabase = getSupabase();
     const supabaseAdmin = getSupabaseAdmin();
 
@@ -109,6 +113,17 @@ export const register = async (req, res) => {
       email,
       options: { shouldCreateUser: false }
     }).catch(() => {}); // non-fatal if OTP fails
+
+    // Referral: attribute if code provided, then ensure this user has a share code.
+    // Never fail registration because of referral errors.
+    try {
+      if (referral_code) {
+        await attributeReferral({ refereeId: userId, code: referral_code });
+      }
+      await ensureReferralCode(userId);
+    } catch (referralErr) {
+      console.error('[Register] Referral hook failed (non-fatal):', referralErr?.message || referralErr);
+    }
 
     return response.created(res, {
       user: { id: userId, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...sanitizeProfile(profile) },
