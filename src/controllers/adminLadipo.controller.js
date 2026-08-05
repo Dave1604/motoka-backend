@@ -156,12 +156,15 @@ function normalizeProductPayload(payload = {}) {
   const isUniversal = payload.is_universal !== undefined
     ? String(payload.is_universal).toLowerCase() === 'true' || payload.is_universal === true
     : false;
-  const isEssential = payload.is_essential !== undefined
-    ? String(payload.is_essential).toLowerCase() === 'true' || payload.is_essential === true
-    : false;
-  const isMustHave = payload.is_must_have !== undefined
-    ? String(payload.is_must_have).toLowerCase() === 'true' || payload.is_must_have === true
-    : false;
+  const parseBoolFlag = (value) =>
+    value !== undefined
+      ? String(value).toLowerCase() === 'true' || value === true
+      : false;
+  const isEssential = parseBoolFlag(payload.is_essential);
+  const isMustHave = parseBoolFlag(payload.is_must_have);
+  const isFeatured = parseBoolFlag(payload.is_featured);
+  const isBestseller = parseBoolFlag(payload.is_bestseller);
+  const isDeal = parseBoolFlag(payload.is_deal);
   let images = [];
   if (Array.isArray(payload.images)) {
     images = payload.images;
@@ -232,6 +235,9 @@ function normalizeProductPayload(payload = {}) {
       is_universal: isUniversal,
       is_essential: isEssential,
       is_must_have: isMustHave,
+      is_featured: isFeatured,
+      is_bestseller: isBestseller,
+      is_deal: isDeal,
       is_active: isActive,
       images,
       specifications,
@@ -813,14 +819,19 @@ export async function listLadipoProducts(req, res) {
     const brand = String(req.query.brand || '').trim();
     const make = String(req.query.make || '').trim();
 
-    if (!['all', 'essential', 'must_have'].includes(collection)) {
-      return res.status(400).json({ status: false, message: 'collection must be all, essential, or must_have' });
+    const allowedCollections = ['all', 'essential', 'must_have', 'featured', 'bestseller', 'deal'];
+    if (!allowedCollections.includes(collection)) {
+      return res.status(400).json({
+        status: false,
+        message: 'collection must be all, essential, must_have, featured, bestseller, or deal',
+      });
     }
 
     let query = supabase
       .from('ladipo_parts')
       .select(`
-        id, slug, name, description, brand, condition, part_type, images, is_active, is_universal, is_essential, is_must_have, category_id, created_at, updated_at,
+        id, slug, name, description, brand, condition, part_type, images, is_active, is_universal,
+        is_essential, is_must_have, is_featured, is_bestseller, is_deal, category_id, created_at, updated_at,
         category:ladipo_categories(id, name, slug),
         inventory:ladipo_part_inventory(id, part_id, price_kobo, stock_qty, seller_label)
       `, { count: 'exact' })
@@ -849,6 +860,9 @@ export async function listLadipoProducts(req, res) {
     // search ranking or product category.
     if (collection === 'essential') query = query.eq('is_essential', true);
     if (collection === 'must_have') query = query.eq('is_must_have', true);
+    if (collection === 'featured') query = query.eq('is_featured', true);
+    if (collection === 'bestseller') query = query.eq('is_bestseller', true);
+    if (collection === 'deal') query = query.eq('is_deal', true);
 
     const { data, count, error } = await query;
     if (error) throw error;
