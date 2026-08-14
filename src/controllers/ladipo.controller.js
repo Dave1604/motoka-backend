@@ -65,7 +65,7 @@ const SAFE_STRING_RE = /^[\w\s\-.,&()'/]+$/;
 const ALLOWED_CONDITIONS = new Set(['new', 'used', 'refurbished']);
 const ALLOWED_PART_TYPES = new Set(['oem', 'aftermarket', 'genuine']);
 const ALLOWED_SORTS = new Set(['newest', 'oldest', 'name_asc']);
-const ALLOWED_TAGS = new Set(['essential', 'must_have']);
+const ALLOWED_TAGS = new Set(['essential', 'must_have', 'featured', 'bestseller', 'deal']);
 
 function parseMultiParam(value, { maxItems = 25, maxLen = 100 } = {}) {
   if (value == null || value === '') return undefined;
