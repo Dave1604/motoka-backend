@@ -21,7 +21,14 @@ export const registerValidation = [
   body('password_confirmation').notEmpty().withMessage('Password confirmation is required').custom((value, { req }) => {
     if (value !== req.body.password) throw new Error('Passwords do not match');
     return true;
-  })
+  }),
+  body('referral_code')
+    .optional({ nullable: true, checkFalsy: true })
+    .trim()
+    .isLength({ min: 6, max: 12 })
+    .withMessage('Referral code must be 6-12 characters')
+    .matches(/^[A-Za-z0-9]+$/)
+    .withMessage('Referral code must be alphanumeric'),
 ];
 
 export const loginValidation = [

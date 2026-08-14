@@ -4,6 +4,7 @@ import { formatAmount } from '../../utils/paymentHelpers.js';
 import { activateSubscription } from './subscription.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
 import { sendPaymentSuccessEmail } from '../../services/email/paymentEmail.service.js';
+import { qualifyAndRewardOnFirstPurchase } from '../referral/referral.service.js';
 
 export class PaymentSuccessService {
   static async processPaymentSuccessSideEffects({ transaction, gatewayData, order }) {
@@ -43,6 +44,21 @@ export class PaymentSuccessService {
       
       if (isSubscription && metadata.subscription_id && gatewayData?.authorization) {
         await this._activateSubscription(metadata.subscription_id, gatewayData.authorization, transaction.reference);
+      }
+
+      // Referral rewards — first qualifying purchase only. Never fail payment.
+      // Run before notification early-return so missing email cannot skip rewards.
+      try {
+        await qualifyAndRewardOnFirstPurchase({
+          userId: transaction.user_id,
+          transaction,
+        });
+      } catch (referralErr) {
+        logError('Referral reward side-effect failed (non-fatal)', {
+          error: referralErr,
+          reference: transaction.reference,
+          userId: transaction.user_id,
+        });
       }
       
       const { data: profile, error: profileError } = await supabaseAdmin

@@ -108,6 +108,9 @@ export async function getParts({
 
   if (tag === 'essential') query = query.eq('is_essential', true);
   if (tag === 'must_have') query = query.eq('is_must_have', true);
+  if (tag === 'featured') query = query.eq('is_featured', true);
+  if (tag === 'bestseller') query = query.eq('is_bestseller', true);
+  if (tag === 'deal') query = query.eq('is_deal', true);
 
   if (minPrice !== null) query = query.gte('inventory.price_kobo', minPrice);
   if (maxPrice !== null) query = query.lte('inventory.price_kobo', maxPrice);
@@ -448,11 +451,16 @@ export async function getPartBySlug(slug) {
   return flattenPart(data);
 }
 
-// Returns admin-curated "Essential Products" and "Must Have" sections for
-// the Ladipo landing view. Membership is explicit (is_essential / is_must_have
-// flags set by an admin), never inferred from sales or heuristics, so the
-// sections always reflect what an admin actually chose to feature.
-export async function getMerchandisedSections({ essentialLimit = 8, mustHaveLimit = 8 } = {}) {
+// Returns admin-curated storefront sections for the Ladipo landing view.
+// Membership is explicit (boolean flags set by an admin), never inferred
+// from sales or heuristics, so sections always reflect what an admin chose.
+export async function getMerchandisedSections({
+  essentialLimit = 8,
+  mustHaveLimit = 8,
+  featuredLimit = 8,
+  bestsellerLimit = 8,
+  dealLimit = 8,
+} = {}) {
   const supabase = getSupabaseAdmin();
 
   const baseSelect = `
@@ -461,22 +469,23 @@ export async function getMerchandisedSections({ essentialLimit = 8, mustHaveLimi
     inventory:ladipo_part_inventory(id, price_kobo, stock_qty, seller_label)
   `;
 
-  const [essentialResult, mustHaveResult] = await Promise.all([
+  const fetchSection = (flag, limit) =>
     supabase
       .from('ladipo_parts')
       .select(baseSelect)
       .eq('is_active', true)
-      .eq('is_essential', true)
+      .eq(flag, true)
       .order('created_at', { ascending: false })
-      .limit(essentialLimit),
-    supabase
-      .from('ladipo_parts')
-      .select(baseSelect)
-      .eq('is_active', true)
-      .eq('is_must_have', true)
-      .order('created_at', { ascending: false })
-      .limit(mustHaveLimit),
-  ]);
+      .limit(limit);
+
+  const [essentialResult, mustHaveResult, featuredResult, bestsellerResult, dealResult] =
+    await Promise.all([
+      fetchSection('is_essential', essentialLimit),
+      fetchSection('is_must_have', mustHaveLimit),
+      fetchSection('is_featured', featuredLimit),
+      fetchSection('is_bestseller', bestsellerLimit),
+      fetchSection('is_deal', dealLimit),
+    ]);
 
   if (essentialResult.error) {
     logError('[Ladipo] getMerchandisedSections essentials failed', essentialResult.error);
@@ -486,10 +495,25 @@ export async function getMerchandisedSections({ essentialLimit = 8, mustHaveLimi
     logError('[Ladipo] getMerchandisedSections must-haves failed', mustHaveResult.error);
     throw new Error('Failed to fetch must-have products');
   }
+  if (featuredResult.error) {
+    logError('[Ladipo] getMerchandisedSections featured failed', featuredResult.error);
+    throw new Error('Failed to fetch featured products');
+  }
+  if (bestsellerResult.error) {
+    logError('[Ladipo] getMerchandisedSections bestsellers failed', bestsellerResult.error);
+    throw new Error('Failed to fetch bestseller products');
+  }
+  if (dealResult.error) {
+    logError('[Ladipo] getMerchandisedSections deals failed', dealResult.error);
+    throw new Error('Failed to fetch deal products');
+  }
 
   return {
     essentials: (essentialResult.data || []).map(flattenPart),
     mustHaves: (mustHaveResult.data || []).map(flattenPart),
+    featured: (featuredResult.data || []).map(flattenPart),
+    bestsellers: (bestsellerResult.data || []).map(flattenPart),
+    deals: (dealResult.data || []).map(flattenPart),
   };
 }
 
