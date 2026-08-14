@@ -2,9 +2,8 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
+import * as renewals from '../controllers/adminRenewals.controller.js';
 
-import { authenticate } from '../middleware/authenticate.js';
-import { checkAdmin } from '../middleware/checkAdmin.js';
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
 import { handleDocumentUpload, handleLadipoProductImageUpload } from '../middleware/fileUpload.js';
 import { suspendUserValidation, validate } from '../utils/validators.js';
@@ -43,36 +42,41 @@ const router = Router();
 /**
      * ADMIN ROUTES
  *
- * Two auth strategies:
- *  - Supabase token routes (legacy): authenticate + checkAdmin
- *  - JWT/Supabase admin token routes (new): authenticateAdmin
+ * Auth: every route uses `authenticateAdmin`, which accepts BOTH admin token
+ * types — the backend JWT from POST /api/admin/auth/verify-otp, and the
+ * Supabase access token the admin dashboard stores after OTP login.
+ *
+ * Previously a subset of routes used `authenticate + checkAdmin`, which only
+ * understands Supabase tokens. That made Users, Cars and the payment-monitoring
+ * endpoints 401 for anyone holding a valid backend admin JWT, even though the
+ * rest of the admin API accepted it.
  *
  * Mounted at: /api/admin
  */
 
-// ── User management (Supabase-auth based) ────────────────────────────────────
+// ── User management ──────────────────────────────────────────────────────────
 router.post('/users', authenticateAdmin, admin.adminCreateUser);
-router.get('/users', authenticate, checkAdmin, admin.listUsers);
+router.get('/users', authenticateAdmin, admin.listUsers);
 // search must be registered before /:userId to avoid 'search' being captured as a userId param
 router.get('/users/search', authenticateAdmin, admin.searchUsers);
-router.get('/users/:userId', authenticate, checkAdmin, admin.getUser);
+router.get('/users/:userId', authenticateAdmin, admin.getUser);
 router.get('/users/:userId/cars', authenticateAdmin, admin.getUserCars);
-router.put('/users/:userId/suspend', authenticate, checkAdmin, suspendUserValidation, validate, admin.suspendUser);
-router.put('/users/:userId/activate', authenticate, checkAdmin, admin.activateUser);
-router.delete('/users/:userId', authenticate, checkAdmin, admin.deleteUser);
+router.put('/users/:userId/suspend', authenticateAdmin, suspendUserValidation, validate, admin.suspendUser);
+router.put('/users/:userId/activate', authenticateAdmin, admin.activateUser);
+router.delete('/users/:userId', authenticateAdmin, admin.deleteUser);
 
 // ── Car management ────────────────────────────────────────────────────────────
 // bulk-import must be registered BEFORE /:slug to avoid route capture conflicts
 router.post('/cars/bulk-import', authenticateAdmin, csvUpload.single('file'), admin.adminBulkImportCars);
 router.post('/cars', authenticateAdmin, admin.adminAddCar);
-router.get('/cars', authenticate, checkAdmin, admin.listCars);
-router.get('/cars/:slug', authenticate, checkAdmin, admin.getCarDetails);
+router.get('/cars', authenticateAdmin, admin.listCars);
+router.get('/cars/:slug', authenticateAdmin, admin.getCarDetails);
 router.put('/cars/:slug', authenticateAdmin, admin.adminUpdateCar);
 router.delete('/cars/:slug', authenticateAdmin, admin.adminDeleteCar);
 
 // ── Payment system monitoring ─────────────────────────────────────────────────
-router.get('/metrics/payments', authenticate, checkAdmin, admin.getPaymentMetrics);
-router.get('/gateways/health', authenticate, checkAdmin, admin.getGatewayHealth);
+router.get('/metrics/payments', authenticateAdmin, admin.getPaymentMetrics);
+router.get('/gateways/health', authenticateAdmin, admin.getGatewayHealth);
 
 // ── Dashboard (authenticateAdmin) ────────────────────────────────────────────
 router.get('/dashboard/stats', authenticateAdmin, admin.getDashboardStats);
@@ -83,6 +87,8 @@ router.get('/recent-transactions', authenticateAdmin, admin.getRecentTransaction
 router.get('/orders', authenticateAdmin, admin.listOrders);
 router.get('/orders/:orderNumber', authenticateAdmin, admin.getOrderDetails);
 router.put('/orders/:orderNumber/status', authenticateAdmin, admin.updateOrderStatus);
+// Undo an accidental cancellation — returns the order to pending so it can be completed
+router.post('/orders/:orderNumber/reopen', authenticateAdmin, admin.reopenOrder);
 
 // ── Ladipo marketplace management (authenticateAdmin) ────────────────────────
 router.get('/ladipo/capabilities', authenticateAdmin, getLadipoAdminCapabilities);
@@ -138,6 +144,11 @@ router.get('/wallets/reconciliation', authenticateAdmin, walletAdmin.getReconcil
 router.get('/wallets/:userId/ledger', authenticateAdmin, walletAdmin.getUserLedger);
 router.post('/wallets/:userId/adjust', authenticateAdmin, walletAdmin.adjustWallet);
 router.post('/wallets/:userId/status', authenticateAdmin, walletAdmin.updateWalletStatus);
+
+// ── Renewals call list (read-only) ────────────────────────────────────────────
+// /deferred must be registered before any future /:param route on this prefix
+router.get('/renewals/deferred', authenticateAdmin, renewals.listDeferredRenewals);
+router.get('/renewals', authenticateAdmin, renewals.listRenewals);
 
 // ── Vehicle document (renewal item) pricing ───────────────────────────────────
 router.get('/vehicle-doc-prices', authenticateAdmin, admin.getRenewalItemPrices);

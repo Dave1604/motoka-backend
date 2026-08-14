@@ -6,7 +6,7 @@
  */
 
 import { CONFIG } from './config.ts';
-import { EmailResult, Car, UserProfile, NotificationType } from './types.ts';
+import { EmailResult, Car, UserProfile, NotificationType, DigestItem } from './types.ts';
 import { logger } from './logger.ts';
 import { formatDateISO } from './dateCalculator.ts';
 
@@ -20,8 +20,77 @@ export class EmailService {
   }
 
   /**
+   * Send ONE email covering every vehicle of this customer that is due today.
+   *
+   * Reminders used to go out per vehicle, so a customer with 12 cars could get
+   * five separate emails in the same minute — each individually correct, and
+   * collectively spam. A single vehicle still gets the original one-car email,
+   * unchanged; two or more are combined into a digest.
+   *
+   * Idempotency is unaffected: history is still recorded per car by the caller,
+   * so a car is never notified twice for the same stage.
+   */
+  async sendExpiryDigest(
+    profile: UserProfile,
+    items: DigestItem[]
+  ): Promise<EmailResult> {
+    if (items.length === 1) {
+      const { car, notificationType, daysUntilExpiry } = items[0];
+      return this.sendExpiryNotification(car, profile, notificationType, daysUntilExpiry);
+    }
+
+    // Most urgent first — fewest days remaining, overdue ahead of upcoming.
+    const ordered = [...items].sort((a, b) => a.daysUntilExpiry - b.daysUntilExpiry);
+
+    let lastError: Error | null = null;
+    let retryCount = 0;
+
+    for (let attempt = 1; attempt <= CONFIG.RETRY.MAX_ATTEMPTS; attempt++) {
+      try {
+        const result = await this.sendDigestWithTimeout(profile, ordered);
+
+        logger.info('Digest email sent successfully', {
+          email: profile.email,
+          vehicles: ordered.length,
+          attempt,
+          emailId: result.emailId,
+        });
+
+        return { success: true, emailId: result.emailId, retryCount: attempt - 1 };
+      } catch (error) {
+        lastError = error as Error;
+        retryCount = attempt - 1;
+
+        logger.warn('Digest email failed, will retry', {
+          email: profile.email,
+          vehicles: ordered.length,
+          attempt,
+          error: lastError.message,
+        });
+
+        if (attempt < CONFIG.RETRY.MAX_ATTEMPTS) {
+          await this.sleep(this.calculateBackoffDelay(attempt));
+        }
+      }
+    }
+
+    logger.error('Digest email failed after all retries', {
+      email: profile.email,
+      vehicles: ordered.length,
+      retryCount,
+      error: lastError?.message,
+    });
+
+    return {
+      success: false,
+      error: lastError?.message || 'Unknown error',
+      retryCount,
+    };
+  }
+
+  /**
    * Send expiry notification email with retry logic
-   * 
+   *
    * Implements exponential backoff: 1s → 2s → 4s
    * Max 3 attempts before giving up.
    */
@@ -161,8 +230,184 @@ export class EmailService {
   }
 
   /**
+   * POST one digest email to Resend, with the same timeout protection as the
+   * single-vehicle path.
+   */
+  private async sendDigestWithTimeout(
+    profile: UserProfile,
+    items: DigestItem[]
+  ): Promise<{ emailId: string }> {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+      () => controller.abort(),
+      CONFIG.TIMEOUT.EMAIL_SEND_MS
+    );
+
+    try {
+      const { subject, html, text } = this.buildDigestContent(profile, items);
+
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${this.resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: this.emailFrom,
+          to: profile.email,
+          subject,
+          html,
+          text,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        let errorData: any = { message: response.statusText };
+        try {
+          errorData = await response.json();
+        } catch {
+          // Ignore JSON parse errors
+        }
+        throw new Error(
+          `Resend API error (${response.status}): ${errorData.message || response.statusText}`
+        );
+      }
+
+      const data = await response.json() as { id: string };
+      if (!data.id) {
+        throw new Error('Resend API returned no email ID');
+      }
+
+      return { emailId: data.id };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  }
+
+  /**
+   * Subject and body for a multi-vehicle digest.
+   *
+   * The subject takes its urgency from the single most urgent vehicle, so an
+   * overdue car is never buried behind a 30-day reminder in the inbox.
+   */
+  private buildDigestContent(
+    profile: UserProfile,
+    items: DigestItem[]
+  ): { subject: string; html: string; text: string } {
+    const worst = items[0]; // already sorted most-urgent-first
+    const count = items.length;
+
+    let emoji: string;
+    let headline: string;
+    let headerColor: string;
+
+    if (worst.daysUntilExpiry < 0) {
+      emoji = '❗';
+      headline = `${count} of your vehicles need attention`;
+      headerColor = '#d32f2f';
+    } else if (worst.daysUntilExpiry === 0) {
+      emoji = '⚠️';
+      headline = `${count} of your vehicles need attention — one expires today`;
+      headerColor = '#ff6b6b';
+    } else {
+      emoji = worst.daysUntilExpiry <= 3 ? '🚨' : '⏰';
+      headline = `${count} of your vehicles are due for renewal`;
+      headerColor = '#0066cc';
+    }
+
+    const subject = `${emoji} ${headline}`;
+    const greeting = `Hi ${profile.first_name}`;
+
+    const describe = (item: DigestItem): string => {
+      const d = item.daysUntilExpiry;
+      const unit = Math.abs(d) === 1 ? 'day' : 'days';
+      if (d < 0) return `expired ${Math.abs(d)} ${unit} ago`;
+      if (d === 0) return 'expires today';
+      return `expires in ${d} ${unit}`;
+    };
+
+    const rows = items.map(item => {
+      const car = item.car;
+      const label = `${car.vehicle_make || ''} ${car.vehicle_model || ''}`.trim() || 'Vehicle';
+      const overdue = item.daysUntilExpiry < 0;
+      const formatted = new Date(car.expiry_date).toLocaleDateString('en-US', {
+        year: 'numeric', month: 'long', day: 'numeric',
+      });
+      return `
+        <tr>
+          <td style="padding:12px 0;border-bottom:1px solid #eeeeee;">
+            <div style="font-weight:600;color:#111111;">${label} — ${car.registration_no || 'No plate'}</div>
+            <div style="font-size:14px;color:${overdue ? '#d32f2f' : '#555555'};margin-top:2px;">
+              ${describe(item)} · ${formatted}
+            </div>
+          </td>
+        </tr>`;
+    }).join('');
+
+    const listHtml = `<table role="presentation" width="100%" style="border-collapse:collapse;margin:8px 0 4px;">${rows}</table>`;
+    const message = `You have <strong>${count} vehicles</strong> that need renewing:`;
+
+    const html = this.generateDigestHTML(greeting, message, listHtml, headerColor);
+
+    const textLines = items.map(item => {
+      const car = item.car;
+      const label = `${car.vehicle_make || ''} ${car.vehicle_model || ''}`.trim() || 'Vehicle';
+      return `- ${label} (${car.registration_no || 'No plate'}): ${describe(item)}`;
+    });
+    const text = `${greeting},\n\nYou have ${count} vehicles that need renewing:\n\n${textLines.join('\n')}\n\nRenew at ${CONFIG.APP_URL || 'https://app.motoka.ng'}\n\n— Motoka`;
+
+    return { subject, html, text };
+  }
+
+  /**
+   * Digest shell — mirrors the single-vehicle template's look, but the body is a
+   * list of vehicles rather than one hero vehicle block.
+   */
+  private generateDigestHTML(
+    greeting: string,
+    message: string,
+    listHtml: string,
+    headerColor: string
+  ): string {
+    const renewUrl = CONFIG.APP_URL || 'https://app.motoka.ng';
+    return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    </head>
+    <body style="margin:0;padding:0;background-color:#f4f4f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.6;">
+      <div style="max-width:600px;margin:0 auto;background-color:#ffffff;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+        <div style="background:linear-gradient(135deg, ${headerColor} 0%, ${headerColor}dd 100%);color:#ffffff;padding:40px 30px;text-align:center;">
+          <h1 style="margin:0;font-size:24px;font-weight:700;letter-spacing:-0.5px;">Vehicle Renewal Reminder</h1>
+        </div>
+        <div style="padding:30px;">
+          <p style="margin:0 0 12px;font-size:16px;color:#111111;">${greeting},</p>
+          <p style="margin:0 0 8px;font-size:16px;color:#333333;">${message}</p>
+          ${listHtml}
+          <div style="text-align:center;margin:28px 0 8px;">
+            <a href="${renewUrl}/licenses/renew"
+               style="display:inline-block;background:${headerColor};color:#ffffff;text-decoration:none;padding:14px 28px;border-radius:6px;font-weight:600;">
+              Renew now
+            </a>
+          </div>
+          <p style="margin:16px 0 0;font-size:13px;color:#777777;text-align:center;">
+            Renewing early avoids penalties and keeps your vehicles road-legal.
+          </p>
+        </div>
+        <div style="background-color:#fafafa;padding:20px 30px;text-align:center;font-size:12px;color:#999999;">
+          <p style="margin:0;">Motoka — vehicle registration made simple</p>
+        </div>
+      </div>
+    </body>
+    </html>`;
+  }
+
+  /**
    * Build email content based on notification type
-   * 
+   *
    * Creates subject line and HTML/text content tailored to the
    * notification type (pre-expiry, expiry day, or post-expiry).
    */
