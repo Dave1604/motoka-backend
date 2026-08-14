@@ -384,6 +384,60 @@ export async function updateTransactionStatus(reference, {
   return updated;
 }
 
+/**
+ * How long after a fulfilled payment a second successful charge for the same
+ * vehicle is treated as an accidental duplicate rather than a real repeat purchase.
+ *
+ * Observed duplicates land within ~90 seconds (user with several checkout tabs
+ * open, or switching gateway mid-flow). A genuine re-renewal of the same vehicle
+ * is months apart, so a day of cover is generous without catching real purchases.
+ */
+const DUPLICATE_CHARGE_WINDOW_MS = Number(process.env.DUPLICATE_CHARGE_WINDOW_MS) || 24 * 60 * 60 * 1000;
+
+/**
+ * Detect a second successful charge for a vehicle that has ALREADY been fulfilled.
+ *
+ * The init-time guard only abandons *pending* rows, and the RPC's uniqueness is per
+ * transaction (`renewal_orders_transaction_unique`), so N distinct references for
+ * one car each pass both checks. On 2026-05-14 one customer was charged 3× ₦5,000
+ * in 90 seconds across two gateways for a single ₦5,000 renewal.
+ *
+ * Returns { fulfilled, siblingCount } — `fulfilled` is the order that already
+ * covered this vehicle, or null. Deliberately conservative: if the earlier payment
+ * never produced an order, this one is allowed through, because it may be the only
+ * fulfilment the customer gets. `siblingCount` lets the caller flag that case for
+ * review rather than losing it.
+ */
+async function findAlreadyFulfilledOrder(supabaseAdmin, tx) {
+  const none = { fulfilled: null, siblingCount: 0 };
+  if (!tx?.car_id || !tx?.user_id) return none;
+
+  const since = new Date(Date.now() - DUPLICATE_CHARGE_WINDOW_MS).toISOString();
+
+  const { data: earlier } = await supabaseAdmin
+    .from('payment_transactions')
+    .select('id, reference, created_at')
+    .eq('user_id', tx.user_id)
+    .eq('car_id', tx.car_id)
+    .eq('payment_type', tx.payment_type)
+    .eq('status', PAYMENT_STATUS.SUCCESSFUL)
+    .neq('reference', tx.reference)
+    .gte('created_at', since);
+
+  if (!earlier?.length) return none;
+
+  // Only a charge whose sibling actually produced an order is a duplicate. Without
+  // this, a retry after a genuinely failed fulfilment would be silently swallowed.
+  const { data: order } = await supabaseAdmin
+    .from('renewal_orders')
+    .select('id, order_number')
+    .in('transaction_id', earlier.map(t => t.id))
+    .limit(1)
+    .maybeSingle();
+
+  return { fulfilled: order || null, siblingCount: earlier.length };
+}
+
 export async function processPaymentSuccess({
   reference,
   status,
@@ -403,6 +457,67 @@ export async function processPaymentSuccess({
   renewalState = null
 }) {
   const supabaseAdmin = getSupabaseAdmin();
+
+  // ── Duplicate-charge guard ──────────────────────────────────────────────────
+  // The money has already left the customer's account, so this never rejects the
+  // payment — recording it is what makes a refund possible. What it prevents is a
+  // SECOND order being created and the expiry being extended twice for one renewal.
+  if (status === PAYMENT_STATUS.SUCCESSFUL) {
+    const { data: tx } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, reference, user_id, car_id, payment_type, amount, status')
+      .eq('reference', reference)
+      .maybeSingle();
+
+    if (tx && tx.status !== PAYMENT_STATUS.SUCCESSFUL) {
+      const { fulfilled, siblingCount } = await findAlreadyFulfilledOrder(supabaseAdmin, tx);
+
+      // A burst that produced no order yet is still allowed through — it may be the
+      // customer's only fulfilment — but it must not pass silently, because one of
+      // the burst will end up an orphan charge nobody refunds.
+      if (!fulfilled && siblingCount > 0) {
+        logWarn('[Payment] Multiple successful charges for one vehicle — REVIEW', {
+          reference,
+          userId: tx.user_id,
+          carId: tx.car_id,
+          otherSuccessfulCharges: siblingCount,
+          note: 'Allowed through: no order exists yet for this vehicle.',
+        });
+      }
+
+      if (fulfilled) {
+        // Mark it received and tag it, rather than running the order-creating RPC.
+        await supabaseAdmin
+          .from('payment_transactions')
+          .update({
+            status: PAYMENT_STATUS.SUCCESSFUL,
+            channel: channel || null,
+            authorization_code: authorization_code || null,
+            paid_at: paid_at || new Date().toISOString(),
+            cancellation_reason: 'duplicate_charge',
+            updated_at: new Date().toISOString()
+          })
+          .eq('reference', reference);
+
+        logWarn('[Payment] Duplicate charge detected — REFUND REQUIRED', {
+          reference,
+          userId: tx.user_id,
+          carId: tx.car_id,
+          amount_naira: Number(tx.amount || 0) / 100,
+          alreadyFulfilledBy: fulfilled.order_number,
+        });
+
+        return {
+          transactionId: tx.id,
+          orderId: null,
+          alreadyProcessed: true,
+          duplicateCharge: true,
+          refundDue: true,
+          fulfilledByOrder: fulfilled.order_number,
+        };
+      }
+    }
+  }
 
   const { data, error } = await supabaseAdmin.rpc('process_payment_success', {
     p_reference: reference,
