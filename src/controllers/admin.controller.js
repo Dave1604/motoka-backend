@@ -178,19 +178,31 @@ export const listUsers = async (req, res) => {
       return res.status(400).json({ status: false, message: 'Failed to retrieve users' });
     }
     
+    // Email comes off the profile row we already loaded. Only profiles missing
+    // an email fall back to the Auth API — previously EVERY row on the page hit
+    // auth.admin.getUserById(), i.e. one extra HTTP call per user per page load.
     const emailMap = new Map();
-    
+
     if (profiles && profiles.length > 0) {
-      const userFetches = profiles.map(profile => 
-        supabaseAdmin.auth.admin.getUserById(profile.id)
-          .then(({ data }) => ({ id: profile.id, email: data?.user?.email }))
-          .catch(() => ({ id: profile.id, email: null }))
-      );
-      
-      const userResults = await Promise.all(userFetches);
-      userResults.forEach(result => {
-        if (result.email) emailMap.set(result.id, result.email);
+      const needsLookup = [];
+
+      profiles.forEach(profile => {
+        if (profile.email) emailMap.set(profile.id, profile.email);
+        else needsLookup.push(profile.id);
       });
+
+      if (needsLookup.length > 0) {
+        const userResults = await Promise.all(
+          needsLookup.map(id =>
+            supabaseAdmin.auth.admin.getUserById(id)
+              .then(({ data }) => ({ id, email: data?.user?.email }))
+              .catch(() => ({ id, email: null }))
+          )
+        );
+        userResults.forEach(result => {
+          if (result.email) emailMap.set(result.id, result.email);
+        });
+      }
     }
 
     const userIds = profiles.map(p => p.id);
@@ -374,7 +386,8 @@ export const suspendUser = async (req, res) => {
     const { reason } = req.body;
     const supabaseAdmin = getSupabaseAdmin();
     
-    if (userId === req.user.id) {
+    // authenticateAdmin sets req.admin; req.user is the legacy shape kept as a fallback
+    if (userId === (req.admin?.id || req.user?.id)) {
       return response.error(res, 'Cannot suspend your own account');
     }
     
@@ -560,25 +573,30 @@ export const listCars = async (req, res) => {
     if (userIds.length > 0) {
       const { data: profiles } = await supabaseAdmin
         .from('profiles')
-        .select('id, first_name, last_name, user_id')
+        .select('id, first_name, last_name, user_id, email')
         .in('id', userIds);
-      
+
       if (profiles) {
         profiles.forEach(profile => {
           profilesMap.set(profile.id, profile);
+          if (profile.email) emailMap.set(profile.id, profile.email);
         });
       }
-      
-      const userFetches = userIds.map(userId => 
-        supabaseAdmin.auth.admin.getUserById(userId)
-          .then(({ data }) => ({ id: userId, email: data?.user?.email }))
-          .catch(() => ({ id: userId, email: null }))
-      );
-      
-      const userResults = await Promise.all(userFetches);
-      userResults.forEach(result => {
-        if (result.email) emailMap.set(result.id, result.email);
-      });
+
+      // Auth API only for owners whose profile row has no email on it
+      const missing = userIds.filter(id => !emailMap.has(id));
+      if (missing.length > 0) {
+        const userResults = await Promise.all(
+          missing.map(userId =>
+            supabaseAdmin.auth.admin.getUserById(userId)
+              .then(({ data }) => ({ id: userId, email: data?.user?.email }))
+              .catch(() => ({ id: userId, email: null }))
+          )
+        );
+        userResults.forEach(result => {
+          if (result.email) emailMap.set(result.id, result.email);
+        });
+      }
     }
     
     const formattedCars = cars.map(car => {
@@ -796,18 +814,27 @@ async function fetchUserDetails(supabaseAdmin, userIds) {
 
   const { data: profiles } = await supabaseAdmin
     .from('profiles')
-    .select('id, first_name, last_name, phone_number')
+    .select('id, first_name, last_name, phone_number, email')
     .in('id', userIds);
 
-  (profiles || []).forEach(p => profileMap.set(p.id, p));
+  (profiles || []).forEach(p => {
+    profileMap.set(p.id, p);
+    if (p.email) emailMap.set(p.id, p.email);
+  });
 
-  const emailFetches = userIds.map(uid =>
-    supabaseAdmin.auth.admin.getUserById(uid)
-      .then(({ data }) => ({ id: uid, email: data?.user?.email }))
-      .catch(() => ({ id: uid, email: null }))
-  );
-  const emailResults = await Promise.all(emailFetches);
-  emailResults.forEach(r => { if (r.email) emailMap.set(r.id, r.email); });
+  // Only ids with no email on the profile row need the Auth API — this used to
+  // fire one getUserById per id on every list render.
+  const missing = userIds.filter(uid => !emailMap.has(uid));
+  if (missing.length > 0) {
+    const emailResults = await Promise.all(
+      missing.map(uid =>
+        supabaseAdmin.auth.admin.getUserById(uid)
+          .then(({ data }) => ({ id: uid, email: data?.user?.email }))
+          .catch(() => ({ id: uid, email: null }))
+      )
+    );
+    emailResults.forEach(r => { if (r.email) emailMap.set(r.id, r.email); });
+  }
 
   return { profileMap, emailMap };
 }
@@ -1046,6 +1073,80 @@ export const getOrderDetails = async (req, res) => {
 };
 
 // ─── Update Order Status ──────────────────────────────────────────────────────
+/**
+ * POST /admin/orders/:orderNumber/reopen
+ *
+ * Undo an accidental cancellation.
+ *
+ * Cancelling used to be a one-way door: `completeOrder()` hard-rejects cancelled
+ * orders, so there was no supported route back. In May 2026 an order was
+ * cancelled by mistake after the customer's document had actually been processed
+ * and delivered — the car's expiry was never advanced, and they sat on the
+ * renewals list as 909 days overdue for three months.
+ *
+ * Reopening returns the order to `pending` so it can be completed normally (which
+ * advances the expiry properly). It does NOT complete the order itself — that
+ * stays a deliberate second step.
+ */
+export const reopenOrder = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const { orderNumber } = req.params;
+    const { reason } = req.body || {};
+
+    const { data: order, error: fetchError } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('id, order_number, status')
+      .eq('order_number', orderNumber)
+      .single();
+
+    if (fetchError || !order) {
+      return res.status(404).json({ status: false, message: 'Order not found' });
+    }
+
+    if (order.status !== 'cancelled') {
+      return res.status(409).json({
+        status: false,
+        message: `Only cancelled orders can be reopened (this one is ${order.status})`,
+      });
+    }
+
+    const note = `Reopened${reason ? `: ${reason}` : ''} (was cancelled)`;
+
+    const { error: updateError } = await supabaseAdmin
+      .from('renewal_orders')
+      .update({
+        status: 'pending',
+        cancelled_at: null,
+        rejection_reason: null,
+        processing_notes: note,
+        assigned_to: req.admin?.id || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', order.id);
+
+    if (updateError) {
+      logError('Reopen order', updateError);
+      return response.serverError(res, 'Failed to reopen order');
+    }
+
+    logInfo('[Admin] Order reopened', {
+      orderNumber,
+      adminId: req.admin?.id || null,
+      reason: reason || null,
+    });
+
+    return response.success(
+      res,
+      { order_number: orderNumber, status: 'pending' },
+      'Order reopened. Set it to Completed to finish the renewal and update the expiry date.'
+    );
+  } catch (error) {
+    logError('Reopen order', error);
+    return response.serverError(res, 'Failed to reopen order');
+  }
+};
+
 export const updateOrderStatus = async (req, res) => {
   try {
     const { orderNumber } = req.params;
@@ -1249,15 +1350,6 @@ export const listTransactions = async (req, res) => {
     if (search) query = query.ilike('reference', `%${search}%`);
     if (hideDuplicates) query = query.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init');
 
-    const { data: transactions, count, error } = await query;
-    if (error) {
-      logError('List transactions', error);
-      return res.status(500).json({ status: false, message: 'Failed to retrieve transactions' });
-    }
-
-    const userIds = [...new Set((transactions || []).map(t => t.user_id).filter(Boolean))];
-    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
-
     // Summary: HEAD-only count queries (no row transfer) + targeted sums on the
     // smaller `successful` / `pending` subsets. The previous implementation
     // streamed every row in payment_transactions on every page render — fine at
@@ -1267,6 +1359,11 @@ export const listTransactions = async (req, res) => {
     // Build each query as `from().select(...)` first, then apply filters.
     // Each query also respects the `hideDuplicates` flag so the cards match
     // what's visible in the table — admin sees the same numbers as the rows.
+    //
+    // These aggregates depend only on the filters, not on the page of rows, so
+    // they are kicked off alongside the main query rather than after it. The
+    // request used to make three sequential round trips to Supabase (rows →
+    // user details → summary); overlapping these two removes one of them.
     const applyDupFilter = (q) =>
       hideDuplicates ? q.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init') : q;
     const headCount = (filterFn) => {
@@ -1281,17 +1378,7 @@ export const listTransactions = async (req, res) => {
       if (filterFn) q = filterFn(q);
       return q;
     };
-    const [
-      { count: cntTotal },
-      { count: cntSuccessful },
-      { count: cntPending },
-      { count: cntFailed },
-      { count: cntAbandoned },
-      { count: cntPaystack },
-      { count: cntMonicredit },
-      { data: successfulAmounts },
-      { data: pendingAmounts },
-    ] = await Promise.all([
+    const summaryPromise = Promise.all([
       headCount(),
       headCount(q => q.eq('status', 'successful')),
       headCount(q => q.eq('status', 'pending')),
@@ -1302,6 +1389,30 @@ export const listTransactions = async (req, res) => {
       sumQuery(q => q.eq('status', 'successful')),
       sumQuery(q => q.eq('status', 'pending')),
     ]);
+
+    const { data: transactions, count, error } = await query;
+    if (error) {
+      logError('List transactions', error);
+      // The summary is already in flight — swallow its rejection so an early
+      // return here can't surface as an unhandled promise rejection.
+      summaryPromise.catch(() => {});
+      return res.status(500).json({ status: false, message: 'Failed to retrieve transactions' });
+    }
+
+    const userIds = [...new Set((transactions || []).map(t => t.user_id).filter(Boolean))];
+    const { profileMap, emailMap } = await fetchUserDetails(supabaseAdmin, userIds);
+
+    const [
+      { count: cntTotal },
+      { count: cntSuccessful },
+      { count: cntPending },
+      { count: cntFailed },
+      { count: cntAbandoned },
+      { count: cntPaystack },
+      { count: cntMonicredit },
+      { data: successfulAmounts },
+      { data: pendingAmounts },
+    ] = await summaryPromise;
 
     const sumKobo = (rows) => (rows || []).reduce((s, r) => s + parseFloat(r.amount || 0), 0);
     const receivedKobo = sumKobo(successfulAmounts);
@@ -2091,9 +2202,29 @@ export const markTransactionFailed = async (req, res) => {
  * Processed in batches of 10 with a 1 s delay between batches to stay
  * well within Twilio's WhatsApp throughput limits.
  */
+/**
+ * Live broadcasts are off unless ADMIN_BROADCAST_ENABLED=true.
+ *
+ * On 2026-08-14 a single click sent 109 WhatsApp messages, every one of which
+ * failed downstream because the sender is offline — and the API reported success
+ * for all of them. Until delivery outcomes are recorded, a live send is a shot in
+ * the dark, so the admin UI offers dry runs only and the endpoints refuse the
+ * rest. Dry runs are unaffected.
+ */
+function liveBroadcastBlocked(res, dryRun) {
+  if (dryRun || process.env.ADMIN_BROADCAST_ENABLED === 'true') return false;
+  return response.error(
+    res,
+    'Live broadcasts are disabled. Set ADMIN_BROADCAST_ENABLED=true to re-enable once delivery tracking is in place.'
+  );
+}
+
 export async function broadcastAddCarReminder(req, res) {
   const supabase = getSupabaseAdmin();
   const dryRun = req.query.dry_run === 'true';
+
+  const blocked = liveBroadcastBlocked(res, dryRun);
+  if (blocked) return blocked;
 
   try {
     // Step 1: collect user_ids that already have at least one active car
@@ -2202,6 +2333,9 @@ export async function triggerExpiryReminders(req, res) {
   const supabase = getSupabaseAdmin();
   const dryRun = req.query.dry_run === 'true';
   const specificDays = req.query.days ? parseInt(req.query.days) : null;
+
+  const blocked = liveBroadcastBlocked(res, dryRun);
+  if (blocked) return blocked;
 
   try {
     const REMINDER_WINDOWS = specificDays ? [specificDays] : [30, 14, 7, 1];
