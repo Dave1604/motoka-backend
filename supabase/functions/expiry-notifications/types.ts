@@ -54,6 +54,17 @@ export interface NotificationTask {
   daysUntilExpiry: number;
 }
 
+/**
+ * One vehicle's entry inside a customer's digest email. A digest is simply the
+ * set of that customer's NotificationTasks due in the same run.
+ */
+export interface DigestItem {
+  car: Car;
+  notificationType: NotificationType;
+  expiryDate: Date;
+  daysUntilExpiry: number;
+}
+
 export interface EmailResult {
   success: boolean;
   emailId?: string;

@@ -44,9 +44,12 @@ export const CONFIG = {
 
   // Logging
   LOG_LEVEL: 'info' as const,    // 'debug' | 'info' | 'warn' | 'error'
-  
+
   // Timezone
   TIMEZONE: 'UTC',               // All calculations in UTC
+
+  // Public app URL used for renewal links in emails
+  APP_URL: Deno.env.get('FRONTEND_URL') || 'https://app.motoka.ng',
 };
 
 // Type-safe access to config

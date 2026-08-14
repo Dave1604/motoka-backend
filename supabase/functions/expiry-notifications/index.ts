@@ -18,7 +18,14 @@ import {
 import { CarRepository } from './carRepository.ts';
 import { EmailService } from './emailService.ts';
 import { logger } from './logger.ts';
-import { NotificationTask, ProcessingResult } from './types.ts';
+import { NotificationTask, ProcessingResult, DigestItem, UserProfile } from './types.ts';
+
+/** One customer's set of due vehicles for this run — the unit of sending. */
+interface CustomerDigest {
+  userId: string;
+  profile: UserProfile;
+  items: DigestItem[];
+}
 
 serve(async (req) => {
   const startTime = Date.now();
@@ -168,9 +175,18 @@ serve(async (req) => {
       });
     }
 
-    // Step 4: Process in batches (rate limiting)
+    // Step 4: Group by customer, then process in batches (rate limiting).
+    // One customer receives one email per run no matter how many of their
+    // vehicles are due — see buildDigests.
+    const digests = buildDigests(tasks);
+
+    logger.info(`👥 Grouped into ${digests.length} customer digest(s)`, {
+      customers: digests.length,
+      vehicles: tasks.length,
+    });
+
     const result = await processBatches(
-      tasks,
+      digests,
       repository,
       emailService,
       executionId
@@ -213,13 +229,15 @@ serve(async (req) => {
  * of 50 with 1-second delays between batches.
  */
 async function processBatches(
-  tasks: NotificationTask[],
+  digests: CustomerDigest[],
   repository: CarRepository,
   emailService: EmailService,
   executionId: string
 ): Promise<ProcessingResult> {
+  const totalCars = digests.reduce((sum, d) => sum + d.items.length, 0);
+
   const result: ProcessingResult = {
-    totalCars: tasks.length,
+    totalCars,
     emailsSent: 0,
     emailsFailed: 0,
     alreadySent: 0,
@@ -228,47 +246,43 @@ async function processBatches(
   };
 
   const batchSize = CONFIG.RATE_LIMIT.BATCH_SIZE;
-  const totalBatches = Math.ceil(tasks.length / batchSize);
+  const totalBatches = Math.ceil(digests.length / batchSize);
 
   // Process in batches to respect rate limits
   for (let batchNum = 0; batchNum < totalBatches; batchNum++) {
     const startIdx = batchNum * batchSize;
-    const endIdx = Math.min(startIdx + batchSize, tasks.length);
-    const batch = tasks.slice(startIdx, endIdx);
+    const endIdx = Math.min(startIdx + batchSize, digests.length);
+    const batch = digests.slice(startIdx, endIdx);
 
     logger.info(`📦 Processing batch ${batchNum + 1}/${totalBatches}`, {
       batchNumber: batchNum + 1,
       batchSize: batch.length,
-      total: tasks.length,
+      total: digests.length,
     });
 
-    // Process batch tasks concurrently
-    const batchPromises = batch.map(task =>
-      processTask(task, repository, emailService, executionId)
+    // Process batch digests concurrently
+    const batchPromises = batch.map(digest =>
+      processDigest(digest, repository, emailService, executionId)
     );
     const batchResults = await Promise.allSettled(batchPromises);
 
-    // Aggregate batch results
+    // Aggregate batch results. Counts are per email, not per car, so a customer
+    // with 12 due vehicles counts as one send — errors still name every car so
+    // nothing is lost when chasing a failure.
     for (let i = 0; i < batchResults.length; i++) {
-      const taskResult = batchResults[i];
-      const task = batch[i];
+      const digestResult = batchResults[i];
+      const digest = batch[i];
 
-      if (taskResult.status === 'fulfilled') {
-        if (taskResult.value.success) {
-          result.emailsSent++;
-        } else {
-          result.emailsFailed++;
-          result.errors.push({
-            carId: task.car.id,
-            error: taskResult.value.error || 'Unknown error',
-          });
-        }
+      if (digestResult.status === 'fulfilled' && digestResult.value.success) {
+        result.emailsSent++;
       } else {
         result.emailsFailed++;
-        result.errors.push({
-          carId: task.car.id,
-          error: taskResult.reason?.message || 'Task rejected',
-        });
+        const error = digestResult.status === 'fulfilled'
+          ? (digestResult.value.error || 'Unknown error')
+          : (digestResult.reason?.message || 'Digest rejected');
+        for (const item of digest.items) {
+          result.errors.push({ carId: item.car.id, error });
+        }
       }
     }
 
@@ -282,6 +296,36 @@ async function processBatches(
   }
 
   return result;
+}
+
+/**
+ * Collapse per-car tasks into one digest per customer.
+ *
+ * Keyed on user_id rather than email so two accounts sharing an address are not
+ * silently merged into one send.
+ */
+function buildDigests(tasks: NotificationTask[]): CustomerDigest[] {
+  const byUser = new Map<string, CustomerDigest>();
+
+  for (const task of tasks) {
+    const key = task.car.user_id;
+    const existing = byUser.get(key);
+
+    const item: DigestItem = {
+      car: task.car,
+      notificationType: task.notificationType,
+      expiryDate: task.expiryDate,
+      daysUntilExpiry: task.daysUntilExpiry,
+    };
+
+    if (existing) {
+      existing.items.push(item);
+    } else {
+      byUser.set(key, { userId: key, profile: task.profile, items: [item] });
+    }
+  }
+
+  return [...byUser.values()];
 }
 
 // ─── WhatsApp helper (Deno-native, no npm) ───────────────────────────────────
@@ -377,80 +421,88 @@ async function sendExpiryReminderWhatsApp(
 }
 
 /**
- * Process a single notification task
- * 
- * Sends email and records in history for idempotency.
+ * Process one customer's digest
+ *
+ * Sends a single email covering all of their due vehicles, then records history
+ * for each vehicle individually so idempotency stays per (car, stage, expiry) —
+ * exactly as before. History is only written after a successful send, so a
+ * failed digest is retried in full on the next run rather than leaving some
+ * vehicles marked as notified.
  */
-async function processTask(
-  task: NotificationTask,
+async function processDigest(
+  digest: CustomerDigest,
   repository: CarRepository,
   emailService: EmailService,
   executionId: string
 ): Promise<{ success: boolean; error?: string }> {
+  const { profile, items } = digest;
+  const primary = items[0];
+
   try {
-    // Send email with retry logic
-    const emailResult = await emailService.sendExpiryNotification(
-      task.car,
-      task.profile,
-      task.notificationType,
-      task.daysUntilExpiry
-    );
+    const emailResult = await emailService.sendExpiryDigest(profile, items);
 
     if (!emailResult.success) {
-      // Log error to database
-      await repository.logError('EMAIL_SEND_FAILED', emailResult.error || 'Unknown error', {
-        carId: task.car.id,
-        userId: task.car.user_id,
-        notificationType: task.notificationType,
-        functionName: 'sendExpiryNotification',
-        executionId,
-        retryCount: emailResult.retryCount,
-      });
-
+      for (const item of items) {
+        await repository.logError('EMAIL_SEND_FAILED', emailResult.error || 'Unknown error', {
+          carId: item.car.id,
+          userId: item.car.user_id,
+          notificationType: item.notificationType,
+          functionName: 'sendExpiryDigest',
+          executionId,
+          retryCount: emailResult.retryCount,
+        });
+      }
       return { success: false, error: emailResult.error };
     }
 
-    // WhatsApp expiry reminder — fire alongside email, does NOT replace it
-    // Uses the profile.phone field; silently skips if missing or feature-flagged off
-    // PAYMENT_CANCEL_URL already points to the renewal page (e.g. https://app.motoka.ng/licenses/renew)
+    // WhatsApp expiry reminder — fire alongside email, does NOT replace it.
+    // One message per customer using their most urgent vehicle; the approved
+    // template only has room for a single registration number.
     const renewalUrl =
       Deno.env.get('PAYMENT_CANCEL_URL') ||
       `${Deno.env.get('FRONTEND_URL') || 'https://app.motoka.ng'}/licenses/renew`;
+    const mostUrgent = items.reduce(
+      (worst, item) => (item.daysUntilExpiry < worst.daysUntilExpiry ? item : worst),
+      primary
+    );
     sendExpiryReminderWhatsApp(
-      (task.profile as any).phone_number || '',
-      task.profile.first_name || 'User',
-      task.car.registration_no || '',
-      task.daysUntilExpiry,
-      task.expiryDate,
+      (profile as any).phone_number || '',
+      profile.first_name || 'User',
+      mostUrgent.car.registration_no || '',
+      mostUrgent.daysUntilExpiry,
+      mostUrgent.expiryDate,
       renewalUrl
     ); // intentionally not awaited — must not block or fail the main email flow
 
-    // Record in history (transaction) for idempotency
-    await repository.recordNotification(
-      task.car.id,
-      task.car.user_id,
-      task.notificationType,
-      task.expiryDate,
-      task.profile.email,
-      emailResult.emailId
-    );
+    // Record every vehicle covered by this email
+    for (const item of items) {
+      await repository.recordNotification(
+        item.car.id,
+        item.car.user_id,
+        item.notificationType,
+        item.expiryDate,
+        profile.email,
+        emailResult.emailId
+      );
+    }
 
     return { success: true };
   } catch (error) {
     const errorMessage = (error as Error).message;
     const errorStack = (error as Error).stack;
 
-    logger.error('❌ Task processing failed', {
-      carId: task.car.id,
+    logger.error('❌ Digest processing failed', {
+      userId: digest.userId,
+      vehicles: items.length,
       error: errorMessage,
     });
 
     await repository.logError('TASK_PROCESSING_ERROR', errorMessage, {
-      carId: task.car.id,
-      userId: task.car.user_id,
-      notificationType: task.notificationType,
+      carId: primary.car.id,
+      userId: primary.car.user_id,
+      notificationType: primary.notificationType,
       errorStack,
-      functionName: 'processTask',
+      functionName: 'processDigest',
       executionId,
     });
 
