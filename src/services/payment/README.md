@@ -1,41 +1,44 @@
 # Payment System
 
-## Changes
+## Monipay (primary)
 
-### Gateway Architecture
-- **Gateway abstraction layer** (`gateway/`) - Unified interface for multiple payment providers
-- **Gateway manager** - Handles failover, circuit breakers, and health monitoring
-- **Gateway factory** - Creates gateway instances based on configuration
+Motoka initializes and verifies payments with [Monipay](https://monipay.ng/api-docs). Do not invent upstream URLs.
 
-### Monicredit Integration
-- **Monicredit service** (`monicredit/`) - Full implementation of Monicredit payment gateway
-- **Monicredit adapter** - Normalizes Monicredit responses to standard format
-- **Webhook verification** (`middleware/verifyMonicreditWebhook.js`) - Validates Monicredit webhook signatures
+| Purpose | Value |
+| --- | --- |
+| API | `https://api.monipay.ng` |
+| Checkout | `https://checkout.monipay.ng` |
+| Inline JS | `https://js.monipay.ng/v2/inline.js` |
+| Initialize | `POST /transaction/initialize` (Bearer public or private key) |
+| Verify | `GET /transaction/verify/{reference}` (**private key**) |
+| Webhook | `POST /api/webhooks/monipay` — header `x-monipay-signature`, HMAC-SHA512 of **raw body** |
 
-### Paystack Refactoring
-- **Paystack adapter** (`paystack/`) - Extracted into adapter pattern for consistency
+Env vars (never commit secrets):
 
-### Validation Layer
-- **Amount validator** - Prevents payment amount tampering
-- **Input sanitizer** - Cleans user inputs before processing
-- **Response validator** - Validates gateway responses
+```
+MONIPAY_PUBLIC_KEY=pub_test_…
+MONIPAY_SECRET_KEY=pri_test_…
+MONIPAY_WEBHOOK_SECRET=          # optional; defaults to MONIPAY_SECRET_KEY
+MONIPAY_CALLBACK_URL=https://app.example.com/payment/monipay/callback
+PRIMARY_GATEWAY=monipay
+```
 
-### Metrics & Monitoring
-- **Metrics service** - Tracks transaction success rates, processing times, gateway performance
-- **Health monitor** - Monitors gateway availability and triggers failover
+Amounts are **kobo integers** (₦500.00 → `50000`). Motoka minimum is ₦100 (`10000` kobo).
 
-### Payment Success Processing
-- **Payment success service** - Handles post-payment actions (emails, notifications, subscriptions)
+Happy path: initialize → redirect to `authorization_url` or Inline JS `resumeTransaction(access_code)` → server `GET /transaction/verify/{reference}` → fulfill only when status is paid (`success` / `APPROVED`) **and** amount matches. `charge.success` webhooks use the same fulfillment, idempotently.
 
-### Controller Refactoring
-- Split `payment.controller.js` into focused controllers:
-  - `order.controller.js` - Order management
-  - `payment-init.controller.js` - Payment initialization
-  - `payment-verification.controller.js` - Payment verification
-  - `payment-status.controller.js` - Status checks
-  - `webhook.controller.js` - Webhook handling
-  - `subscription.controller.js` - Subscription management
+Merchant routes (this API): `POST /api/payments/initialize`, `GET /api/payments/verify/:reference`, `POST /api/payment/verify-payment/:reference`, `POST /api/webhooks/monipay`.
 
-## Configuration
+Test cards / bank transfer: use the current notes in the Monipay dashboard.
 
-Set `PRIMARY_GATEWAY` and `FALLBACK_GATEWAY` in environment variables. See `env.example` for Monicredit configuration.
+## Gateway architecture
+
+- **Gateway abstraction** (`gateway/`) — Paystack + Monipay (Monicredit adapter kept for historical rows)
+- Incoming `monicredit` on new inits is mapped to `monipay`
+- Set `PRIMARY_GATEWAY` / `FALLBACK_GATEWAY` in environment variables. See `.env.example`.
+
+### Paystack
+Alternate hosted checkout (`payment_gateway: paystack`).
+
+### Monicredit (legacy)
+Existing `monicredit` transactions can still be verified. New payments do not initialize Monicredit.

@@ -175,6 +175,7 @@ describe('CORS Configuration', () => {
       const config = getCorsConfig();
       
       expect(config.allowedHeaders).toContain('x-monicredit-signature');
+      expect(config.allowedHeaders).toContain('x-monipay-signature');
       expect(config.allowedHeaders).toContain('x-signature');
       expect(config.allowedHeaders).toContain('x-paystack-signature');
       expect(config.allowedHeaders).toContain('Idempotency-Key');

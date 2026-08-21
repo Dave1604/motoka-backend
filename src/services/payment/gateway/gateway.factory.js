@@ -1,5 +1,6 @@
 import { PAYMENT_GATEWAY } from '../../../constants/payment.constants.js';
 import { MonicreditAdapter } from '../monicredit/index.js';
+import { MonipayAdapter } from '../monipay/index.js';
 import { PaystackAdapter } from '../paystack/paystack.adapter.js';
 import { GatewayError } from './gateway.interface.js';
 
@@ -15,7 +16,7 @@ export class GatewayFactory {
   /**
    * Get gateway adapter by name
    * 
-   * @param {string} gatewayName - Gateway name ('paystack' or 'monicredit')
+   * @param {string} gatewayName - Gateway name ('paystack' or 'monipay')
    * @returns {Object} Gateway adapter instance
    * @throws {GatewayError} If gateway is not supported
    */
@@ -25,7 +26,10 @@ export class GatewayFactory {
     switch (normalizedName) {
       case PAYMENT_GATEWAY.PAYSTACK.toLowerCase():
         return PaystackAdapter;
-        
+
+      case PAYMENT_GATEWAY.MONIPAY.toLowerCase():
+        return MonipayAdapter;
+
       case PAYMENT_GATEWAY.MONICREDIT.toLowerCase():
         return MonicreditAdapter;
         
@@ -50,10 +54,9 @@ export class GatewayFactory {
       // Lazy import to avoid circular dependency
       const { gatewayManager } = await import('./gateway-manager.js');
       // Try to get available gateway with failover
-      return gatewayManager.getAvailableGateway(PAYMENT_GATEWAY.MONICREDIT);
+      return gatewayManager.getAvailableGateway(PAYMENT_GATEWAY.MONIPAY);
     } catch (error) {
-      // Fallback to direct gateway if manager fails
-      return this.getGateway(PAYMENT_GATEWAY.MONICREDIT);
+      return this.getGateway(PAYMENT_GATEWAY.MONIPAY);
     }
   }
 
@@ -93,7 +96,7 @@ export class GatewayFactory {
   static getSupportedGateways() {
     return [
       PAYMENT_GATEWAY.PAYSTACK,
-      PAYMENT_GATEWAY.MONICREDIT
+      PAYMENT_GATEWAY.MONIPAY,
     ];
   }
 }

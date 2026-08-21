@@ -11,14 +11,12 @@ import {
   updateTransactionStatus,
   getTransactionByReference
 } from '../transaction.service.js';
-import {
-  getOrderById,
-  findRecentActiveOrder
-} from '../order.service.js';
+import { getOrderById } from '../order.service.js';
 import { validatePaymentAmount, AmountValidationError } from '../validation/amount.validator.js';
 import { PaymentSuccessService } from '../payment-success.service.js';
 import { logPaymentAudit } from '../audit.service.js';
 import { MonicreditAdapter } from './index.js';
+import { verifyGuestPayment } from '../../guest/guestRenewal.service.js';
 
 /**
  * Monicredit Pending Transaction Poller
@@ -152,20 +150,20 @@ class MonicreditPoller {
 
       if (!pendings || pendings.length === 0) {
         logDebug('[Monicredit Poller] No pending Monicredit txns to verify');
-        return;
-      }
-
-      logDebug('[Monicredit Poller] Verifying batch', { count: pendings.length });
-
-      for (const txn of pendings) {
-        await this.processTxn(txn).catch(err => {
-          this.stats.errors++;
-          logError('[Monicredit Poller] processTxn failed', {
-            reference: txn.reference,
-            error: err.message
+      } else {
+        logDebug('[Monicredit Poller] Verifying batch', { count: pendings.length });
+        for (const txn of pendings) {
+          await this.processTxn(txn).catch(err => {
+            this.stats.errors++;
+            logError('[Monicredit Poller] processTxn failed', {
+              reference: txn.reference,
+              error: err.message
+            });
           });
-        });
+        }
       }
+
+      await this.processGuestOrders(supabaseAdmin, cutoff);
     } finally {
       this.isTicking = false;
     }
@@ -260,34 +258,11 @@ class MonicreditPoller {
         ? ORDER_TYPE.PLATE_NUMBER
         : (isSubscription ? ORDER_TYPE.RENEWAL_AUTO : ORDER_TYPE.RENEWAL_MANUAL);
 
-    const duplicateOrder = await findRecentActiveOrder({
-      carId: txn.car_id,
-      userId: txn.user_id,
-      paymentType: orderType
-    });
-    if (duplicateOrder) {
-      logError('[Monicredit Poller] Recent active order exists — refusing duplicate credit', {
-        reference: txn.reference,
-        car_id: txn.car_id,
-        existing_order: duplicateOrder.order_number,
-        existing_order_status: duplicateOrder.status,
-        existing_order_age_minutes: Math.round((Date.now() - new Date(duplicateOrder.created_at).getTime()) / 60000)
-      });
-      // Mark the txn as failed since the other order has already fulfilled the purchase
-      await updateTransactionStatus(txn.reference, { status: PAYMENT_STATUS.FAILED });
-      return;
-    }
-
     const paymentScheduleIds =
       metadata.paymentScheduleId || metadata.payment_schedule_id || metadata.selected_items || [];
 
-    await updateTransactionStatus(txn.reference, {
-      status: PAYMENT_STATUS.SUCCESSFUL,
-      channel: verifyResult.channel || 'bank_transfer',
-      authorization_code: null,
-      paid_at: verifyResult.date_paid || new Date().toISOString()
-    });
-
+    // Do not mark successful before the RPC — process_payment_success only
+    // fulfills pending rows. Pre-marking takes the customer's money with no order.
     const processResult = await processPaymentSuccess({
       reference: txn.reference,
       status: PAYMENT_STATUS.SUCCESSFUL,
@@ -346,6 +321,46 @@ class MonicreditPoller {
       orderId: processResult.orderId,
       amount_kobo: updatedTxn.amount
     });
+  }
+
+  async processGuestOrders(supabaseAdmin, cutoff) {
+    const { data: guests, error } = await supabaseAdmin
+      .from('guest_renewal_orders')
+      .select('id, payment_reference, payment_gateway, payment_status, created_at')
+      .eq('payment_status', 'pending_payment')
+      .gte('created_at', cutoff)
+      .order('created_at', { ascending: true })
+      .limit(this.batchSize);
+
+    if (error) {
+      this.stats.errors++;
+      logError('[Monicredit Poller] Failed to query pending guest orders', { error: error.message });
+      return;
+    }
+    if (!guests?.length) return;
+
+    for (const order of guests) {
+      try {
+        const result = await verifyGuestPayment(order.id, order.payment_reference);
+        if (result.status === 'payment_success') {
+          this.stats.approved++;
+          logInfo('[Monicredit Poller] Guest order marked paid', {
+            guestOrderId: order.id,
+            reference: order.payment_reference,
+            gateway: order.payment_gateway,
+          });
+        } else if (result.status === 'payment_failed') {
+          this.stats.failed++;
+        }
+      } catch (err) {
+        if (err.statusCode === 410) continue;
+        this.stats.errors++;
+        logError('[Monicredit Poller] Guest verify failed', {
+          guestOrderId: order.id,
+          error: err.message,
+        });
+      }
+    }
   }
 }
 

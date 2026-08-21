@@ -62,7 +62,7 @@ function buildResendTroubleshootingHint(errorMessage = '') {
  * @param {string} [options.text] - Plain text content (optional)
  * @returns {Promise<Object>} Resend response
  */
-export async function sendEmail({ to, subject, html, text }) {
+export async function sendEmail({ to, subject, html, text, replyTo }) {
   try {
     const resend = getResend();
 
@@ -71,7 +71,8 @@ export async function sendEmail({ to, subject, html, text }) {
       to,
       subject,
       html,
-      text: text || undefined // Only include if provided
+      text: text || undefined,
+      ...(replyTo ? { replyTo } : {}),
     });
 
     if (error) {

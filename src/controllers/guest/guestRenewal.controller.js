@@ -57,9 +57,11 @@ export const initGuestRenewal = async (req, res) => {
     }
 
     // ── Validate payment gateway ─────────────────────────────────────────────
-    const gateway = payment_gateway?.toLowerCase() || PAYMENT_GATEWAY.MONICREDIT;
-    if (gateway !== PAYMENT_GATEWAY.MONICREDIT && gateway !== PAYMENT_GATEWAY.PAYSTACK) {
-      return response.error(res, 'payment_gateway must be "monicredit" or "paystack"', 400);
+    const rawGateway = payment_gateway?.toLowerCase();
+    let gateway = rawGateway || PAYMENT_GATEWAY.MONIPAY;
+    if (gateway === PAYMENT_GATEWAY.MONICREDIT) gateway = PAYMENT_GATEWAY.MONIPAY;
+    if (gateway !== PAYMENT_GATEWAY.MONIPAY && gateway !== PAYMENT_GATEWAY.PAYSTACK) {
+      return response.error(res, 'payment_gateway must be "monipay" or "paystack"', 400);
     }
 
     const frontendBaseUrl = process.env.FRONTEND_URL || 'http://localhost:5173';

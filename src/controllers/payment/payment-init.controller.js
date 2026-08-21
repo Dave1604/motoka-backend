@@ -9,6 +9,7 @@ import {
   createTransaction,
   updateTransactionWithPaystackInit,
   updateTransactionWithMonicreditInit,
+  updateTransactionWithMonipayInit,
   TransactionError
 } from '../../services/payment/transaction.service.js';
 import {
@@ -16,9 +17,10 @@ import {
 } from '../../services/payment/renewalItems.service.js';
 import {
   getAllStates,
-  getLGAsByState,
-  resolveStateAndLGA
+  getLGAsByState
 } from '../../services/location.service.js';
+import { quoteFromDeliveryFields, DeliveryQuoteError } from '../../services/courier/deliveryQuote.service.js';
+import { TerminalError } from '../../services/courier/terminal.service.js';
 import {
   buildPaymentMetadata,
   nairaToKobo
@@ -33,6 +35,7 @@ import {
 } from '../../constants/payment.constants.js';
 import { PaystackError } from '../../services/payment/paystack.service.js';
 import { MonicreditError } from '../../services/payment/monicredit/index.js';
+import { MonipayError } from '../../services/payment/monipay/index.js';
 import {
   getIdempotencyResponse,
   reserveIdempotencyKey,
@@ -131,13 +134,15 @@ export const getLGAs = async (req, res) => {
 export const getPaymentConfig = async (req, res) => {
   try {
     const publicKey = process.env.PAYSTACK_PUBLIC_KEY;
-    
-    if (!publicKey) {
+    const monipayPublicKey = process.env.MONIPAY_PUBLIC_KEY || null;
+
+    if (!publicKey && !monipayPublicKey) {
       return paymentResponse.error(res, 'Payment not configured', HTTP_STATUS.SERVER_ERROR);
     }
     
     return paymentResponse.success(res, {
-      public_key: publicKey,
+      public_key: publicKey || null,
+      monipay_public_key: monipayPublicKey,
       currency: 'NGN'
     }, 'Payment configuration retrieved');
   } catch (error) {
@@ -225,15 +230,17 @@ export const initializePayment = async (req, res) => {
     }
     
     let payment_gateway = rawPaymentGateway?.toLowerCase().trim() || null;
-    
+    if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
+      payment_gateway = PAYMENT_GATEWAY.MONIPAY;
+    }
     if (!payment_gateway ||
-        (payment_gateway !== PAYMENT_GATEWAY.PAYSTACK && payment_gateway !== PAYMENT_GATEWAY.MONICREDIT)) {
-      if (payment_gateway) {
-        logWarn('[Payment Init] Invalid gateway provided, defaulting to Monicredit', {
+        (payment_gateway !== PAYMENT_GATEWAY.PAYSTACK && payment_gateway !== PAYMENT_GATEWAY.MONIPAY)) {
+      if (rawPaymentGateway) {
+        logWarn('[Payment Init] Invalid gateway provided, defaulting to Monipay', {
           provided: rawPaymentGateway
         });
       }
-      payment_gateway = PAYMENT_GATEWAY.MONICREDIT;
+      payment_gateway = PAYMENT_GATEWAY.MONIPAY;
     }
     
     logDebug('[Payment Init] Request received', {
@@ -252,45 +259,20 @@ export const initializePayment = async (req, res) => {
       );
     }
 
-    // ── Delivery (only for car renewal payments) ─────────────────────────────
+    // ── Delivery (optional for renewal, plate, and driver license) ────────────
     let deliveryData = {};
     let hasDeliveryDetails = false;
-    let stateValidation = { valid: true, delivery_fee: 0 };
+    let deliveryQuote = null;
 
-    if (!isNonCarPayment) {
-      deliveryData = delivery_details || meta_data || {};
+    deliveryData = delivery_details || meta_data || {};
 
-      hasDeliveryDetails = !!(
-        deliveryData &&
-        (deliveryData.address || deliveryData.delivery_address || 
-         deliveryData.state || deliveryData.state_id || 
-         deliveryData.lga || deliveryData.lga_id || 
-         deliveryData.delivery_contact || deliveryData.contact)
-      );
-      
-      if (hasDeliveryDetails) {
-        const address = deliveryData.address || deliveryData.delivery_address;
-        const stateInput = deliveryData.state_id !== undefined ? deliveryData.state_id : deliveryData.state;
-        const lgaInput = deliveryData.lga_id !== undefined ? deliveryData.lga_id : deliveryData.lga;
-        const contact = deliveryData.contact || deliveryData.delivery_contact;
-        
-        if (!address || stateInput === undefined || stateInput === null || lgaInput === undefined || lgaInput === null || !contact) {
-          return paymentResponse.error(
-            res,
-            'Delivery details are incomplete. Provide address, state/state_id, lga/lga_id, and contact, or omit delivery details entirely.',
-            HTTP_STATUS.BAD_REQUEST
-          );
-        }
-        
-        stateValidation = await resolveStateAndLGA(stateInput, lgaInput);
-        if (!stateValidation.valid) {
-          return paymentResponse.error(res, stateValidation.error, HTTP_STATUS.BAD_REQUEST);
-        }
-        
-        deliveryData.state = stateValidation.stateCode || (typeof stateInput === 'string' ? stateInput : null);
-        deliveryData.lga = stateValidation.lgaName || (typeof lgaInput === 'string' ? lgaInput : null);
-      }
-    }
+    hasDeliveryDetails = !!(
+      deliveryData &&
+      (deliveryData.address || deliveryData.delivery_address || 
+       deliveryData.state || deliveryData.state_id || 
+       deliveryData.lga || deliveryData.lga_id || 
+       deliveryData.delivery_contact || deliveryData.contact)
+    );
 
     // ── Amount calculation ──────────────────────────────────────────────────
     let renewalAmount, deliveryFee, amount;
@@ -392,8 +374,33 @@ export const initializePayment = async (req, res) => {
       }
 
       renewalAmount = validation.total;
-      deliveryFee = stateValidation.delivery_fee;
+      deliveryFee = 0;
+      amount = renewalAmount;
+    }
+
+    if (hasDeliveryDetails) {
+      const purpose = isPlatePayment ? 'plate_number' : isDriverLicensePayment ? 'driver_license' : 'renewal';
+      try {
+        deliveryQuote = await quoteFromDeliveryFields(deliveryData, {
+          purpose,
+          selectedItems: isNonCarPayment ? [] : payment_schedule_id,
+        });
+      } catch (quoteError) {
+        if (quoteError instanceof DeliveryQuoteError || quoteError instanceof TerminalError) {
+          return paymentResponse.error(res, quoteError.message, quoteError.statusCode || HTTP_STATUS.BAD_REQUEST);
+        }
+        throw quoteError;
+      }
+      deliveryFee = deliveryQuote.fee_kobo;
       amount = renewalAmount + deliveryFee;
+      deliveryData.state = deliveryQuote.stateCode;
+      deliveryData.lga = deliveryQuote.lgaName;
+      deliveryData.address = deliveryQuote.address;
+      deliveryData.contact = deliveryQuote.contact;
+      deliveryData.estimated_weight_kg = deliveryQuote.weight_kg;
+    } else {
+      deliveryFee = 0;
+      amount = renewalAmount;
     }
     
     logDebug('[Payment Init] Amount breakdown', {
@@ -531,7 +538,9 @@ export const initializePayment = async (req, res) => {
       throw initError;
     }
     
-    if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
+    if (payment_gateway === PAYMENT_GATEWAY.MONIPAY) {
+      await updateTransactionWithMonipayInit(transaction.reference, gatewayResult);
+    } else if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
       await updateTransactionWithMonicreditInit(transaction.reference, gatewayResult);
     } else {
       await updateTransactionWithPaystackInit(transaction.reference, gatewayResult);
@@ -625,6 +634,9 @@ export const initializePayment = async (req, res) => {
     if (error instanceof PaystackError) {
       return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
+    if (error instanceof MonipayError) {
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
+    }
     if (error instanceof MonicreditError) {
       logError('[Payment Init] MonicreditError details', {
         message: error.message,
@@ -638,6 +650,9 @@ export const initializePayment = async (req, res) => {
     }
     if (error instanceof GatewayError) {
       return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
+    }
+    if (error instanceof TerminalError || error instanceof DeliveryQuoteError) {
+      return paymentResponse.error(res, error.message, error.statusCode || 400);
     }
     
     const errorMessage = isProduction 
