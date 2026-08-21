@@ -82,11 +82,14 @@ export function mapCourierStage(tracking, shipment) {
     status === 'picked-up' ||
     status === 'picked up' ||
     status === 'out-for-delivery' ||
-    status === 'out for delivery'
+    status === 'out for delivery' ||
+    status === 'in-transit-to-hub' ||
+    status === 'arrived-at-hub'
   ) {
     return 'in_transit';
   }
   if (status === 'cancelled' || status === 'canceled') return 'cancelled';
+  // Shipbubble: pending / confirmed / created still count as booked
   return 'booked';
 }
 
@@ -142,7 +145,21 @@ export function buildDeliveryProgress({ order = null, guestOrder = null, shipmen
           description: event.description || event.message || null,
         }))
         .filter((event) => event.description || event.status)
-    : [];
+    : Array.isArray(shipment?.raw_response?.package_status)
+      ? shipment.raw_response.package_status.map((event) => ({
+          at: event.datetime || event.created_at || null,
+          status: event.status || null,
+          location: null,
+          description: event.status || null,
+        }))
+      : Array.isArray(shipment?.raw_response?.events)
+        ? shipment.raw_response.events.map((event) => ({
+            at: event.datetime || event.created_at || event.timestamp || null,
+            status: event.status || null,
+            location: event.location || null,
+            description: event.description || event.message || event.status || null,
+          }))
+        : [];
 
   return {
     has_delivery: delivery,
@@ -158,7 +175,13 @@ export function buildDeliveryProgress({ order = null, guestOrder = null, shipmen
       extras.tracking_url ||
       extras.carrier_tracking_url ||
       null,
-    carrier_name: shipment?.raw_response?.carrier_name || tracking?.carrier?.name || tracking?.carrier_name || null,
+    carrier_name:
+      shipment?.raw_response?.carrier_name ||
+      shipment?.raw_response?.courier_name ||
+      tracking?.courier?.name ||
+      tracking?.carrier?.name ||
+      tracking?.carrier_name ||
+      null,
     events,
     steps,
   };

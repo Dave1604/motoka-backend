@@ -1,11 +1,21 @@
 import { getAllStates, getDeliveryFee, resolveStateAndLGA } from '../location.service.js';
 import { estimateWeightKg, toTerminalWeightKg } from './parcel.weight.js';
 import {
-  getDefaultPackaging,
-  getShipmentQuotes,
   isTerminalConfigured,
   TerminalError,
+  getDefaultPackaging,
+  getShipmentQuotes,
 } from './terminal.service.js';
+import {
+  ShipbubbleError,
+  createShipmentLabel,
+  fetchShippingRates,
+  isShipbubbleConfigured,
+  nextPickupDate,
+  pickCheapestShipbubbleCourier,
+  resolveDocumentCategoryId,
+  validateAddress,
+} from './shipbubble.service.js';
 
 export class DeliveryQuoteError extends Error {
   constructor(message, statusCode = 400, code = 'QUOTE_ERROR') {
@@ -18,9 +28,14 @@ export class DeliveryQuoteError extends Error {
 
 const PURPOSES = new Set(['renewal', 'plate_number', 'driver_license', 'guest_renewal']);
 const quoteCache = new Map();
-const QUOTE_TTL_MS = parseInt(process.env.TERMINAL_QUOTE_CACHE_MS || '600000', 10);
+const QUOTE_TTL_MS = parseInt(
+  process.env.SHIPBUBBLE_QUOTE_CACHE_MS || process.env.TERMINAL_QUOTE_CACHE_MS || '600000',
+  10
+);
 let packagingCache = { id: null, fetchedAt: 0 };
 const PACKAGING_TTL_MS = 6 * 60 * 60 * 1000;
+let pickupAddressCodeCache = { code: null, fetchedAt: 0 };
+const ADDRESS_CODE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function nairaToKobo(value) {
   const n = Number(value);
@@ -52,22 +67,33 @@ function requiredLine2(value, fallback) {
   return line || fallback;
 }
 
+function envPickup(key, fallback) {
+  return process.env[`SHIPBUBBLE_${key}`] || process.env[`TERMINAL_${key}`] || fallback;
+}
+
 export function pickupAddressPayload() {
+  const first = envPickup('PICKUP_FIRSTNAME', 'Motoka');
+  const last = envPickup('PICKUP_LASTNAME', 'NG');
   return {
     country: 'NG',
-    state: process.env.TERMINAL_PICKUP_STATE || 'Lagos',
-    city: process.env.TERMINAL_PICKUP_CITY || 'Ikeja',
-    line1: process.env.TERMINAL_PICKUP_STREET || 'Motoka office',
-    // Terminal requires line2 when persist_data=true (admin waybill booking).
-    line2: requiredLine2(process.env.TERMINAL_PICKUP_LINE2, 'Office'),
-    zip: process.env.TERMINAL_PICKUP_ZIP || '100001',
-    email: process.env.TERMINAL_PICKUP_EMAIL || 'hello@motokaapp.ng',
-    phone: toE164Ng(process.env.TERMINAL_PICKUP_PHONE || '08000000000'),
-    first_name: process.env.TERMINAL_PICKUP_FIRSTNAME || 'Motoka',
-    last_name: process.env.TERMINAL_PICKUP_LASTNAME || 'NG',
-    name: process.env.TERMINAL_PICKUP_NAME || 'Motoka',
+    state: envPickup('PICKUP_STATE', 'Ogun'),
+    city: envPickup('PICKUP_CITY', 'Ijebu Ode'),
+    line1: envPickup('PICKUP_STREET', 'Motoka office, Ijebu Ode'),
+    line2: requiredLine2(envPickup('PICKUP_LINE2', 'Office'), 'Office'),
+    zip: envPickup('PICKUP_ZIP', '120101'),
+    email: envPickup('PICKUP_EMAIL', 'hello@motokaapp.ng'),
+    phone: toE164Ng(envPickup('PICKUP_PHONE', '08000000000')),
+    first_name: first,
+    last_name: last,
+    // Shipbubble requires a two-word full name (no numbers/symbols)
+    name: envPickup('PICKUP_NAME', `${first} ${last}`.trim()),
     is_residential: false,
   };
+}
+
+export function pickupAddressString() {
+  const p = pickupAddressPayload();
+  return [p.line1, p.line2, p.city, p.state, 'Nigeria'].filter(Boolean).join(', ');
 }
 
 export function deliveryAddressPayload({
@@ -84,15 +110,19 @@ export function deliveryAddressPayload({
     state: stateName,
     city: city || stateName,
     line1: street || city || stateName,
-    line2: requiredLine2(process.env.TERMINAL_DEFAULT_LINE2, city || stateName || 'Nigeria'),
-    zip: process.env.TERMINAL_DEFAULT_ZIP || '100001',
-    phone: toE164Ng(contact) || toE164Ng(process.env.TERMINAL_PICKUP_PHONE || '08000000000'),
-    email: email || process.env.TERMINAL_PICKUP_EMAIL || 'hello@motokaapp.ng',
+    line2: requiredLine2(process.env.TERMINAL_DEFAULT_LINE2 || process.env.SHIPBUBBLE_DEFAULT_LINE2, city || stateName || 'Nigeria'),
+    zip: process.env.SHIPBUBBLE_DEFAULT_ZIP || process.env.TERMINAL_DEFAULT_ZIP || '100001',
+    phone: toE164Ng(contact) || toE164Ng(envPickup('PICKUP_PHONE', '08000000000')),
+    email: email || envPickup('PICKUP_EMAIL', 'hello@motokaapp.ng'),
     first_name: names.first_name,
     last_name: names.last_name,
     name: name || `${names.first_name} ${names.last_name}`.trim(),
     is_residential: true,
   };
+}
+
+export function deliveryAddressString({ stateName, city, street } = {}) {
+  return [street, city, stateName, 'Nigeria'].filter(Boolean).join(', ');
 }
 
 export function parcelPayload({ purpose, weightKg, packagingId } = {}) {
@@ -113,6 +143,28 @@ export function parcelPayload({ purpose, weightKg, packagingId } = {}) {
         weight,
       },
     ],
+  };
+}
+
+export function shipbubblePackageItems({ purpose, weightKg } = {}) {
+  const weight = Math.max(0.1, Number(weightKg) || 0.35);
+  return [
+    {
+      name: `Motoka ${purpose}`,
+      description: `Motoka ${purpose} documents`,
+      unit_weight: String(weight),
+      unit_amount: '1000',
+      quantity: '1',
+    },
+  ];
+}
+
+export function shipbubblePackageDimension() {
+  // Envelope / document pouch defaults (cm)
+  return {
+    length: Number(process.env.SHIPBUBBLE_PKG_LENGTH || 30),
+    width: Number(process.env.SHIPBUBBLE_PKG_WIDTH || 22),
+    height: Number(process.env.SHIPBUBBLE_PKG_HEIGHT || 3),
   };
 }
 
@@ -160,6 +212,167 @@ function cacheSet(key, value) {
   quoteCache.set(key, { at: Date.now(), value });
 }
 
+async function getShipbubblePickupAddressCode() {
+  const fromEnv = String(process.env.SHIPBUBBLE_PICKUP_ADDRESS_CODE || '').trim();
+  if (fromEnv) return Number(fromEnv) || fromEnv;
+
+  if (pickupAddressCodeCache.code && Date.now() - pickupAddressCodeCache.fetchedAt < ADDRESS_CODE_TTL_MS) {
+    return pickupAddressCodeCache.code;
+  }
+
+  const pickup = pickupAddressPayload();
+  const validated = await validateAddress({
+    name: pickup.name || `${pickup.first_name} ${pickup.last_name}`.trim(),
+    email: pickup.email,
+    phone: pickup.phone,
+    address: pickupAddressString(),
+  });
+  const code = validated?.address_code;
+  if (!code) {
+    throw new ShipbubbleError('Could not validate Motoka pickup address with Shipbubble', 502, 'API_ERROR');
+  }
+  pickupAddressCodeCache = { code, fetchedAt: Date.now() };
+  return code;
+}
+
+async function quoteViaShipbubble({
+  stateName,
+  lgaName,
+  purpose,
+  weightKg,
+  street,
+  contact,
+  name,
+  email,
+  persistData,
+}) {
+  const delivery = deliveryAddressPayload({
+    stateName,
+    city: lgaName || stateName,
+    street,
+    contact,
+    name,
+    email,
+  });
+
+  const [senderCode, receiverValidated, categoryId] = await Promise.all([
+    getShipbubblePickupAddressCode(),
+    validateAddress({
+      name: delivery.name,
+      email: delivery.email,
+      phone: delivery.phone,
+      address: deliveryAddressString({
+        stateName,
+        city: lgaName || stateName,
+        street: street || lgaName || stateName,
+      }),
+    }),
+    resolveDocumentCategoryId(),
+  ]);
+
+  const receiverCode = receiverValidated?.address_code;
+  if (!receiverCode) {
+    throw new DeliveryQuoteError(
+      'Could not validate the delivery address. Check the street, LGA, and state.',
+      400,
+      'INVALID_ADDRESS'
+    );
+  }
+
+  const ratesPayload = await fetchShippingRates({
+    senderAddressCode: senderCode,
+    receiverAddressCode: receiverCode,
+    categoryId,
+    packageItems: shipbubblePackageItems({ purpose, weightKg }),
+    packageDimension: shipbubblePackageDimension(),
+    pickupDate: nextPickupDate(),
+    serviceType: 'pickup',
+    deliveryInstructions: `Motoka ${purpose} documents`,
+  });
+
+  const cheapest = pickCheapestShipbubbleCourier(ratesPayload);
+  if (!cheapest) {
+    throw new DeliveryQuoteError(
+      'No Shipbubble courier rates are available for this destination yet. Try another LGA or omit delivery.',
+      400,
+      'NO_RATES'
+    );
+  }
+
+  const amountNaira = Number(cheapest.total ?? cheapest.rate_card_amount ?? cheapest.amountNaira);
+  return {
+    fee_kobo: nairaToKobo(amountNaira),
+    weight_kg: weightKg,
+    provider: 'shipbubble',
+    rate_id: persistData ? ratesPayload.request_token : null,
+    carrier_name: cheapest.courier_name || null,
+    courier_id: cheapest.courier_id ?? null,
+    service_code: cheapest.service_code || null,
+    request_token: persistData ? ratesPayload.request_token : null,
+    shipment_hint: persistData
+      ? {
+          request_token: ratesPayload.request_token,
+          courier_id: cheapest.courier_id,
+          service_code: cheapest.service_code,
+          total: amountNaira,
+        }
+      : null,
+  };
+}
+
+async function quoteViaTerminal({
+  stateName,
+  lgaName,
+  purpose,
+  weightKg,
+  street,
+  contact,
+  name,
+  email,
+  persistData,
+}) {
+  let packagingId = null;
+  if (persistData) {
+    packagingId = await getPackagingId();
+  }
+
+  const rates = await getShipmentQuotes({
+    pickupAddress: pickupAddressPayload(),
+    deliveryAddress: deliveryAddressPayload({
+      stateName,
+      city: lgaName || stateName,
+      street,
+      contact,
+      name,
+      email,
+    }),
+    parcel: parcelPayload({
+      purpose,
+      weightKg,
+      packagingId,
+    }),
+    persistData,
+  });
+
+  const cheapest = pickCheapestNgnRate(rates);
+  if (!cheapest) {
+    throw new DeliveryQuoteError(
+      'No Terminal carrier rates are available for this destination yet. Try another LGA or omit delivery.',
+      400,
+      'NO_RATES'
+    );
+  }
+
+  return {
+    fee_kobo: nairaToKobo(cheapest.amountNaira),
+    weight_kg: weightKg,
+    provider: 'terminal',
+    rate_id: persistData ? (cheapest.rate_id || cheapest.id) : null,
+    carrier_name: cheapest.carrier_name || null,
+    shipment_hint: persistData ? (cheapest.shipment || null) : null,
+  };
+}
+
 export async function quoteDelivery({
   stateInput,
   lgaInput,
@@ -186,7 +399,10 @@ export async function quoteDelivery({
   const stateName = motokaState?.name || resolved.stateCode;
   const weightKg = estimateWeightKg({ purpose: normalizedPurpose, selectedItems });
 
-  if (!isTerminalConfigured()) {
+  const useShipbubble = isShipbubbleConfigured();
+  const useTerminal = !useShipbubble && isTerminalConfigured();
+
+  if (!useShipbubble && !useTerminal) {
     const feeKobo = Math.trunc(await getDeliveryFee(resolved.stateCode));
     return {
       fee_kobo: feeKobo,
@@ -200,65 +416,55 @@ export async function quoteDelivery({
 
   const cacheKey = persistData
     ? null
-    : `${resolved.stateCode}|${resolved.lgaName}|${weightKg}|${normalizedPurpose}`;
+    : `${useShipbubble ? 'sb' : 'ta'}|${resolved.stateCode}|${resolved.lgaName}|${weightKg}|${normalizedPurpose}`;
   if (cacheKey) {
     const cached = cacheGet(cacheKey);
     if (cached) return cached;
   }
 
-  let packagingId = null;
-  if (persistData) {
-    packagingId = await getPackagingId();
-  }
-
-  let rates;
+  let quoteCore;
   try {
-    rates = await getShipmentQuotes({
-      pickupAddress: pickupAddressPayload(),
-      deliveryAddress: deliveryAddressPayload({
+    if (useShipbubble) {
+      quoteCore = await quoteViaShipbubble({
         stateName,
-        city: resolved.lgaName || stateName,
+        lgaName: resolved.lgaName,
+        purpose: normalizedPurpose,
+        weightKg,
         street,
         contact,
         name,
         email,
-      }),
-      parcel: parcelPayload({
+        persistData,
+      });
+    } else {
+      quoteCore = await quoteViaTerminal({
+        stateName,
+        lgaName: resolved.lgaName,
         purpose: normalizedPurpose,
         weightKg,
-        packagingId,
-      }),
-      persistData,
-    });
+        street,
+        contact,
+        name,
+        email,
+        persistData,
+      });
+    }
   } catch (error) {
-    if (error instanceof TerminalError) {
+    if (error instanceof ShipbubbleError || error instanceof TerminalError) {
       throw new DeliveryQuoteError(
         error.message || 'Could not get a live delivery quote. Try again or omit delivery.',
         error.statusCode || 502,
         error.code || 'API_ERROR'
       );
     }
+    if (error instanceof DeliveryQuoteError) throw error;
     throw error;
   }
 
-  const cheapest = pickCheapestNgnRate(rates);
-  if (!cheapest) {
-    throw new DeliveryQuoteError(
-      'No Terminal carrier rates are available for this destination yet. Try another LGA or omit delivery.',
-      400,
-      'NO_RATES'
-    );
-  }
-
   const quote = {
-    fee_kobo: nairaToKobo(cheapest.amountNaira),
-    weight_kg: weightKg,
+    ...quoteCore,
     stateCode: resolved.stateCode,
     lgaName: resolved.lgaName,
-    provider: 'terminal',
-    rate_id: persistData ? (cheapest.rate_id || cheapest.id) : null,
-    carrier_name: cheapest.carrier_name || null,
-    shipment_hint: persistData ? (cheapest.shipment || null) : null,
   };
 
   if (cacheKey) cacheSet(cacheKey, quote);
@@ -300,3 +506,6 @@ export async function quoteFromDeliveryFields(deliveryData, { purpose, selectedI
     contact: String(contact).trim(),
   };
 }
+
+/** Book a Shipbubble label from a persisted quote hint / fresh rate fetch. */
+export { createShipmentLabel, fetchShippingRates, validateAddress };

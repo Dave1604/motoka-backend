@@ -10,13 +10,32 @@ import {
   trackTerminalShipment,
 } from './terminal.service.js';
 import {
+  createShipmentLabel,
+  isShipbubbleBookingEnabled,
+  isShipbubbleConfigured,
+  ShipbubbleError,
+  trackShipbubbleShipment,
+} from './shipbubble.service.js';
+import {
   DeliveryQuoteError,
   deliveryAddressPayload,
+  deliveryAddressString,
   getPackagingId,
   parcelPayload,
   pickCheapestNgnRate,
   pickupAddressPayload,
+  shipbubblePackageDimension,
+  shipbubblePackageItems,
+  pickupAddressString,
+  toE164Ng,
 } from './deliveryQuote.service.js';
+import {
+  fetchShippingRates,
+  nextPickupDate,
+  pickCheapestShipbubbleCourier,
+  resolveDocumentCategoryId,
+  validateAddress,
+} from './shipbubble.service.js';
 
 export class ShipmentError extends Error {
   constructor(message, statusCode = 400, code = 'SHIPMENT_ERROR') {
@@ -121,7 +140,7 @@ function purposeFromOrderType(orderType) {
   return 'renewal';
 }
 
-function parsePickupResult(booked) {
+function parseTerminalPickupResult(booked) {
   const extras = booked?.extras || {};
   const shipmentId = booked?.shipment_id || booked?.id || extras.tracking_number || null;
   return {
@@ -130,6 +149,17 @@ function parsePickupResult(booked) {
     labelUrl: extras.shipping_label || extras.commercial_invoice || null,
     trackingNumber: extras.tracking_number || shipmentId,
     amountNaira: booked?.rate?.amount ?? booked?.amount ?? null,
+  };
+}
+
+function parseShipbubbleLabelResult(booked) {
+  return {
+    shipmentId: booked?.order_id || null,
+    trackingUrl: booked?.tracking_url || null,
+    labelUrl: booked?.waybill_document || booked?.label_url || null,
+    trackingNumber: booked?.courier?.tracking_code || booked?.order_id || null,
+    amountNaira: booked?.payment?.shipping_fee ?? null,
+    status: booked?.status || 'pending',
   };
 }
 
@@ -146,6 +176,133 @@ function pickupAttempted(row) {
 
 const BOOKING_LOCK_WAIT_MS = 2 * 60 * 1000;
 
+function activeProvider() {
+  if (isShipbubbleConfigured()) return 'shipbubble';
+  if (isTerminalConfigured()) return 'terminal';
+  return null;
+}
+
+async function bookViaShipbubble({
+  stateName,
+  deliveryLga,
+  deliveryAddress,
+  receiverName,
+  receiverEmail,
+  receiverPhone,
+  purpose,
+  weightKg,
+}) {
+  const pickup = pickupAddressPayload();
+  const delivery = deliveryAddressPayload({
+    stateName,
+    city: deliveryLga || stateName,
+    street: deliveryAddress,
+    contact: receiverPhone,
+    name: receiverName,
+    email: receiverEmail,
+  });
+
+  const [senderValidated, receiverValidated, categoryId] = await Promise.all([
+    process.env.SHIPBUBBLE_PICKUP_ADDRESS_CODE
+      ? Promise.resolve({ address_code: process.env.SHIPBUBBLE_PICKUP_ADDRESS_CODE })
+      : validateAddress({
+          name: pickup.name || `${pickup.first_name} ${pickup.last_name}`.trim(),
+          email: pickup.email,
+          phone: pickup.phone,
+          address: pickupAddressString(),
+        }),
+    validateAddress({
+      name: delivery.name,
+      email: delivery.email,
+      phone: toE164Ng(receiverPhone) || delivery.phone,
+      address: deliveryAddressString({
+        stateName,
+        city: deliveryLga || stateName,
+        street: deliveryAddress,
+      }),
+    }),
+    resolveDocumentCategoryId(),
+  ]);
+
+  const ratesPayload = await fetchShippingRates({
+    senderAddressCode: senderValidated.address_code,
+    receiverAddressCode: receiverValidated.address_code,
+    categoryId,
+    packageItems: shipbubblePackageItems({ purpose, weightKg }),
+    packageDimension: shipbubblePackageDimension(),
+    pickupDate: nextPickupDate(),
+    serviceType: 'pickup',
+    deliveryInstructions: `Motoka ${purpose} documents`,
+  });
+
+  const cheapest = pickCheapestShipbubbleCourier(ratesPayload);
+  if (!cheapest?.service_code || cheapest.courier_id == null || !ratesPayload?.request_token) {
+    throw new ShipmentError(
+      'No Shipbubble courier rates are available for this destination.',
+      400,
+      'NO_RATES'
+    );
+  }
+
+  return {
+    cheapest,
+    ratesPayload,
+    amountNaira: Number(cheapest.total ?? cheapest.rate_card_amount),
+    book: async () =>
+      createShipmentLabel({
+        requestToken: ratesPayload.request_token,
+        serviceCode: cheapest.service_code,
+        courierId: cheapest.courier_id,
+      }),
+  };
+}
+
+async function bookViaTerminal({
+  stateName,
+  deliveryLga,
+  deliveryAddress,
+  receiverName,
+  receiverEmail,
+  receiverPhone,
+  purpose,
+  weightKg,
+}) {
+  const packagingId = await getPackagingId();
+  const rates = await getShipmentQuotes({
+    pickupAddress: pickupAddressPayload(),
+    deliveryAddress: deliveryAddressPayload({
+      stateName,
+      city: deliveryLga || stateName,
+      street: deliveryAddress,
+      contact: receiverPhone,
+      name: receiverName,
+      email: receiverEmail,
+    }),
+    parcel: parcelPayload({ purpose, weightKg, packagingId }),
+    persistData: true,
+  });
+
+  const cheapest = pickCheapestNgnRate(rates);
+  if (!cheapest?.rate_id && !cheapest?.id) {
+    throw new ShipmentError(
+      'No Terminal carrier rates are available for this destination.',
+      400,
+      'NO_RATES'
+    );
+  }
+
+  return {
+    cheapest,
+    ratesPayload: rates,
+    amountNaira: cheapest.amountNaira,
+    book: async () =>
+      arrangePickup({
+        rateId: cheapest.rate_id || cheapest.id,
+        shipmentId: cheapest.shipment || null,
+      }),
+  };
+}
+
 export async function createWaybill({
   orderType,
   orderNumber,
@@ -153,14 +310,22 @@ export async function createWaybill({
   weightKg: weightOverride,
   adminId,
 }) {
-  if (!isTerminalConfigured()) {
+  const provider = activeProvider();
+  if (!provider) {
     throw new ShipmentError(
-      'Terminal Africa is not configured. Set TERMINAL_SECRET_KEY on the server.',
+      'No courier provider configured. Set SHIPBUBBLE_API_KEY (preferred) or TERMINAL_SECRET_KEY.',
       503,
       'CONFIG_ERROR'
     );
   }
-  if (!isTerminalBookingEnabled()) {
+  if (provider === 'shipbubble' && !isShipbubbleBookingEnabled()) {
+    throw new ShipmentError(
+      'Live Shipbubble booking is disabled. Fund the wallet, then set SHIPBUBBLE_BOOKING_ENABLED=true.',
+      503,
+      'BOOKING_DISABLED'
+    );
+  }
+  if (provider === 'terminal' && !isTerminalBookingEnabled()) {
     throw new ShipmentError(
       'Live Terminal booking is disabled. Fund the Terminal wallet, then set TERMINAL_BOOKING_ENABLED=true.',
       503,
@@ -221,7 +386,7 @@ export async function createWaybill({
   }
   if (existing && pickupAttempted(existing) && !existing.waybill_number) {
     throw new ShipmentError(
-      'A courier booking was already attempted for this order. Check the Terminal dashboard before retrying — a second click can charge the wallet twice.',
+      'A courier booking was already attempted for this order. Check the Shipbubble/Terminal dashboard before retrying — a second click can charge the wallet twice.',
       409,
       'BOOKING_IN_PROGRESS'
     );
@@ -240,7 +405,7 @@ export async function createWaybill({
   let bookingRow = existing;
   if (!bookingRow) {
     const placeholder = {
-      provider: 'terminal',
+      provider,
       order_type: guestId ? 'guest_renewal' : (order.order_type || purpose),
       order_id: orderId,
       guest_order_id: guestId,
@@ -278,41 +443,43 @@ export async function createWaybill({
     estimated
   );
 
-  let rates;
+  let prepared;
   try {
-    const packagingId = await getPackagingId();
-    rates = await getShipmentQuotes({
-      pickupAddress: pickupAddressPayload(),
-      deliveryAddress: deliveryAddressPayload({
-        stateName,
-        city: deliveryLga || stateName,
-        street: deliveryAddress,
-        contact: receiverPhone,
-        name: receiverName,
-        email: receiverEmail,
-      }),
-      parcel: parcelPayload({ purpose, weightKg, packagingId }),
-      persistData: true,
-    });
+    prepared = provider === 'shipbubble'
+      ? await bookViaShipbubble({
+          stateName,
+          deliveryLga,
+          deliveryAddress,
+          receiverName,
+          receiverEmail,
+          receiverPhone,
+          purpose,
+          weightKg,
+        })
+      : await bookViaTerminal({
+          stateName,
+          deliveryLga,
+          deliveryAddress,
+          receiverName,
+          receiverEmail,
+          receiverPhone,
+          purpose,
+          weightKg,
+        });
   } catch (error) {
     await supabase.from('shipments').delete().eq('id', bookingRow.id).is('waybill_number', null);
-    if (error instanceof TerminalError || error instanceof DeliveryQuoteError) {
+    if (
+      error instanceof TerminalError ||
+      error instanceof ShipbubbleError ||
+      error instanceof DeliveryQuoteError ||
+      error instanceof ShipmentError
+    ) {
       throw new ShipmentError(error.message, error.statusCode || 502, error.code || 'API_ERROR');
     }
     throw error;
   }
 
-  const cheapest = pickCheapestNgnRate(rates);
-  if (!cheapest?.rate_id && !cheapest?.id) {
-    await supabase.from('shipments').delete().eq('id', bookingRow.id).is('waybill_number', null);
-    throw new ShipmentError(
-      'No Terminal carrier rates are available for this destination.',
-      400,
-      'NO_RATES'
-    );
-  }
-
-  const bookedFeeKobo = nairaToKobo(cheapest.amountNaira);
+  const bookedFeeKobo = nairaToKobo(prepared.amountNaira);
   const paidFeeKobo = customerDeliveryFeeKobo(order, Boolean(guestId));
   const feeMismatch = paidFeeKobo != null && bookedFeeKobo != null
     ? { customer_kobo: paidFeeKobo, booked_kobo: bookedFeeKobo, difference_kobo: bookedFeeKobo - paidFeeKobo }
@@ -323,7 +490,11 @@ export async function createWaybill({
     .update({
       raw_response: {
         pickup_attempted: true,
-        rate_id: cheapest.rate_id || cheapest.id,
+        provider,
+        rate_id: prepared.cheapest?.rate_id || prepared.cheapest?.id || prepared.ratesPayload?.request_token || null,
+        request_token: prepared.ratesPayload?.request_token || null,
+        courier_id: prepared.cheapest?.courier_id ?? null,
+        service_code: prepared.cheapest?.service_code || null,
         fee_mismatch: feeMismatch,
       },
       updated_at: new Date().toISOString(),
@@ -332,28 +503,29 @@ export async function createWaybill({
 
   let booked;
   try {
-    booked = await arrangePickup({
-      rateId: cheapest.rate_id || cheapest.id,
-      shipmentId: cheapest.shipment || null,
-    });
+    booked = await prepared.book();
   } catch (error) {
     throw new ShipmentError(
-      error.message || 'Courier pickup failed. Do not click Generate again until Terminal is checked — the wallet may already have been charged.',
+      error.message || 'Courier booking failed. Do not click Generate again until the courier dashboard is checked — the wallet may already have been charged.',
       error.statusCode || 502,
       error.code || 'PICKUP_FAILED'
     );
   }
-  const parsed = parsePickupResult(booked);
+
+  const parsed = provider === 'shipbubble'
+    ? parseShipbubbleLabelResult(booked)
+    : parseTerminalPickupResult(booked);
+
   if (!parsed.shipmentId && !parsed.trackingNumber) {
     throw new ShipmentError(
-      'Courier pickup did not return a waybill. Do not click Generate again — contact engineering and check the Terminal dashboard.',
+      'Courier booking did not return a waybill. Do not click Generate again — contact engineering and check the courier dashboard.',
       502,
       'API_ERROR'
     );
   }
 
   const row = {
-    provider: 'terminal',
+    provider,
     order_type: guestId ? 'guest_renewal' : (order.order_type || purpose),
     order_id: orderId,
     guest_order_id: guestId,
@@ -361,14 +533,17 @@ export async function createWaybill({
     waybill_number: parsed.trackingNumber || parsed.shipmentId,
     tracking_url: parsed.trackingUrl,
     label_url: parsed.labelUrl,
-    shipping_fee_kobo: parsed.amountNaira != null ? nairaToKobo(parsed.amountNaira) : nairaToKobo(cheapest.amountNaira),
+    shipping_fee_kobo: parsed.amountNaira != null ? nairaToKobo(parsed.amountNaira) : bookedFeeKobo,
     weight_kg: weightKg,
     estimated_weight_kg: estimated,
-    status: booked?.status || 'created',
+    status: parsed.status || booked?.status || 'created',
     raw_response: {
       shipment_id: parsed.shipmentId,
-      rate_id: cheapest.rate_id || cheapest.id,
-      carrier_name: cheapest.carrier_name || null,
+      rate_id: prepared.cheapest?.rate_id || prepared.cheapest?.id || prepared.ratesPayload?.request_token || null,
+      request_token: prepared.ratesPayload?.request_token || null,
+      courier_id: prepared.cheapest?.courier_id ?? null,
+      service_code: prepared.cheapest?.service_code || null,
+      carrier_name: prepared.cheapest?.courier_name || prepared.cheapest?.carrier_name || null,
       pickup_attempted: true,
       fee_mismatch: feeMismatch,
       booked,
@@ -402,12 +577,119 @@ export async function trackShipment(shipment) {
   if (!shipmentId) {
     throw new ShipmentError('No waybill to track', 400, 'NO_WAYBILL');
   }
-  if (!isTerminalConfigured() || shipment?.provider === 'kxpress') {
+  if (shipment?.provider === 'kxpress') {
+    return { shipment, tracking: null };
+  }
+  if (shipment?.provider === 'shipbubble' || (isShipbubbleConfigured() && String(shipmentId).startsWith('SB-'))) {
+    if (!isShipbubbleConfigured()) return { shipment, tracking: null };
+    const live = await trackShipbubbleShipment(shipmentId);
+    return { shipment, tracking: live };
+  }
+  if (!isTerminalConfigured()) {
     return { shipment, tracking: null };
   }
   const live = await trackTerminalShipment(shipmentId);
   return {
     shipment,
     tracking: live,
+  };
+}
+
+/**
+ * Apply a Shipbubble webhook payload onto the matching Motoka shipments row.
+ * Looks up by Shipbubble order_id (SB-…) stored as waybill_number / raw_response.shipment_id.
+ */
+export async function applyShipbubbleWebhookEvent(payload = {}) {
+  const orderId = payload.order_id || payload.data?.order_id || null;
+  if (!orderId) {
+    return { updated: false, reason: 'missing_order_id' };
+  }
+
+  const supabase = getSupabaseAdmin();
+  const { data: rows, error } = await supabase
+    .from('shipments')
+    .select('*')
+    .or(`waybill_number.eq.${orderId},waybill_number.eq.${payload.courier?.tracking_code || orderId}`)
+    .order('created_at', { ascending: false })
+    .limit(5);
+
+  if (error) {
+    throw new ShipmentError(error.message || 'Failed to load shipment for webhook', 500, 'DB_ERROR');
+  }
+
+  let shipment = (rows || []).find((r) => {
+    const sid = r?.raw_response?.shipment_id || r?.waybill_number;
+    return String(sid) === String(orderId) || String(r?.waybill_number) === String(orderId);
+  });
+
+  if (!shipment) {
+    // Fallback: scan recent shipbubble rows for matching shipment_id in JSON
+    const { data: recent } = await supabase
+      .from('shipments')
+      .select('*')
+      .eq('provider', 'shipbubble')
+      .order('created_at', { ascending: false })
+      .limit(40);
+    shipment = (recent || []).find((r) => {
+      const sid = r?.raw_response?.shipment_id || r?.waybill_number;
+      const track = r?.raw_response?.booked?.courier?.tracking_code;
+      return (
+        String(sid) === String(orderId) ||
+        String(r?.waybill_number) === String(orderId) ||
+        (track && String(track) === String(payload.courier?.tracking_code || ''))
+      );
+    });
+  }
+
+  if (!shipment) {
+    return { updated: false, reason: 'shipment_not_found', orderId };
+  }
+
+  const status = String(payload.status || 'pending').toLowerCase().replace(/\s+/g, '_');
+  const trackingCode = payload.courier?.tracking_code || shipment.waybill_number;
+  const trackingUrl = payload.tracking_url || shipment.tracking_url;
+  const labelUrl = payload.waybill_document || shipment.label_url;
+  const prevRaw = shipment.raw_response && typeof shipment.raw_response === 'object'
+    ? shipment.raw_response
+    : {};
+
+  const packageStatus = Array.isArray(payload.package_status) ? payload.package_status : [];
+  const events = Array.isArray(payload.events) ? payload.events : [];
+
+  const patch = {
+    status,
+    waybill_number: trackingCode || shipment.waybill_number || orderId,
+    tracking_url: trackingUrl,
+    label_url: labelUrl,
+    raw_response: {
+      ...prevRaw,
+      shipment_id: orderId,
+      pickup_attempted: true,
+      last_webhook_event: payload.event || 'shipment.status.changed',
+      last_webhook_at: new Date().toISOString(),
+      webhook: payload,
+      package_status: packageStatus,
+      events,
+      courier_name: payload.courier?.name || prevRaw.carrier_name || prevRaw.courier_name || null,
+    },
+    updated_at: new Date().toISOString(),
+  };
+
+  const { data: saved, error: updateError } = await supabase
+    .from('shipments')
+    .update(patch)
+    .eq('id', shipment.id)
+    .select('*')
+    .single();
+
+  if (updateError) {
+    throw new ShipmentError(updateError.message || 'Failed to update shipment from webhook', 500, 'DB_ERROR');
+  }
+
+  return {
+    updated: true,
+    shipmentId: saved.id,
+    orderId,
+    status: saved.status,
   };
 }

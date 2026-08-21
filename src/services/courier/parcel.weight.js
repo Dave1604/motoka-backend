@@ -28,9 +28,9 @@ export function toTerminalWeightKg(value, fallback = DEFAULT_DOC_KG) {
 }
 
 export function estimateWeightKg({ purpose, selectedItems = [] } = {}) {
-  const docDefault = envNumber(['TERMINAL_DEFAULT_DOC_WEIGHT_KG'], DEFAULT_DOC_KG);
-  const plateKg = envNumber(['TERMINAL_PLATE_WEIGHT_KG'], 1.2);
-  const dlKg = envNumber(['TERMINAL_DL_CARD_WEIGHT_KG'], 0.2);
+  const docDefault = envNumber(['SHIPBUBBLE_DEFAULT_DOC_WEIGHT_KG', 'TERMINAL_DEFAULT_DOC_WEIGHT_KG'], DEFAULT_DOC_KG);
+  const plateKg = envNumber(['SHIPBUBBLE_PLATE_WEIGHT_KG', 'TERMINAL_PLATE_WEIGHT_KG'], 1.2);
+  const dlKg = envNumber(['SHIPBUBBLE_DL_CARD_WEIGHT_KG', 'TERMINAL_DL_CARD_WEIGHT_KG'], 0.2);
 
   if (purpose === 'plate_number') return toTerminalWeightKg(plateKg);
   if (purpose === 'driver_license') return toTerminalWeightKg(dlKg);
