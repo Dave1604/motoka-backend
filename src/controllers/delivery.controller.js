@@ -3,6 +3,7 @@ import { paymentResponse } from './payment/payment-response.util.js';
 import { logError } from '../utils/logger.js';
 import { quoteDelivery, DeliveryQuoteError } from '../services/courier/deliveryQuote.service.js';
 import { TerminalError } from '../services/courier/terminal.service.js';
+import { ShipbubbleError } from '../services/courier/shipbubble.service.js';
 import {
   createWaybill,
   getShipmentForOrder,
@@ -17,7 +18,12 @@ import { getOrderByNumber } from '../services/payment/order.service.js';
 
 function mapError(res, error, usePaymentShape = false) {
   const reply = usePaymentShape ? paymentResponse : response;
-  if (error instanceof DeliveryQuoteError || error instanceof TerminalError || error instanceof ShipmentError) {
+  if (
+    error instanceof DeliveryQuoteError ||
+    error instanceof TerminalError ||
+    error instanceof ShipbubbleError ||
+    error instanceof ShipmentError
+  ) {
     const status = error.statusCode || 400;
     if (status === 404) return reply.notFound(res, error.message);
     return reply.error(res, error.message, status);

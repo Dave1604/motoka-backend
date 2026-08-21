@@ -124,6 +124,7 @@ app.use(cors(getCorsConfig()));
 
 app.use('/api/webhooks/paystack', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monipay', express.raw({ type: 'application/json', limit: '2mb' }));
+app.use('/api/webhooks/shipbubble', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monicredit', express.raw({ type: 'application/json', limit: '2mb' }));
 
 app.use(express.json({ limit: '10mb' }));

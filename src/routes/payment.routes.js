@@ -4,6 +4,7 @@ import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
 import { verifyPaystackWebhook } from '../middleware/verifyPaystackWebhook.js';
 import { verifyMonipayWebhook } from '../middleware/verifyMonipayWebhook.js';
 import { verifyMonicreditWebhook } from '../middleware/verifyMonicreditWebhook.js';
+import { verifyShipbubbleWebhook } from '../middleware/verifyShipbubbleWebhook.js';
 import { paymentLimiter, webhookLimiter } from '../middleware/rateLimiter.js';
 import {
   initializePayment,
@@ -34,6 +35,7 @@ import {
   handleMonipayWebhook,
   handleMonicreditWebhook
 } from '../controllers/payment/webhook.controller.js';
+import { handleShipbubbleWebhook } from '../controllers/courier/shipbubbleWebhook.controller.js';
 
 import {
   getUserOrdersHandler,
@@ -114,6 +116,26 @@ router.post(
     }
   },
   handleMonipayWebhook
+);
+
+router.post(
+  '/webhooks/shipbubble',
+  webhookLimiter,
+  express.raw({ type: 'application/json', limit: '2mb' }),
+  verifyShipbubbleWebhook,
+  (req, res, next) => {
+    try {
+      const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
+      req.body = raw ? JSON.parse(raw) : {};
+      next();
+    } catch (error) {
+      return res.status(400).json({
+        status: false,
+        message: 'Invalid JSON payload'
+      });
+    }
+  },
+  handleShipbubbleWebhook
 );
 
 router.post(
