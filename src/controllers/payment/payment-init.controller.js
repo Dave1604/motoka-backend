@@ -152,6 +152,19 @@ export const getPaymentConfig = async (req, res) => {
 };
 
 // POST /api/payments/initialize
+
+/**
+ * Derive the frontend base URL from the incoming request's Origin header so
+ * that both motoka.ng and motokapp.ng get the correct callback URL rather than
+ * always routing through FRONTEND_URL.
+ */
+function buildCallbackUrl(req, path) {
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean);
+  const origin = req.headers.origin || req.headers.referer || '';
+  const matched = allowedOrigins.find(o => origin.startsWith(o));
+  const base = matched || process.env.FRONTEND_URL || 'http://localhost:3001';
+  return `${base.replace(/\/$/, '')}${path}`;
+}
 export const initializePayment = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -526,7 +539,8 @@ export const initializePayment = async (req, res) => {
         plateType: isPlatePayment ? plate_type : null,
         subType: isPlatePayment ? (sub_type || null) : null,
         licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
-        licenseDuration: isDriverLicensePayment ? (duration || null) : null
+        licenseDuration: isDriverLicensePayment ? (duration || null) : null,
+        callbackUrl: buildCallbackUrl(req, '/payment/monipay/callback'),
       });
     } catch (initError) {
       logError('[Payment Init] Gateway initialization failed', {

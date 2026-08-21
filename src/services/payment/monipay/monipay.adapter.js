@@ -22,6 +22,7 @@ export class MonipayAdapter {
     deliveryFee,
     deliveryData,
     hasDeliveryDetails,
+    callbackUrl: callbackUrlOverride,
     plateType,
     subType,
     licenseType,
@@ -30,7 +31,8 @@ export class MonipayAdapter {
     phone,
   }) {
     const amount = Math.trunc(Number(renewalAmount) + Number(deliveryFee || 0));
-    const callbackUrl = process.env.MONIPAY_CALLBACK_URL
+    const callbackUrl = callbackUrlOverride
+      || process.env.MONIPAY_CALLBACK_URL
       || `${process.env.FRONTEND_URL}/payment/monipay/callback`;
 
     let profileName = { firstName, lastName, phone };
