@@ -1,6 +1,18 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { logError, logInfo } from '../utils/logger.js';
-import fs from 'fs';
+
+const GEMINI_TIMEOUT_MS = 30_000;
+
+// Module-level singleton — created once, reused across all requests
+let _model = null;
+function getModel() {
+  if (_model) return _model;
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  const genAI = new GoogleGenerativeAI(apiKey);
+  _model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
+  return _model;
+}
 
 const EXTRACT_PROMPT = `You are an expert document reader specialising in Nigerian vehicle registration documents.
 
@@ -25,63 +37,91 @@ Return a single valid JSON object with exactly these keys:
 STRICT RULES — follow every one:
 1. If a field is NOT clearly readable in the document, return null for that field. NEVER guess or infer.
 2. Return ONLY the raw JSON object — no markdown, no explanation, no code fences.
-3. vehicleMake: use the proper brand name, e.g. "Toyota", "Honda", "Mercedes-Benz". Null if not visible.
+3. vehicleMake: use the proper brand name with correct casing, e.g. "Toyota", "Honda", "Mercedes-Benz". Null if not visible.
 4. vehicleModel: the model name only, e.g. "Camry", "Corolla", "C300". Null if not visible.
 5. vehicleYear: exactly 4 digits e.g. "2019". Null if not on the document.
-6. vehicleColor: one word, e.g. "Black", "Silver", "White". Null if not visible.
+6. vehicleColor: one word, Title Case, e.g. "Black", "Silver", "White". Null if not visible.
 7. registrationNo: the plate number exactly as it appears, e.g. "KUJ-443-AJ". Null if not visible.
 8. chassisNo: the VIN / chassis number as printed. Null if not visible.
 9. engineNo: the engine number as printed. Null if not visible.
 10. expiryDate / dateIssued: convert any date format to YYYY-MM-DD. Null if the date is not present.
-11. carType: "private" if the document says Private, "commercial" if Commercial. Null if unclear.
+11. carType: return lowercase "private" if the document says Private/Personal, "commercial" if Commercial/Truck/Bus. Null if unclear.
 12. ownerName: full name as printed. Null if not visible.
 13. address: full address as printed. Null if not visible.`;
 
-export async function extractDocument(req, res) {
-  const apiKey = process.env.GEMINI_API_KEY;
+const EXPECTED_KEYS = [
+  'ownerName', 'address', 'vehicleMake', 'vehicleModel', 'vehicleYear',
+  'vehicleColor', 'registrationNo', 'chassisNo', 'engineNo',
+  'expiryDate', 'dateIssued', 'carType',
+];
 
-  if (!apiKey) {
+function sanitiseExtracted(raw) {
+  const data = {};
+  const fieldsFound = [];
+
+  for (const key of EXPECTED_KEYS) {
+    let value = raw[key];
+
+    // Reject anything that isn't a non-empty string
+    if (typeof value !== 'string' || value.trim() === '') {
+      data[key] = null;
+      continue;
+    }
+
+    value = value.trim();
+
+    // Normalise carType to lowercase enum
+    if (key === 'carType') {
+      const lower = value.toLowerCase();
+      value = (lower === 'commercial') ? 'commercial' : 'private';
+    }
+
+    // Normalise vehicleColor to Title Case
+    if (key === 'vehicleColor') {
+      value = value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+    }
+
+    // Normalise vehicleMake to Title Case if all-caps (e.g. "TOYOTA" → "Toyota")
+    if (key === 'vehicleMake' && value === value.toUpperCase()) {
+      value = value.charAt(0) + value.slice(1).toLowerCase();
+    }
+
+    data[key] = value;
+    fieldsFound.push(key);
+  }
+
+  return { data, fieldsFound };
+}
+
+export async function extractDocument(req, res) {
+  const model = getModel();
+
+  if (!model) {
     return res.status(503).json({
       status: false,
       message: 'AI document extraction is not configured on this server.',
     });
   }
 
-  if (!req.file) {
+  if (!req.file || !req.file.buffer) {
     return res.status(400).json({ status: false, message: 'No image file provided.' });
   }
 
-  let fileBuffer;
   try {
-    if (req.file.buffer) {
-      fileBuffer = req.file.buffer;
-    } else if (req.file.path) {
-      fileBuffer = fs.readFileSync(req.file.path);
-    } else {
-      return res.status(400).json({ status: false, message: 'Could not read uploaded file.' });
-    }
-  } catch (err) {
-    logError('extractDocument: failed to read file', err);
-    return res.status(400).json({ status: false, message: 'Could not read uploaded file.' });
-  }
-
-  try {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
-
     const mimeType = req.file.mimetype || 'image/jpeg';
-    const base64 = fileBuffer.toString('base64');
+    const base64 = req.file.buffer.toString('base64');
 
-    const result = await model.generateContent([
+    // Race Gemini against a hard timeout
+    const geminiPromise = model.generateContent([
       EXTRACT_PROMPT,
-      {
-        inlineData: {
-          mimeType,
-          data: base64,
-        },
-      },
+      { inlineData: { mimeType, data: base64 } },
     ]);
 
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('TIMEOUT')), GEMINI_TIMEOUT_MS)
+    );
+
+    const result = await Promise.race([geminiPromise, timeoutPromise]);
     const rawText = result.response.text().trim();
 
     // Strip markdown code fences if model wrapped the JSON
@@ -101,39 +141,23 @@ export async function extractDocument(req, res) {
       });
     }
 
-    // Sanitise: ensure every expected key exists and nullify empty strings
-    const EXPECTED_KEYS = [
-      'ownerName', 'address', 'vehicleMake', 'vehicleModel', 'vehicleYear',
-      'vehicleColor', 'registrationNo', 'chassisNo', 'engineNo',
-      'expiryDate', 'dateIssued', 'carType',
-    ];
-
-    const data = {};
-    const fieldsFound = [];
-
-    for (const key of EXPECTED_KEYS) {
-      const raw = extracted[key];
-      const value = (typeof raw === 'string' && raw.trim() !== '') ? raw.trim() : null;
-      data[key] = value;
-      if (value !== null) fieldsFound.push(key);
-    }
+    const { data, fieldsFound } = sanitiseExtracted(extracted);
 
     logInfo('extractDocument: success', { fieldsFound });
 
-    // Clean up temp file if disk storage was used
-    if (req.file.path) {
-      fs.unlink(req.file.path, () => {});
-    }
-
     return res.json({ status: true, data, fieldsFound });
   } catch (err) {
+    if (err.message === 'TIMEOUT') {
+      logError('extractDocument: Gemini timed out');
+      return res.status(504).json({
+        status: false,
+        message: 'The AI took too long to respond. Please try again.',
+      });
+    }
     logError('extractDocument: Gemini API error', err);
-
-    if (req.file?.path) fs.unlink(req.file.path, () => {});
-
     return res.status(500).json({
       status: false,
-      message: 'Failed to analyse the document. Please try again with a clearer image.',
+      message: 'Failed to analyse the document. Please try again.',
     });
   }
 }
