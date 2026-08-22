@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import multer from 'multer';
 import * as car from '../controllers/car.controller.js';
+import { extractDocument } from '../controllers/documentExtract.controller.js';
 import { listPlateNumberPrices } from '../controllers/platePrice.controller.js';
 import { listDriverLicensePrices } from '../controllers/driverLicensePrice.controller.js';
 import { authenticate } from '../middleware/authenticate.js';
@@ -10,6 +12,18 @@ import { carRegistrationLimiter, apiLimiter } from '../middleware/rateLimiter.js
 import { handleCarRegistrationUploads, handleCarUpdateUploads } from '../middleware/fileUpload.js';
 
 const router = Router();
+
+// In-memory multer for the AI extract endpoint — single image, max 10 MB
+const extractUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_, file, cb) => {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+    cb(null, allowed.includes(file.mimetype));
+  },
+});
+
+router.post('/cars/extract-document', authenticate, apiLimiter, extractUpload.single('image'), extractDocument);
 
 // Plate number pricing (public to authenticated users)
 router.get('/plate-number-prices', authenticate, apiLimiter, listPlateNumberPrices);
