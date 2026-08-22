@@ -67,7 +67,7 @@ export async function extractDocument(req, res) {
 
   try {
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-3.6-flash' });
 
     const mimeType = req.file.mimetype || 'image/jpeg';
     const base64 = fileBuffer.toString('base64');
