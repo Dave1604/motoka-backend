@@ -145,8 +145,9 @@ router.get('/wallets/:userId/ledger', authenticateAdmin, walletAdmin.getUserLedg
 router.post('/wallets/:userId/adjust', authenticateAdmin, walletAdmin.adjustWallet);
 router.post('/wallets/:userId/status', authenticateAdmin, walletAdmin.updateWalletStatus);
 
-// ── Renewals call list (read-only) ────────────────────────────────────────────
-// /deferred must be registered before any future /:param route on this prefix
+// ── Renewals (read-only) ─────────────────────────────────────────────────────
+// Static paths before /renewals so they are not swallowed by a future /:id
+router.get('/renewals/summary', authenticateAdmin, renewals.getRenewalsSummary);
 router.get('/renewals/deferred', authenticateAdmin, renewals.listDeferredRenewals);
 router.get('/renewals', authenticateAdmin, renewals.listRenewals);
 

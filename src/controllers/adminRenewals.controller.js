@@ -1,5 +1,7 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { buildExpiryStatus } from '../utils/expiryStatus.js';
+import { parseMonthKey, bucketBounds, monthBounds } from '../utils/expiryMonth.js';
+import { loadRenewalsSummary, sanitizeSearch } from '../services/renewalsSummary.service.js';
 import * as response from '../utils/responses.js';
 import { logError } from '../utils/logger.js';
 
@@ -38,132 +40,169 @@ const daysUntil = (expiryDate, today) => {
 };
 
 /**
- * GET /admin/renewals?bucket=&search=&page=&limit=
+ * GET /admin/renewals/summary
  *
- * Returns one page of the requested bucket plus counts for every bucket, so the
- * tab badges stay accurate regardless of which tab is open.
+ * Counts only. Dashboard tiles hit this so they never pull the call list.
+ * Prefers a single Postgres aggregate (RPC); falls back to index COUNTs.
+ */
+export const getRenewalsSummary = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const fresh = req.query.fresh === '1';
+    const summary = await loadRenewalsSummary(supabaseAdmin, new Date(), { fresh });
+    return response.success(res, {
+      counts: summary.buckets,
+      by_month: summary.by_month,
+      expired_this_month: summary.expired_this_month,
+      expired_total: summary.expired_total,
+      expired_month: summary.expired_month,
+      buckets: BUCKETS.map(({ key, label }) => ({ key, label, count: summary.buckets[key] || 0 })),
+    }, 'Renewals summary retrieved');
+  } catch (err) {
+    logError('[Renewals] Summary failed', err);
+    return response.error(res, 'Failed to load renewals summary');
+  }
+};
+
+/**
+ * GET /admin/renewals?bucket=&month=&search=&page=&limit=
+ *
+ * One page of cars in the requested window. Counts come from the summary
+ * helper (aggregates), not from loading the table into Node.
  */
 export const listRenewals = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 25));
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 25));
     const bucket = BUCKETS.some(b => b.key === req.query.bucket) ? req.query.bucket : 'expired';
-    const search = req.query.search?.trim().toLowerCase() || null;
+    const month = bucket === 'expired' ? parseMonthKey(req.query.month) : null;
+    const search = sanitizeSearch(req.query.search);
 
     const now = new Date();
-    const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const fresh = req.query.fresh === '1';
+    const summary = await loadRenewalsSummary(supabaseAdmin, now, { fresh });
+    const todayIso = summary.today;
 
-    // The whole book is a few hundred rows and every bucket count is needed on
-    // every render, so it is cheaper to pull the expiry columns once than to run
-    // six windowed count queries per request.
-    const { data: cars, error } = await supabaseAdmin
-      .from('cars')
-      .select('id, slug, registration_no, plate_number, vehicle_make, vehicle_model, vehicle_year, expiry_date, status, user_id')
-      .is('deleted_at', null)
-      .not('expiry_date', 'is', null);
+    let start = null;
+    let end = null;
+    if (month) {
+      const bounds = monthBounds(month, todayIso);
+      if (!bounds || bounds.start === bounds.end) {
+        return response.success(res, {
+          data: [],
+          counts: summary.buckets,
+          by_month: summary.by_month,
+          month,
+          buckets: BUCKETS.map(({ key, label }) => ({ key, label, count: summary.buckets[key] || 0 })),
+          pagination: { total: 0, page, limit, total_pages: 1 },
+        }, 'Renewals retrieved');
+      }
+      start = bounds.start;
+      end = bounds.end;
+    } else {
+      const bounds = bucketBounds(bucket, todayIso);
+      start = bounds?.start ?? null;
+      end = bounds?.end ?? null;
+    }
 
+    let ownerIds = [];
+    if (search) {
+      const like = `"%${search}%"`;
+      const { data: profiles } = await supabaseAdmin
+        .from('profiles')
+        .select('id')
+        .or(`first_name.ilike.${like},last_name.ilike.${like},email.ilike.${like},phone_number.ilike.${like}`)
+        .limit(50);
+      ownerIds = (profiles || []).map(p => p.id).filter(Boolean);
+    }
+
+    const applyWindow = (query) => {
+      let q = query.is('deleted_at', null).not('expiry_date', 'is', null);
+      if (start) q = q.gte('expiry_date', start);
+      if (end) q = q.lt('expiry_date', end);
+      if (search) {
+        const like = `"%${search}%"`;
+        const parts = [
+          `registration_no.ilike.${like}`,
+          `plate_number.ilike.${like}`,
+          `vehicle_make.ilike.${like}`,
+        ];
+        if (ownerIds.length) parts.push(`user_id.in.(${ownerIds.join(',')})`);
+        q = q.or(parts.join(','));
+      }
+      return q;
+    };
+
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const ascending = bucket !== 'expired';
+
+    let pageQuery = applyWindow(
+      supabaseAdmin
+        .from('cars')
+        .select('id, slug, registration_no, plate_number, vehicle_make, vehicle_model, vehicle_year, expiry_date, status, user_id', { count: 'exact' })
+    )
+      .order('expiry_date', { ascending })
+      .range(from, to);
+
+    const { data: cars, count, error } = await pageQuery;
     if (error) {
       logError('[Renewals] Failed to query cars', { error: error.message });
       return response.error(res, 'Failed to load renewals');
     }
 
-    const counts = Object.fromEntries(BUCKETS.map(b => [b.key, 0]));
-    const inBucket = [];
-
-    for (const car of cars || []) {
-      const daysLeft = daysUntil(car.expiry_date, today);
-      if (daysLeft === null) continue;
-
-      const key = bucketFor(daysLeft);
-      if (!key) continue; // beyond 90 days — not a call target
-
-      counts[key] += 1;
-      if (key === bucket) inBucket.push({ ...car, daysLeft });
-    }
-
-    // Most urgent first: for expired that means longest-overdue first.
-    inBucket.sort((a, b) => a.daysLeft - b.daysLeft);
-
-    // Owner details for the rows we are about to return, not the whole book.
-    const ownerIds = [...new Set(inBucket.map(c => c.user_id).filter(Boolean))];
+    const pageCars = cars || [];
+    const pageOwnerIds = [...new Set(pageCars.map(c => c.user_id).filter(Boolean))];
     const ownerMap = new Map();
-
-    if (ownerIds.length > 0) {
-      const { data: profiles } = await supabaseAdmin
-        .from('profiles')
-        .select('id, first_name, last_name, email, phone_number, user_id')
-        .in('id', ownerIds);
-      (profiles || []).forEach(p => ownerMap.set(p.id, p));
-    }
-
-    // A past expiry date on its own does not mean the customer owes anything —
-    // they may have already paid. Chasing someone who has paid is worse than not
-    // calling at all, so pull their renewal orders and payments too.
-    const carIds = inBucket.map(c => c.id);
-    const openOrderByCar = new Map();     // renewal underway → do not chase
+    const openOrderByCar = new Map();
     const cancelledOrderByCar = new Map();
     const paidRenewalUsers = new Set();
 
-    if (carIds.length > 0) {
-      const [{ data: orders }, { data: payments }] = await Promise.all([
-        supabaseAdmin
-          .from('renewal_orders')
-          .select('id, order_number, status, car_id, created_at')
-          .in('car_id', carIds),
-        supabaseAdmin
-          .from('payment_transactions')
-          .select('user_id, payment_type')
-          .eq('status', 'successful')
-          .in('user_id', ownerIds.length ? ownerIds : ['00000000-0000-0000-0000-000000000000']),
+    if (pageOwnerIds.length > 0 || pageCars.length > 0) {
+      const carIds = pageCars.map(c => c.id);
+      const [profilesRes, ordersRes, paymentsRes] = await Promise.all([
+        pageOwnerIds.length
+          ? supabaseAdmin.from('profiles').select('id, first_name, last_name, email, phone_number, user_id').in('id', pageOwnerIds)
+          : Promise.resolve({ data: [] }),
+        carIds.length
+          ? supabaseAdmin
+              .from('renewal_orders')
+              .select('id, order_number, status, car_id, created_at')
+              .in('car_id', carIds)
+              .in('status', ['pending', 'processing', 'cancelled'])
+          : Promise.resolve({ data: [] }),
+        pageOwnerIds.length
+          ? supabaseAdmin
+              .from('payment_transactions')
+              .select('user_id, payment_type')
+              .eq('status', 'successful')
+              .in('user_id', pageOwnerIds)
+              .ilike('payment_type', '%renewal%')
+              .limit(100)
+          : Promise.resolve({ data: [] }),
       ]);
 
-      for (const order of orders || []) {
-        if (['pending', 'processing'].includes(order.status)) {
-          openOrderByCar.set(order.car_id, order);
-        } else if (order.status === 'cancelled') {
-          cancelledOrderByCar.set(order.car_id, order);
-        }
+      (profilesRes.data || []).forEach(p => ownerMap.set(p.id, p));
+      for (const order of ordersRes.data || []) {
+        if (['pending', 'processing'].includes(order.status)) openOrderByCar.set(order.car_id, order);
+        else if (order.status === 'cancelled') cancelledOrderByCar.set(order.car_id, order);
       }
-
-      for (const p of payments || []) {
+      for (const p of paymentsRes.data || []) {
         if (String(p.payment_type || '').includes('renewal')) paidRenewalUsers.add(p.user_id);
       }
     }
 
-    /**
-     * chase        — genuinely owes a renewal, safe to contact
-     * in_progress  — an order is already open; contacting them just causes confusion
-     * needs_review — money took, order cancelled, vehicle never renewed. This is a
-     *                billing problem to resolve, NOT a sales call.
-     */
     const renewalStateFor = (car) => {
       if (openOrderByCar.has(car.id)) return 'in_progress';
       if (cancelledOrderByCar.has(car.id) && paidRenewalUsers.has(car.user_id)) return 'needs_review';
       return 'chase';
     };
 
-    // Search runs after the owner join so it can match on owner name/email/phone
-    // as well as the vehicle — admins search by whatever they have to hand.
-    const matched = search
-      ? inBucket.filter(car => {
-          const o = ownerMap.get(car.user_id) || {};
-          const haystack = [
-            car.registration_no, car.plate_number, car.vehicle_make, car.vehicle_model,
-            o.first_name, o.last_name, o.email, o.phone_number,
-          ].filter(Boolean).join(' ').toLowerCase();
-          return haystack.includes(search);
-        })
-      : inBucket;
-
-    const total = matched.length;
-    const start = (page - 1) * limit;
-    const rows = matched.slice(start, start + limit).map(car => {
+    const todayUtc = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const rows = pageCars.map(car => {
       const owner = ownerMap.get(car.user_id) || {};
       const openOrder = openOrderByCar.get(car.id) || null;
-      const renewalState = renewalStateFor(car);
-      // Passing the open order flips the status to "Renewal in progress" rather
-      // than "N days overdue" — the util has always supported this.
       const expiry = buildExpiryStatus(car.expiry_date, now, openOrder);
       return {
         car_id: car.id,
@@ -172,11 +211,11 @@ export const listRenewals = async (req, res) => {
         vehicle: [car.vehicle_year, car.vehicle_make, car.vehicle_model].filter(Boolean).join(' ') || null,
         car_status: car.status,
         expiry_date: car.expiry_date,
-        days_left: car.daysLeft,
+        days_left: daysUntil(car.expiry_date, todayUtc),
         expiry_message: expiry.message,
         is_expired: expiry.is_expired,
         is_urgent: expiry.is_urgent,
-        renewal_state: renewalState,
+        renewal_state: renewalStateFor(car),
         open_order_number: openOrder?.order_number || null,
         cancelled_order_number: cancelledOrderByCar.get(car.id)?.order_number || null,
         owner: {
@@ -189,16 +228,13 @@ export const listRenewals = async (req, res) => {
       };
     });
 
-    // State split across the WHOLE bucket, not just this page — the dashboard uses
-    // it to show how many of the expired are actually callable.
-    const states = { chase: 0, in_progress: 0, needs_review: 0 };
-    for (const car of inBucket) states[renewalStateFor(car)] += 1;
-
+    const total = count || 0;
     return response.success(res, {
       data: rows,
-      counts,
-      states,
-      buckets: BUCKETS.map(({ key, label }) => ({ key, label, count: counts[key] })),
+      counts: summary.buckets,
+      by_month: summary.by_month,
+      month,
+      buckets: BUCKETS.map(({ key, label }) => ({ key, label, count: summary.buckets[key] || 0 })),
       pagination: {
         total,
         page,
@@ -207,7 +243,7 @@ export const listRenewals = async (req, res) => {
       },
     }, 'Renewals retrieved');
   } catch (err) {
-    logError('[Renewals] Unexpected error', { error: err.message });
+    logError('[Renewals] Unexpected error', err);
     return response.error(res, 'Failed to load renewals');
   }
 };
@@ -223,7 +259,7 @@ export const listDeferredRenewals = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
     const page = Math.max(1, parseInt(req.query.page) || 1);
-    const limit = Math.min(200, Math.max(1, parseInt(req.query.limit) || 25));
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 25));
     const offset = (page - 1) * limit;
 
     const { data: reminders, count, error } = await supabaseAdmin
