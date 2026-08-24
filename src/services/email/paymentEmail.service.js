@@ -117,7 +117,7 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
           <p>${bodyOutro}</p>
           
           <center>
-            <a href="${process.env.FRONTEND_URL}/orders/${orderNumber}" class="cta-button">View Order Details</a>
+            <a href="${process.env.FRONTEND_URL}/orders/${orderNumber}/track" class="cta-button">Track your order</a>
           </center>
         </div>
         <div class="footer">

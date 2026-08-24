@@ -56,6 +56,7 @@ import {
   getPaymentMethods,
   getPendingTokenizationSubscriptions
 } from '../controllers/payment/paymentMethods.controller.js';
+import { quoteDeliveryHandler, userTrackOrderHandler } from '../controllers/delivery.controller.js';
 
 const router = Router();
 
@@ -200,7 +201,9 @@ router.post(
 router.post('/payment/check-existing', authenticate, checkExistingPayments);
 router.get('/payment/car-receipt/:identifier', authenticate, getCarPaymentReceipt);
 
+router.post('/delivery/quote', authenticate, paymentLimiter, quoteDeliveryHandler);
 router.get('/orders', authenticate, getUserOrdersHandler);
+router.get('/orders/:orderNumber/tracking', authenticate, userTrackOrderHandler);
 router.get('/orders/:orderNumber', authenticate, getOrder);
 
 router.get('/subscriptions', authenticate, getSubscriptions);

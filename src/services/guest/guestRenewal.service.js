@@ -11,10 +11,11 @@
  */
 
 import crypto from 'crypto';
-import { resolveStateAndLGA } from '../location.service.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { logError, logInfo, logDebug } from '../../utils/logger.js';
 import { getRenewalItems, validateRenewalItemsSelection } from '../payment/renewalItems.service.js';
+import { quoteFromDeliveryFields, DeliveryQuoteError } from '../courier/deliveryQuote.service.js';
+import { TerminalError } from '../courier/terminal.service.js';
 import { generatePaymentReference } from '../../utils/paymentHelpers.js';
 import { verifyTransaction as monicreditVerify } from '../payment/monicredit/monicredit.service.js';
 import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify, PaystackError } from '../payment/paystack.service.js';
@@ -97,20 +98,26 @@ export async function initiateGuestRenewal({
         { statusCode: 400 }
       );
     }
-    const resolved = await resolveStateAndLGA(
-      deliveryDetails.state,
-      deliveryDetails.lga
-    );
-    if (!resolved.valid) {
-      throw Object.assign(new Error(resolved.error), { statusCode: 400 });
+    let quote;
+    try {
+      quote = await quoteFromDeliveryFields(deliveryDetails, {
+        purpose: 'renewal',
+        selectedItems,
+      });
+    } catch (quoteError) {
+      if (quoteError instanceof DeliveryQuoteError || quoteError instanceof TerminalError) {
+        throw Object.assign(new Error(quoteError.message), { statusCode: quoteError.statusCode || 400 });
+      }
+      throw quoteError;
     }
-    deliveryFee = resolved.delivery_fee; // in kobo
+    deliveryFee = quote.fee_kobo;
     resolvedDelivery = {
-      address: deliveryDetails.address,
-      state: resolved.stateCode,
-      lga: resolved.lgaName,
-      contact: deliveryDetails.contact,
-      fee: deliveryFee
+      address: quote.address,
+      state: quote.stateCode,
+      lga: quote.lgaName,
+      contact: quote.contact,
+      fee: deliveryFee,
+      estimated_weight_kg: quote.weight_kg,
     };
   }
 
