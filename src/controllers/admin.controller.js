@@ -36,6 +36,7 @@ import { getOrderById } from '../services/payment/order.service.js';
 import { PaymentSuccessService } from '../services/payment/payment-success.service.js';
 import { PAYMENT_STATUS, ORDER_TYPE } from '../constants/payment.constants.js';
 import { generateOrderNumber } from '../utils/paymentHelpers.js';
+import { loadRenewalsSummary } from '../services/renewalsSummary.service.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -845,17 +846,33 @@ export const getDashboardStats = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
 
-    const [
-      { count: totalOrders },
-      { count: totalCars },
-      { count: totalUsers },
-      { data: amountData },
-    ] = await Promise.all([
+    const now = new Date();
+    const monthStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+
+    const settled = await Promise.allSettled([
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }),
       supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null),
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false),
       supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
+      loadRenewalsSummary(supabaseAdmin),
     ]);
+
+    const pick = (index) => {
+      const result = settled[index];
+      if (result.status !== 'fulfilled') {
+        logError('Dashboard stat query failed', result.reason);
+        return { count: 0, data: [] };
+      }
+      return result.value || { count: 0, data: [] };
+    };
+
+    const totalOrders = pick(0).count;
+    const totalCars = pick(1).count;
+    const totalUsers = pick(2).count;
+    const amountData = pick(3).data;
+    const renewalsSummary = settled[4].status === 'fulfilled' ? settled[4].value : null;
+    const expiredThisMonth = renewalsSummary?.expired_this_month || 0;
+    const expiredTotal = renewalsSummary?.expired_total || 0;
 
     const totalAmountKobo = (amountData || []).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
 
@@ -868,6 +885,9 @@ export const getDashboardStats = async (req, res) => {
         total_agents: 0,
         total_cars: totalCars || 0,
         total_users: totalUsers || 0,
+        expired_cars_this_month: expiredThisMonth || 0,
+        expired_cars_total: expiredTotal || 0,
+        expired_month: renewalsSummary?.expired_month || monthStart.slice(0, 7),
       },
     });
   } catch (error) {
