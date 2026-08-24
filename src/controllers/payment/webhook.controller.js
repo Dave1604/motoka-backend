@@ -128,14 +128,24 @@ async function handleMonipayChargeSuccess(data, eventId) {
 
   let transaction = await getTransactionByReference(reference);
   if (!transaction) {
-    const guestOrder = await markGuestOrderPaid(reference);
+    // Guest orders have no payment_transactions row, so none of the checks below
+    // run for them. They used to be fulfilled straight off the webhook body,
+    // which made the signature the only thing between a forged POST and free
+    // vehicle papers. Re-verify against the API first, exactly as the signed-in
+    // path does. (Ladipo needs no equivalent here — verifyAndFulfillOrder calls
+    // the gateway and amount-checks on its own.)
+    const guestOrder = await markGuestOrderPaid(reference, {
+      verifyWithGateway: async () => monipayVerifyTransaction(reference),
+    });
     if (guestOrder) {
       logInfo('[Monipay Webhook] Guest order marked as paid', { reference, orderId: guestOrder.id });
       return;
     }
 
     try {
-      const ladipoOrder = await fulfillLadipoOrder(reference, null, { gateway: PAYMENT_GATEWAY.MONIPAY });
+      const ladipoOrder = await fulfillLadipoOrder(reference, null, {
+        gateway: PAYMENT_GATEWAY.MONIPAY,
+      });
       if (ladipoOrder) {
         logInfo('[Monipay Webhook] Ladipo order fulfilled via webhook', {
           reference,
@@ -177,16 +187,28 @@ async function handleMonipayChargeSuccess(data, eventId) {
     return;
   }
 
-  if (typeof verifyResult.amount === 'number' && verifyResult.amount > 0) {
-    if (Math.abs(verifyResult.amount - transaction.amount) > 1) {
-      logError('[Monipay Webhook] Verify amount mismatch', {
-        reference,
-        expected: transaction.amount,
-        actual: verifyResult.amount,
-      });
-      await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
-      return;
-    }
+  // Monipay's docs say to fulfil only when the status indicates success AND the
+  // amount matches, so a missing amount is not a reason to skip the check — it is
+  // a reason not to fulfil. Leave the transaction pending rather than marking it
+  // failed: the money may well have been taken, and the poller or a human needs
+  // to be able to pick it up.
+  if (typeof verifyResult.amount !== 'number') {
+    logError('[Monipay Webhook] Verify returned no usable amount — not fulfilling', {
+      reference,
+      expected: transaction.amount,
+      reported: verifyResult.amount,
+    });
+    return;
+  }
+
+  if (Math.abs(verifyResult.amount - transaction.amount) > 1) {
+    logError('[Monipay Webhook] Verify amount mismatch', {
+      reference,
+      expected: transaction.amount,
+      actual: verifyResult.amount,
+    });
+    await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });
+    return;
   }
 
   let metadata = {};

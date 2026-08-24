@@ -57,9 +57,27 @@ if (missingEnvVars.length > 0) {
   process.exit(1);
 }
 
+// SKIP_WEBHOOK_VERIFY exists so webhooks can be POSTed by hand in local dev.
+// In production it turns every webhook endpoint into an unauthenticated
+// "mark this order paid" API, so refuse to start rather than run exposed.
+if (isProduction && process.env.SKIP_WEBHOOK_VERIFY === 'true') {
+  console.error('╔══════════════════════════════════════════════════════════════╗');
+  console.error('║  PRODUCTION CONFIGURATION ERROR                             ║');
+  console.error('╚══════════════════════════════════════════════════════════════╝');
+  console.error('');
+  console.error('  ❌ SKIP_WEBHOOK_VERIFY=true with NODE_ENV=production');
+  console.error('');
+  console.error('This disables webhook signature verification on every gateway.');
+  console.error('Anyone who can reach /api/webhooks/* could mark orders as paid.');
+  console.error('It is a local-development flag only.');
+  console.error('');
+  console.error('Remove it, or set SKIP_WEBHOOK_VERIFY=false, then restart.');
+  process.exit(1);
+}
+
 if (isProduction) {
   const missingProductionVars = productionRequiredEnvVars.filter(key => !process.env[key]);
-  
+
   if (missingProductionVars.length > 0) {
     console.error('╔══════════════════════════════════════════════════════════════╗');
     console.error('║  PRODUCTION CONFIGURATION ERROR                             ║');

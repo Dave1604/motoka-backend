@@ -357,7 +357,17 @@ export async function getGuestReceipt(orderId, receiptToken) {
  * Called from the webhook handler when payment for a guest reference succeeds.
  * Marks the guest_renewal_order as payment_success.
  */
-export async function markGuestOrderPaid(paymentReference) {
+/**
+ * @param {string} paymentReference
+ * @param {Object} [options]
+ * @param {Function} [options.verifyWithGateway] - Async callback returning the
+ *   gateway's verify result. When supplied, the order is only marked paid if the
+ *   gateway independently confirms success and the reported amount matches the
+ *   order total. Webhook callers must pass this: a webhook body is an assertion
+ *   by the sender, not proof of payment. Callers that have already verified may
+ *   omit it.
+ */
+export async function markGuestOrderPaid(paymentReference, { verifyWithGateway } = {}) {
   const supabase = getSupabaseAdmin();
 
   const { data: order, error } = await supabase
@@ -369,6 +379,47 @@ export async function markGuestOrderPaid(paymentReference) {
   if (error || !order) {
     logError('[GuestRenewal] markGuestOrderPaid: order not found', { paymentReference });
     return null;
+  }
+
+  if (typeof verifyWithGateway === 'function') {
+    let verified;
+    try {
+      verified = await verifyWithGateway();
+    } catch (verifyError) {
+      logError('[GuestRenewal] markGuestOrderPaid: gateway verify threw — not fulfilling', {
+        paymentReference,
+        orderId: order.id,
+        error: verifyError.message,
+      });
+      return null;
+    }
+
+    if (!verified?.success && verified?.status !== 'success') {
+      logError('[GuestRenewal] markGuestOrderPaid: gateway did not confirm success', {
+        paymentReference,
+        orderId: order.id,
+        status: verified?.status,
+      });
+      return null;
+    }
+
+    if (typeof verified.amount !== 'number') {
+      logError('[GuestRenewal] markGuestOrderPaid: gateway reported no amount — not fulfilling', {
+        paymentReference,
+        orderId: order.id,
+      });
+      return null;
+    }
+
+    if (Math.abs(verified.amount - Number(order.total_amount)) > 1) {
+      logError('[GuestRenewal] markGuestOrderPaid: amount mismatch — not fulfilling', {
+        paymentReference,
+        orderId: order.id,
+        expected: order.total_amount,
+        actual: verified.amount,
+      });
+      return null;
+    }
   }
 
   if (order.payment_status === 'payment_success') {

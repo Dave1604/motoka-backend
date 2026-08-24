@@ -157,10 +157,38 @@ export const getPaymentConfig = async (req, res) => {
  * that both motoka.ng and motokapp.ng get the correct callback URL rather than
  * always routing through FRONTEND_URL.
  */
-function buildCallbackUrl(req, path) {
-  const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '').split(',').map(s => s.trim()).filter(Boolean);
-  const origin = req.headers.origin || req.headers.referer || '';
-  const matched = allowedOrigins.find(o => origin.startsWith(o));
+export function buildCallbackUrl(req, path) {
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
+    .split(',')
+    .map(s => s.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  const rawOrigin = req.headers.origin || req.headers.referer || '';
+
+  // Compare parsed origins, not string prefixes. `startsWith` treated
+  // https://motoka.ng.evil.com as a match for https://motoka.ng, which handed an
+  // attacker-controlled host the post-payment redirect — carrying the payment
+  // reference with it.
+  let requestOrigin = null;
+  try {
+    if (rawOrigin) {
+      const parsed = new URL(rawOrigin);
+      requestOrigin = `${parsed.protocol}//${parsed.host}`;
+    }
+  } catch {
+    requestOrigin = null;
+  }
+
+  const matched = requestOrigin
+    ? allowedOrigins.find(o => {
+        try {
+          const allowed = new URL(o);
+          return `${allowed.protocol}//${allowed.host}` === requestOrigin;
+        } catch {
+          return false;
+        }
+      })
+    : null;
+
   const base = matched || process.env.FRONTEND_URL || 'http://localhost:3001';
   return `${base.replace(/\/$/, '')}${path}`;
 }

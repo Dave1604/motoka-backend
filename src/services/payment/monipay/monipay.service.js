@@ -157,6 +157,15 @@ export async function verifyTransaction(reference) {
   const status = data.status || data.payment_status || data.gateway_status;
   const paid = isPaidStatus(status) || data.success === true;
 
+  // null, not 0, when the gateway did not give us a usable amount. Callers must
+  // be able to tell "no amount reported" apart from "amount was zero" — coercing
+  // to 0 made the caller's amount-match check silently skip itself.
+  const rawAmount = data.amount ?? data.amount_paid ?? data.total_amount;
+  const parsedAmount = Number(rawAmount);
+  const amount = Number.isFinite(parsedAmount) && rawAmount !== null && rawAmount !== undefined
+    ? parsedAmount
+    : null;
+
   logInfo('[Monipay] Transaction verified', {
     reference: data.reference || reference,
     status,
@@ -168,7 +177,7 @@ export async function verifyTransaction(reference) {
     reference: data.reference || data.order_id || reference,
     status: paid ? 'success' : String(status || 'pending').toLowerCase(),
     success: paid,
-    amount: Number(data.amount) || 0,
+    amount,
     currency: data.currency || 'NGN',
     channel: data.channel || data.payment_channel || null,
     paid_at: data.paid_at || data.paidAt || data.date_paid || null,
@@ -178,32 +187,28 @@ export async function verifyTransaction(reference) {
   };
 }
 
-function timingSafeHexCompare(a, b) {
-  try {
-    const bufA = Buffer.from(a, 'hex');
-    const bufB = Buffer.from(b, 'hex');
-    if (bufA.length !== bufB.length) return false;
-    return crypto.timingSafeEqual(bufA, bufB);
-  } catch {
-    return false;
-  }
-}
-
-// Monipay does not issue a separate webhook secret — the hook is signed with the
-// API secret key, the same arrangement Monicredit used. We accept both SHA-256
-// and SHA-512 because the digest Monipay actually sends is not documented, and
-// Monicredit's verifier had to allow for the same ambiguity.
+// Per Monipay's API docs: header `x-monipay-signature`, HMAC-SHA512 of the raw
+// request body, signed with the private/secret key. There is no separate
+// webhook secret — MONIPAY_WEBHOOK_SECRET exists only as an override in case
+// Monipay starts issuing one. SHA-512 only: the docs are explicit, so we do not
+// widen this to other digests.
 export function verifyWebhookSignature(rawBody, signature) {
   const secret = process.env.MONIPAY_WEBHOOK_SECRET || process.env.MONIPAY_SECRET_KEY;
   if (!secret || !signature || rawBody == null) return false;
 
   const payload = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(String(rawBody), 'utf8');
-  const expectedSHA256 = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  const expectedSHA512 = crypto.createHmac('sha512', secret).update(payload).digest('hex');
-  const bare = String(signature).replace(/^sha(256|512)=/i, '');
+  const expected = crypto.createHmac('sha512', secret).update(payload).digest('hex');
+  // The docs show the header both bare and `sha512=`-prefixed.
+  const bare = String(signature).replace(/^sha512=/i, '');
 
-  return timingSafeHexCompare(bare, expectedSHA256)
-    || timingSafeHexCompare(bare, expectedSHA512);
+  try {
+    const a = Buffer.from(expected, 'hex');
+    const b = Buffer.from(bare, 'hex');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 export function parseWebhookEvent(body = {}) {
