@@ -15,6 +15,7 @@ import { uploadFile, getSignedUrl, withSignedUrls } from '../services/fileUpload
 import { healthMonitor } from '../services/payment/gateway/health-monitor.js';
 import { gatewayManager } from '../services/payment/gateway/gateway-manager.js';
 import { completeOrder, OrderError } from '../services/payment/order.service.js';
+import { getDeliveryProgressForOrder, getDeliveryProgressForGuestOrder } from '../services/courier/deliveryProgress.service.js';
 import { invalidateProfileCache } from '../middleware/authenticate.js';
 import { sendOrderCompletedEmail, sendOrderInProgressEmail } from '../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../services/notification.service.js';
@@ -1064,6 +1065,11 @@ export const getOrderDetails = async (req, res) => {
       stateName,
       order.delivery_lga
     );
+
+    const delivery = await getDeliveryProgressForOrder(order, { includeLabel: true });
+    formatted.shipment = delivery.shipment;
+    formatted.tracking = delivery.tracking;
+    formatted.progress = delivery.progress;
 
     return res.status(200).json({ status: true, message: 'Order retrieved successfully', data: formatted });
   } catch (error) {
@@ -2514,7 +2520,8 @@ export const getGuestOrderDetails = async (req, res) => {
       return response.notFound(res, 'Guest order not found');
     }
 
-    return response.success(res, order, 'Guest order retrieved');
+    const delivery = await getDeliveryProgressForGuestOrder(order, { includeLabel: true });
+    return response.success(res, { ...order, ...delivery }, 'Guest order retrieved');
   } catch (err) {
     logError('[Admin] getGuestOrderDetails error', err);
     return response.serverError(res, 'Failed to retrieve guest order');
