@@ -2,10 +2,11 @@ import { getWallet, getWalletLedger, payWithWallet as payWithWalletService, Wall
 import { createTransaction, updateTransactionWithPaystackInit, getTransactionByReference, markTransactionAbandoned } from '../../services/payment/transaction.service.js';
 import { initializeTransaction, PaystackError } from '../../services/payment/paystack.service.js';
 import { validateRenewalItemsSelection } from '../../services/payment/renewalItems.service.js';
-import { resolveStateAndLGA } from '../../services/location.service.js';
+import { quoteFromDeliveryFields, DeliveryQuoteError } from '../../services/courier/deliveryQuote.service.js';
+import { TerminalError } from '../../services/courier/terminal.service.js';
 import { getOrderById, findRecentActiveOrder } from '../../services/payment/order.service.js';
 import { PaymentSuccessService } from '../../services/payment/payment-success.service.js';
-import { buildPaymentMetadata } from '../../utils/paymentHelpers.js';
+import { buildPaymentMetadata, nairaToKobo } from '../../utils/paymentHelpers.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import {
   computeFunding,
@@ -89,9 +90,7 @@ export const getFundingQuote = async (req, res) => {
   }
 };
 
-// POST /api/wallet/pay  → pay for a car renewal from wallet balance.
-// Body mirrors /payments/initialize (renewal): car_slug, payment_schedule_id,
-// renewal_months, delivery_details, renewal_state.
+// POST /api/wallet/pay  → pay for a renewal, plate, or driver license from wallet.
 export const payWithWallet = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -101,78 +100,193 @@ export const payWithWallet = async (req, res) => {
       renewal_months: rawRenewalMonths,
       delivery_details,
       meta_data,
-      renewal_state = null
+      renewal_state = null,
+      payment_type = PAYMENT_TYPE.RENEWAL_MANUAL,
+      plate_type = null,
+      sub_type = null,
+      license_type = null,
+      duration = null,
     } = req.body;
 
-    // Renewal items → amount (kobo). Same validation as the gateway flow.
-    const validation = await validateRenewalItemsSelection(payment_schedule_id);
-    if (!validation.valid) return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
-
-    const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
-    const parsedMonths = parseInt(rawRenewalMonths);
-    const renewalMonths = !rawRenewalMonths || isNaN(parsedMonths) ? 12
-      : (VALID_RENEWAL_MONTHS.includes(parsedMonths) ? parsedMonths : null);
-    if (renewalMonths === null) {
-      return paymentResponse.error(res, `Invalid renewal_months. Must be one of: ${VALID_RENEWAL_MONTHS.join(', ')}`, HTTP_STATUS.BAD_REQUEST);
-    }
+    const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER || payment_type === 'plate_number';
+    const isDriverLicensePayment = payment_type === PAYMENT_TYPE.DRIVER_LICENSE || payment_type === 'driver_license';
+    const paymentType = isPlatePayment
+      ? PAYMENT_TYPE.PLATE_NUMBER
+      : isDriverLicensePayment
+        ? PAYMENT_TYPE.DRIVER_LICENSE
+        : PAYMENT_TYPE.RENEWAL_MANUAL;
+    const orderType = isPlatePayment
+      ? ORDER_TYPE.PLATE_NUMBER
+      : isDriverLicensePayment
+        ? ORDER_TYPE.DRIVER_LICENSE
+        : ORDER_TYPE.RENEWAL_MANUAL;
+    const quotePurpose = isPlatePayment ? 'plate_number' : isDriverLicensePayment ? 'driver_license' : 'renewal';
 
     const supabaseAdmin = getSupabaseAdmin();
-    if (!car_slug) return paymentResponse.error(res, 'car_slug is required', HTTP_STATUS.BAD_REQUEST);
-    const { data: car, error: carError } = await supabaseAdmin
-      .from('cars')
-      .select('id, slug, user_id')
-      .eq('slug', car_slug)
-      .eq('user_id', userId)
-      .is('deleted_at', null)
-      .single();
-    if (carError || !car) return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
+    let car = null;
+    let selectedItems = [];
+    let renewalMonths = 0;
+    let renewalAmount = 0;
+    let plateType = null;
+    let subType = null;
+    let licenseType = null;
+    let licenseDuration = null;
 
-    // Optional delivery — validate + fee, same as init.
-    const deliveryData = delivery_details || meta_data || {};
-    let deliveryFee = 0;
-    let hasDeliveryDetails = !!(deliveryData && (deliveryData.address || deliveryData.state || deliveryData.state_id || deliveryData.lga || deliveryData.lga_id || deliveryData.contact));
-    if (hasDeliveryDetails) {
-      const stateInput = deliveryData.state_id !== undefined ? deliveryData.state_id : deliveryData.state;
-      const lgaInput = deliveryData.lga_id !== undefined ? deliveryData.lga_id : deliveryData.lga;
-      const stateValidation = await resolveStateAndLGA(stateInput, lgaInput);
-      if (!stateValidation.valid) return paymentResponse.error(res, stateValidation.error, HTTP_STATUS.BAD_REQUEST);
-      deliveryFee = stateValidation.delivery_fee || 0;
-      deliveryData.state = stateValidation.stateCode || deliveryData.state;
-      deliveryData.lga = stateValidation.lgaName || deliveryData.lga;
+    if (isPlatePayment) {
+      if (!plate_type) {
+        return paymentResponse.error(res, 'plate_type is required for plate number payments', HTTP_STATUS.BAD_REQUEST);
+      }
+      if (!car_slug) return paymentResponse.error(res, 'car_slug is required', HTTP_STATUS.BAD_REQUEST);
+      const { data: carRow, error: carError } = await supabaseAdmin
+        .from('cars')
+        .select('id, slug, user_id')
+        .eq('slug', car_slug)
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .single();
+      if (carError || !carRow) return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
+      car = carRow;
+
+      let priceQuery = supabaseAdmin.from('plate_number_prices').select('*').eq('plate_type', plate_type);
+      if (sub_type) priceQuery = priceQuery.eq('sub_type', sub_type);
+      else priceQuery = priceQuery.is('sub_type', null);
+      const { data: priceData, error: priceError } = await priceQuery.single();
+      if (priceError || !priceData) {
+        return paymentResponse.error(
+          res,
+          `No price configured for plate type "${plate_type}"${sub_type ? ` / sub-type "${sub_type}"` : ''}`,
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      renewalAmount = nairaToKobo(Number(priceData.price));
+      plateType = plate_type;
+      subType = sub_type || null;
+    } else if (isDriverLicensePayment) {
+      const validTypes = ['new', 'renew'];
+      const validDurations = ['3yr', '5yr', 'international'];
+      if (!license_type || !validTypes.includes(String(license_type).toLowerCase())) {
+        return paymentResponse.error(res, 'license_type is required and must be "new" or "renew"', HTTP_STATUS.BAD_REQUEST);
+      }
+      if (!duration) {
+        return paymentResponse.error(res, `duration is required. Must be one of: ${validDurations.join(', ')}`, HTTP_STATUS.BAD_REQUEST);
+      }
+      const normDuration = String(duration).toLowerCase();
+      if (!validDurations.includes(normDuration)) {
+        return paymentResponse.error(res, `duration must be one of: ${validDurations.join(', ')}`, HTTP_STATUS.BAD_REQUEST);
+      }
+      const { data: priceData, error: priceError } = await supabaseAdmin
+        .from('driver_license_prices')
+        .select('*')
+        .eq('license_type', String(license_type).toLowerCase())
+        .eq('duration', normDuration)
+        .eq('is_active', true)
+        .single();
+      if (priceError || !priceData) {
+        return paymentResponse.error(
+          res,
+          `No price configured for driver license type "${license_type}" / duration "${normDuration}"`,
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      renewalAmount = nairaToKobo(Number(priceData.price));
+      licenseType = String(license_type).toLowerCase();
+      licenseDuration = normDuration;
+    } else {
+      const validation = await validateRenewalItemsSelection(payment_schedule_id);
+      if (!validation.valid) return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
+
+      const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
+      const parsedMonths = parseInt(rawRenewalMonths);
+      renewalMonths = !rawRenewalMonths || isNaN(parsedMonths) ? 12
+        : (VALID_RENEWAL_MONTHS.includes(parsedMonths) ? parsedMonths : null);
+      if (renewalMonths === null) {
+        return paymentResponse.error(res, `Invalid renewal_months. Must be one of: ${VALID_RENEWAL_MONTHS.join(', ')}`, HTTP_STATUS.BAD_REQUEST);
+      }
+      if (!car_slug) return paymentResponse.error(res, 'car_slug is required', HTTP_STATUS.BAD_REQUEST);
+      const { data: carRow, error: carError } = await supabaseAdmin
+        .from('cars')
+        .select('id, slug, user_id')
+        .eq('slug', car_slug)
+        .eq('user_id', userId)
+        .is('deleted_at', null)
+        .single();
+      if (carError || !carRow) return paymentResponse.notFound(res, ERROR_MESSAGES.CAR_NOT_FOUND);
+      car = carRow;
+      selectedItems = payment_schedule_id;
+      renewalAmount = validation.total;
     }
 
-    const renewalAmount = validation.total;
+    const deliveryData = delivery_details || meta_data || {};
+    let deliveryFee = 0;
+    let hasDeliveryDetails = !!(deliveryData && (deliveryData.address || deliveryData.delivery_address || deliveryData.state || deliveryData.state_id || deliveryData.lga || deliveryData.lga_id || deliveryData.contact || deliveryData.delivery_contact));
+    if (hasDeliveryDetails) {
+      let quote;
+      try {
+        quote = await quoteFromDeliveryFields(deliveryData, {
+          purpose: quotePurpose,
+          selectedItems,
+        });
+      } catch (quoteError) {
+        if (quoteError instanceof DeliveryQuoteError || quoteError instanceof TerminalError) {
+          return paymentResponse.error(res, quoteError.message, quoteError.statusCode || HTTP_STATUS.BAD_REQUEST);
+        }
+        throw quoteError;
+      }
+      deliveryFee = quote.fee_kobo;
+      deliveryData.state = quote.stateCode;
+      deliveryData.lga = quote.lgaName;
+      deliveryData.address = quote.address;
+      deliveryData.contact = quote.contact;
+    }
+
     const amount = renewalAmount + deliveryFee;
 
-    // Fast, friendly pre-checks (the RPC is the source of truth and re-checks atomically).
     const wallet = await getWallet(userId);
     if (wallet.status === 'frozen') return paymentResponse.error(res, 'Your wallet is frozen. Please contact support.', HTTP_STATUS.FORBIDDEN);
     if (wallet.balance_kobo < amount) {
       return paymentResponse.error(res, `Insufficient wallet balance. You have ₦${(wallet.balance_kobo / 100).toLocaleString()} but need ₦${(amount / 100).toLocaleString()}.`, HTTP_STATUS.BAD_REQUEST);
     }
 
-    // Refuse a duplicate active order for this car (mirrors the gateway success guard).
-    const duplicate = await findRecentActiveOrder({ carId: car.id, userId, paymentType: ORDER_TYPE.RENEWAL_MANUAL });
+    const duplicate = await findRecentActiveOrder({
+      carId: car?.id || null,
+      userId,
+      paymentType: orderType,
+    });
     if (duplicate) {
-      return paymentResponse.error(res, `An active renewal order already exists for this car (${duplicate.order_number}).`, HTTP_STATUS.CONFLICT);
+      return paymentResponse.error(res, `An active order already exists (${duplicate.order_number}).`, HTTP_STATUS.CONFLICT);
     }
 
     const metadata = buildPaymentMetadata({
-      carId: car.id, carSlug: car.slug, paymentType: PAYMENT_TYPE.RENEWAL_MANUAL,
-      renewalMonths, paymentScheduleId: payment_schedule_id, renewalAmount, deliveryFee,
-      deliveryDetails: hasDeliveryDetails ? deliveryData : null, userId, renewalState: renewal_state
+      carId: car?.id ?? null,
+      carSlug: car?.slug ?? car_slug ?? null,
+      paymentType,
+      renewalMonths,
+      paymentScheduleId: selectedItems,
+      renewalAmount,
+      deliveryFee,
+      deliveryDetails: hasDeliveryDetails ? deliveryData : null,
+      userId,
+      plateType,
+      subType,
+      licenseType,
+      licenseDuration,
+      renewalState: (!isPlatePayment && !isDriverLicensePayment) ? renewal_state : null,
     });
 
     const transaction = await createTransaction({
-      userId, carId: car.id, amount, paymentType: PAYMENT_TYPE.RENEWAL_MANUAL,
-      paymentGateway: PAYMENT_GATEWAY.WALLET, metadata
+      userId,
+      carId: car?.id ?? null,
+      amount,
+      paymentType,
+      paymentGateway: PAYMENT_GATEWAY.WALLET,
+      metadata,
     });
 
     let result;
     try {
       result = await payWithWalletService({
         userId, reference: transaction.reference, amountKobo: amount, transactionId: transaction.id,
-        orderType: ORDER_TYPE.RENEWAL_MANUAL, renewalMonths, selectedItems: payment_schedule_id,
+        orderType, renewalMonths, selectedItems,
         renewalAmount, deliveryFee,
         deliveryAddress: hasDeliveryDetails ? (deliveryData.address || null) : null,
         deliveryState: hasDeliveryDetails ? (deliveryData.state || null) : null,
@@ -181,13 +295,23 @@ export const payWithWallet = async (req, res) => {
         metadata, renewalState: renewal_state
       });
     } catch (payErr) {
-      // Debit + fulfillment are atomic in the RPC, so a failure means nothing was
-      // debited. Just abandon the pending transaction row.
       await markTransactionAbandoned(transaction.reference, 'gateway_failure').catch(() => {});
       throw payErr;
     }
 
     const order = result.orderId ? await getOrderById(result.orderId).catch(() => null) : null;
+
+    if (isDriverLicensePayment && order?.id) {
+      try {
+        await supabaseAdmin
+          .from('driver_license_applications')
+          .update({ order_id: order.id, updated_at: new Date().toISOString() })
+          .eq('user_id', userId)
+          .eq('application_type', licenseType);
+      } catch (linkErr) {
+        logError('[Wallet Pay] Failed to link driver license application (non-fatal)', { error: linkErr.message, orderId: order.id });
+      }
+    }
 
     if (!result.alreadyProcessed) {
       try {
@@ -200,7 +324,7 @@ export const payWithWallet = async (req, res) => {
       }
     }
 
-    logInfo('[Wallet Pay] Paid from wallet', { reference: transaction.reference, userId, amount, balanceAfter: result.balanceAfter, orderId: result.orderId });
+    logInfo('[Wallet Pay] Paid from wallet', { reference: transaction.reference, userId, amount, balanceAfter: result.balanceAfter, orderId: result.orderId, paymentType });
 
     return paymentResponse.success(res, {
       reference: transaction.reference,
@@ -213,6 +337,9 @@ export const payWithWallet = async (req, res) => {
   } catch (error) {
     if (error instanceof WalletError) {
       return paymentResponse.error(res, error.message, error.statusCode || 500);
+    }
+    if (error instanceof TerminalError || error instanceof DeliveryQuoteError) {
+      return paymentResponse.error(res, error.message, error.statusCode || 400);
     }
     logError('[Wallet Pay] error', { error: error.message });
     return paymentResponse.serverError(res, 'Failed to complete wallet payment');
