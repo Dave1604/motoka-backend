@@ -3,6 +3,7 @@ import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
 import * as renewals from '../controllers/adminRenewals.controller.js';
+import { adminCreateShipmentHandler, adminTrackShipmentHandler } from '../controllers/delivery.controller.js';
 
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
 import { handleDocumentUpload, handleLadipoProductImageUpload } from '../middleware/fileUpload.js';
@@ -85,6 +86,8 @@ router.get('/recent-transactions', authenticateAdmin, admin.getRecentTransaction
 
 // ── Order management (authenticateAdmin) ─────────────────────────────────────
 router.get('/orders', authenticateAdmin, admin.listOrders);
+router.post('/shipments', authenticateAdmin, adminCreateShipmentHandler);
+router.get('/orders/:orderNumber/shipment', authenticateAdmin, adminTrackShipmentHandler);
 router.get('/orders/:orderNumber', authenticateAdmin, admin.getOrderDetails);
 router.put('/orders/:orderNumber/status', authenticateAdmin, admin.updateOrderStatus);
 // Undo an accidental cancellation — returns the order to pending so it can be completed

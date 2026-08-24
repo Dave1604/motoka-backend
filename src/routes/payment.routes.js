@@ -4,6 +4,7 @@ import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
 import { verifyPaystackWebhook } from '../middleware/verifyPaystackWebhook.js';
 import { verifyMonipayWebhook } from '../middleware/verifyMonipayWebhook.js';
 import { verifyMonicreditWebhook } from '../middleware/verifyMonicreditWebhook.js';
+import { verifyShipbubbleWebhook } from '../middleware/verifyShipbubbleWebhook.js';
 import { paymentLimiter, webhookLimiter } from '../middleware/rateLimiter.js';
 import {
   initializePayment,
@@ -34,6 +35,7 @@ import {
   handleMonipayWebhook,
   handleMonicreditWebhook
 } from '../controllers/payment/webhook.controller.js';
+import { handleShipbubbleWebhook } from '../controllers/courier/shipbubbleWebhook.controller.js';
 
 import {
   getUserOrdersHandler,
@@ -56,6 +58,7 @@ import {
   getPaymentMethods,
   getPendingTokenizationSubscriptions
 } from '../controllers/payment/paymentMethods.controller.js';
+import { quoteDeliveryHandler, userTrackOrderHandler } from '../controllers/delivery.controller.js';
 
 const router = Router();
 
@@ -113,6 +116,26 @@ router.post(
     }
   },
   handleMonipayWebhook
+);
+
+router.post(
+  '/webhooks/shipbubble',
+  webhookLimiter,
+  express.raw({ type: 'application/json', limit: '2mb' }),
+  verifyShipbubbleWebhook,
+  (req, res, next) => {
+    try {
+      const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
+      req.body = raw ? JSON.parse(raw) : {};
+      next();
+    } catch (error) {
+      return res.status(400).json({
+        status: false,
+        message: 'Invalid JSON payload'
+      });
+    }
+  },
+  handleShipbubbleWebhook
 );
 
 router.post(
@@ -200,7 +223,9 @@ router.post(
 router.post('/payment/check-existing', authenticate, checkExistingPayments);
 router.get('/payment/car-receipt/:identifier', authenticate, getCarPaymentReceipt);
 
+router.post('/delivery/quote', authenticate, paymentLimiter, quoteDeliveryHandler);
 router.get('/orders', authenticate, getUserOrdersHandler);
+router.get('/orders/:orderNumber/tracking', authenticate, userTrackOrderHandler);
 router.get('/orders/:orderNumber', authenticate, getOrder);
 
 router.get('/subscriptions', authenticate, getSubscriptions);

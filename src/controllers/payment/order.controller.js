@@ -5,6 +5,7 @@ import {
   getOrderByNumber,
   OrderError
 } from '../../services/payment/order.service.js';
+import { getDeliveryProgressForOrder } from '../../services/courier/deliveryProgress.service.js';
 import { ERROR_MESSAGES } from '../../constants/payment.constants.js';
 
 // GET /api/orders
@@ -36,8 +37,9 @@ export const getOrder = async (req, res) => {
     
     if (!order) return paymentResponse.notFound(res, ERROR_MESSAGES.ORDER_NOT_FOUND);
     if (order.user_id !== userId) return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
-    
-    return paymentResponse.success(res, { order }, 'Order retrieved');
+
+    const delivery = await getDeliveryProgressForOrder(order);
+    return paymentResponse.success(res, { order, ...delivery }, 'Order retrieved');
   } catch (error) {
     logError('Get order error', error);
     return paymentResponse.serverError(res, 'Failed to retrieve order');
