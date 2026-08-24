@@ -19,11 +19,30 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: JWT_SECRET
+        sync: false
       - key: FRONTEND_URL
+        sync: false
+      # Comma-separated allowlist. Boot fails in production without it.
+      - key: ALLOWED_ORIGINS
         sync: false
       - key: TOTP_ISSUER
         value: Motoka
-      # Paystack payment gateway configuration (set actual values in Render dashboard)
+      # Monipay - primary gateway. MONIPAY_SECRET_KEY is required to boot in
+      # production; the webhook secret and public key fall back to it when unset.
+      - key: MONIPAY_SECRET_KEY
+        sync: false
+      - key: MONIPAY_PUBLIC_KEY
+        sync: false
+      - key: MONIPAY_WEBHOOK_SECRET
+        sync: false
+      - key: MONIPAY_BASE_URL
+        value: https://api.monipay.ng
+      - key: PRIMARY_GATEWAY
+        value: monipay
+      - key: FALLBACK_GATEWAY
+        value: paystack
+      # Paystack - fallback gateway (set actual values in Render dashboard)
       - key: PAYSTACK_SECRET_KEY
         sync: false
       - key: PAYSTACK_PUBLIC_KEY
@@ -33,4 +52,44 @@ services:
       - key: PAYMENT_SUCCESS_URL
         sync: false
       - key: PAYMENT_CANCEL_URL
+        sync: false
+      # Shipbubble - courier quotes and admin waybills. Leave
+      # SHIPBUBBLE_BOOKING_ENABLED unset until the Shipbubble wallet is funded,
+      # since live booking charges it.
+      - key: SHIPBUBBLE_API_KEY
+        sync: false
+      - key: SHIPBUBBLE_BASE_URL
+        value: https://api.shipbubble.com/v1
+      - key: SHIPBUBBLE_PICKUP_STATE
+        value: Ogun
+      - key: SHIPBUBBLE_PICKUP_CITY
+        value: Ijebu Ode
+      - key: SHIPBUBBLE_PICKUP_STREET
+        value: Motoka office, Ijebu Ode
+      - key: SHIPBUBBLE_PICKUP_ZIP
+        value: "120101"
+      - key: SHIPBUBBLE_PICKUP_PHONE
+        sync: false
+      - key: SHIPBUBBLE_PICKUP_EMAIL
+        value: hello@motokaapp.ng
+      - key: SHIPBUBBLE_DEFAULT_ZIP
+        value: "120101"
+      # Document auto-fill on POST /api/cars/extract-document
+      - key: GEMINI_API_KEY
+        sync: false
+      # Cloudinary - Ladipo product image uploads
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      # Transactional email
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: CRON_SECRET_KEY
         sync: false
