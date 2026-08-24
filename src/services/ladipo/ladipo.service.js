@@ -1,9 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { initializeTransaction, verifyTransaction } from '../payment/paystack.service.js';
-import { initializeTransaction as initMonicredit } from '../payment/monicredit/monicredit.service.js';
-import { MonicreditNormalizer } from '../payment/monicredit/monicredit.normalizer.js';
-import { MonicreditAdapter } from '../payment/monicredit/index.js';
+import { initializeTransaction as initMonipay, verifyTransaction as verifyMonipay } from '../payment/monipay/monipay.service.js';
 import { getAllStates, getDeliveryFee } from '../location.service.js';
 import { logError, logInfo, logDebug } from '../../utils/logger.js';
 import {
@@ -847,7 +845,7 @@ export async function createOrder({ userId, items, delivery }) {
   return order;
 }
 
-export async function payOrder({ orderNumber, userId, userEmail, payment_gateway = 'paystack' }) {
+export async function payOrder({ orderNumber, userId, userEmail, payment_gateway = 'monipay' }) {
   const supabase = getSupabaseAdmin();
 
   const { data: order, error } = await supabase
@@ -872,50 +870,43 @@ export async function payOrder({ orderNumber, userId, userEmail, payment_gateway
 
   const frontendUrl = process.env.FRONTEND_URL || 'https://app.motoka.ng';
 
-  // ── Monicredit flow ─────────────────────────────────────────────────────
-  if (payment_gateway === 'monicredit') {
-    const orderId = `LADIPO-${orderNumber}`;
-    const totalAmountNaira = order.total_kobo / 100;
+  if (payment_gateway === 'monicredit') payment_gateway = 'monipay';
 
-    const rawResult = await initMonicredit({
-      order_id: orderId,
-      customer: {
-        email,
-        first_name: profile?.first_name || 'Customer',
-        last_name: profile?.last_name || 'Motoka',
-        phone: profile?.phone || '',
+  // ── Monipay hosted checkout ──────────────────────────────────────────────
+  if (payment_gateway === 'monipay') {
+    const reference = `mp_ladipo_${orderNumber}_${Date.now()}`;
+    const callback_url = `${frontendUrl}/ladipo/payment/callback`;
+
+    const monipayResult = await initMonipay({
+      email,
+      amount: order.total_kobo,
+      reference,
+      callback_url,
+      first_name: profile?.first_name,
+      last_name: profile?.last_name,
+      phone: profile?.phone,
+      metadata: {
+        order_number: orderNumber,
+        payment_type: 'ladipo_parts',
+        user_id: userId,
       },
-      items: [{ item: 'Ladipo marketplace order', unit_cost: totalAmountNaira }],
-      total_amount: totalAmountNaira,
     });
 
-    const normalized = MonicreditNormalizer.normalizeInitResponse(rawResult?.data || rawResult);
-    const gatewayReference = normalized.order_id || orderId;
-
-    // Store gateway reference on order so user/webhook verification uses a shared lifecycle.
     await supabase
       .from('ladipo_orders')
-      .update({ paystack_reference: gatewayReference, updated_at: new Date().toISOString() })
+      .update({ paystack_reference: reference, updated_at: new Date().toISOString() })
       .eq('id', order.id);
 
-    logInfo('[Ladipo] Monicredit payment initialised', { orderNumber, orderId, amount: totalAmountNaira });
-
+    logInfo('[Ladipo] Monipay payment initialised', { orderNumber, reference, amount: order.total_kobo });
     return {
-      gateway: 'monicredit',
-      payment_method: 'monicredit',
-      order_id: orderId,
-      reference: gatewayReference,
-      account_number: normalized.account_number,
-      bank_name: normalized.bank_name,
-      account_name: normalized.account_name,
-      total_amount: totalAmountNaira,
-      amount: totalAmountNaira,
-      expires_at: normalized.expires_at,
-      payment_url: normalized.payment_url || null,
+      gateway: 'monipay',
+      authorization_url: monipayResult.authorization_url,
+      access_code: monipayResult.access_code,
+      reference: monipayResult.reference || reference,
     };
   }
 
-  // ── Paystack flow (default) ─────────────────────────────────────────────
+  // ── Paystack flow ───────────────────────────────────────────────────────
   const reference = `ladipo_${orderNumber}_${Date.now()}`;
   const callback_url = `${frontendUrl}/ladipo/payment/callback`;
 
@@ -1164,18 +1155,17 @@ function parsePositiveInteger(value, fieldName) {
 
 function resolveLadipoGateway(reference, explicitGateway) {
   if (explicitGateway) return String(explicitGateway).toLowerCase();
-  if (String(reference || '').startsWith('LADIPO-')) return 'monicredit';
+  if (String(reference || '').startsWith('mp_ladipo_')) return 'monipay';
   return 'paystack';
 }
 
 async function verifyLadipoPaymentWithGateway(reference, gateway) {
-  if (gateway === 'monicredit') {
-    const monicreditResult = await MonicreditAdapter.verifyPayment(reference);
-    const status = String(monicreditResult.status || '').toLowerCase();
+  if (gateway === 'monipay') {
+    const monipayResult = await verifyMonipay(reference);
     return {
-      status: monicreditResult.status,
-      amountKobo: monicreditResult.amount,
-      isSuccessful: status === 'approved' || status === 'success',
+      status: monipayResult.status,
+      amountKobo: monipayResult.amount,
+      isSuccessful: monipayResult.success === true || monipayResult.status === 'success',
     };
   }
 

@@ -11,14 +11,14 @@
  */
 
 import crypto from 'crypto';
+import { resolveStateAndLGA } from '../location.service.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { logError, logInfo, logDebug } from '../../utils/logger.js';
 import { getRenewalItems, validateRenewalItemsSelection } from '../payment/renewalItems.service.js';
-import { resolveStateAndLGA } from '../location.service.js';
 import { generatePaymentReference } from '../../utils/paymentHelpers.js';
-import { initializeTransaction as monicreditInit, verifyTransaction as monicreditVerify, MonicreditError } from '../payment/monicredit/monicredit.service.js';
-import { MonicreditNormalizer } from '../payment/monicredit/monicredit.normalizer.js';
+import { verifyTransaction as monicreditVerify } from '../payment/monicredit/monicredit.service.js';
 import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify, PaystackError } from '../payment/paystack.service.js';
+import { initializeTransaction as monipayInit, verifyTransaction as monipayVerify } from '../payment/monipay/monipay.service.js';
 import { PAYMENT_GATEWAY } from '../../constants/payment.constants.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';
 
@@ -53,7 +53,7 @@ function splitName(fullName = '') {
  * @param {string} params.deliveryDetails.state  - State code e.g. "LA"
  * @param {string} params.deliveryDetails.lga    - LGA name
  * @param {string} params.deliveryDetails.contact
- * @param {string} params.paymentGateway  - "monicredit" | "paystack"
+ * @param {string} params.paymentGateway  - "monipay" | "paystack"
  * @param {string} params.frontendBaseUrl - Used to build callback URL
  * @returns {Promise<Object>} { orderId, paymentReference, paymentUrl, expiresAt, gateway }
  */
@@ -66,10 +66,17 @@ export async function initiateGuestRenewal({
   selectedItems,
   wantsDelivery,
   deliveryDetails,
-  paymentGateway = PAYMENT_GATEWAY.MONICREDIT,
+  paymentGateway = PAYMENT_GATEWAY.MONIPAY,
   frontendBaseUrl,
   renewalState = null
 }) {
+  if (paymentGateway === PAYMENT_GATEWAY.MONICREDIT) {
+    paymentGateway = PAYMENT_GATEWAY.MONIPAY;
+  }
+  if (paymentGateway !== PAYMENT_GATEWAY.PAYSTACK) {
+    paymentGateway = PAYMENT_GATEWAY.MONIPAY;
+  }
+
   const supabase = getSupabaseAdmin();
 
   // ── 1. Validate selected renewal items and compute renewal amount ──────────
@@ -172,7 +179,7 @@ export async function initiateGuestRenewal({
   // ── 5. Initialise payment with gateway ────────────────────────────────────
   const { firstName, lastName } = splitName(name);
 
-  const callbackUrl = `${frontendBaseUrl}/guest/renewal/callback`;
+  const callbackUrl = `${frontendBaseUrl}/guest/renewal/callback?orderId=${order.id}&gateway=${paymentGateway}`;
 
   let gatewayResult;
 
@@ -188,17 +195,18 @@ export async function initiateGuestRenewal({
       deliveryDetails: resolvedDelivery
     });
   } else {
-    gatewayResult = await _initMonicredit({
+    gatewayResult = await _initMonipay({
       email,
+      amount: totalAmount,
+      reference: paymentReference,
+      callbackUrl,
+      name,
+      phone,
       firstName,
       lastName,
-      phone,
-      reference: paymentReference,
+      plateNumber,
       selectedItems,
-      renewalAmount,
-      deliveryFee,
-      resolvedDelivery,
-      plateNumber
+      deliveryDetails: resolvedDelivery
     });
   }
 
@@ -248,63 +256,23 @@ async function _initPaystack({ email, amount, reference, callbackUrl, name, plat
   return paystackInit({ email, amount, reference, callback_url: callbackUrl, metadata });
 }
 
-async function _initMonicredit({ email, firstName, lastName, phone, reference, selectedItems, renewalAmount, deliveryFee, resolvedDelivery, plateNumber }) {
-  const allItems = await getRenewalItems();
-  const itemMap = new Map(allItems.map(item => [item.id, item]));
-
-  // MoniCredit rejects any line item with unit_cost < 50 Naira.
-  // Zero-price items (e.g. "Keeping Digital Copy") are excluded from the
-  // payment request; they are still stored on the order for record-keeping.
-  const lineItems = selectedItems
-    .map(id => {
-      const item = itemMap.get(id);
-      return {
-        item: item?.name || id,
-        unit_cost: (item?.price || 0) / 100,
-        quantity: 1
-      };
-    })
-    .filter(li => li.unit_cost > 0);
-
-  if (resolvedDelivery && deliveryFee > 0) {
-    lineItems.push({
-      item: 'Delivery Fee',
-      unit_cost: deliveryFee / 100,
-      quantity: 1
-    });
-  }
-
-  const totalNaira = lineItems.reduce((sum, i) => sum + i.unit_cost, 0);
-
-  const normalizedPhone = phone.startsWith('0') ? `+234${phone.slice(1)}` : phone;
-
-  const customer = {
+async function _initMonipay({ email, amount, reference, callbackUrl, name, phone, firstName, lastName, plateNumber, selectedItems, deliveryDetails }) {
+  return monipayInit({
     email,
+    amount,
+    reference,
+    callback_url: callbackUrl,
     first_name: firstName,
     last_name: lastName,
-    phone: normalizedPhone
-  };
-
-  const metaData = {
-    is_guest: true,
-    plate_number: plateNumber,
-    ...(resolvedDelivery ? {
-      delivery_address: resolvedDelivery.address,
-      delivery_state: resolvedDelivery.state,
-      delivery_lga: resolvedDelivery.lga,
-      delivery_contact: resolvedDelivery.contact
-    } : {})
-  };
-
-  const rawResponse = await monicreditInit({
-    order_id: reference,
-    customer,
-    items: lineItems,
-    total_amount: totalNaira,
-    meta_data: metaData
+    phone,
+    metadata: {
+      is_guest: true,
+      guest_name: name,
+      guest_plate: plateNumber,
+      selected_items: selectedItems,
+      delivery_details: deliveryDetails,
+    },
   });
-
-  return MonicreditNormalizer.normalizeInitResponse(rawResponse);
 }
 
 // ─── Status polling ────────────────────────────────────────────────────────────
@@ -512,11 +480,6 @@ export async function verifyGuestPayment(orderId, reference) {
     return { status: 'payment_failed' };
   }
 
-  // Reject expired pending orders
-  if (order.expires_at && new Date(order.expires_at) < new Date()) {
-    throw Object.assign(new Error('This order has expired'), { statusCode: 410 });
-  }
-
   // Reject mismatched reference (prevents marking another user's order paid)
   if (order.payment_reference && reference && order.payment_reference !== reference) {
     throw Object.assign(new Error('Reference does not match this order'), { statusCode: 400 });
@@ -524,16 +487,22 @@ export async function verifyGuestPayment(orderId, reference) {
 
   const ref = reference || order.payment_reference;
 
-  if (order.payment_gateway === PAYMENT_GATEWAY.PAYSTACK) {
+  if (order.payment_gateway === PAYMENT_GATEWAY.PAYSTACK || order.payment_gateway === PAYMENT_GATEWAY.MONIPAY) {
     let verifyResult;
     try {
-      verifyResult = await paystackVerify(ref);
+      verifyResult = order.payment_gateway === PAYMENT_GATEWAY.MONIPAY
+        ? await monipayVerify(ref)
+        : await paystackVerify(ref);
     } catch (err) {
-      logError('[GuestRenewal] Paystack verify call failed', { ref, err: err.message });
+      logError('[GuestRenewal] Gateway verify call failed', {
+        ref,
+        gateway: order.payment_gateway,
+        err: err.message,
+      });
       return { status: 'pending_payment' };
     }
 
-    if (verifyResult?.status === 'success') {
+    if (verifyResult?.status === 'success' || verifyResult?.success === true) {
       const paid = await markGuestOrderPaid(ref);
       if (paid) {
         return { status: 'payment_success', receiptToken: order.receipt_token };
@@ -542,8 +511,6 @@ export async function verifyGuestPayment(orderId, reference) {
       await markGuestOrderFailed(ref);
       return { status: 'payment_failed' };
     }
-
-    return { status: 'pending_payment' };
   }
 
   if (order.payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
@@ -565,8 +532,10 @@ export async function verifyGuestPayment(orderId, reference) {
       await markGuestOrderFailed(ref);
       return { status: 'payment_failed' };
     }
+  }
 
-    return { status: 'pending_payment' };
+  if (order.expires_at && new Date(order.expires_at) < new Date()) {
+    throw Object.assign(new Error('This order has expired'), { statusCode: 410 });
   }
 
   return { status: 'pending_payment' };

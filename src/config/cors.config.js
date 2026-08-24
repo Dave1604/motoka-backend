@@ -114,6 +114,7 @@ export function getCorsConfig() {
       'cache-control',
       'Pragma',
       'x-monicredit-signature',
+      'x-monipay-signature',
       'x-signature',
       'x-paystack-signature'
     ],
