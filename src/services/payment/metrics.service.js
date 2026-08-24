@@ -32,6 +32,11 @@ class PaymentMetricsService {
           successful: 0,
           failed: 0
         },
+        monipay: {
+          total: 0,
+          successful: 0,
+          failed: 0
+        },
         monicredit: {
           total: 0,
           successful: 0,
@@ -270,6 +275,7 @@ class PaymentMetricsService {
       calculated: {
         successRate: this.getSuccessRate(),
         paystackSuccessRate: this.getGatewaySuccessRate('paystack'),
+        monipaySuccessRate: this.getGatewaySuccessRate('monipay'),
         monicreditSuccessRate: this.getGatewaySuccessRate('monicredit'),
         webhookSuccessRate: this.getWebhookSuccessRate(),
         averageInitializationTime: this.getAverageProcessingTime('initialization'),

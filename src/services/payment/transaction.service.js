@@ -3,6 +3,7 @@ import { logError, logInfo, logWarn } from '../../utils/logger.js';
 import {
   PAYMENT_STATUS,
   PAYMENT_TYPE,
+  PAYMENT_GATEWAY,
   HTTP_STATUS,
   ERROR_MESSAGES,
   PAGINATION
@@ -38,7 +39,7 @@ export async function createTransaction({
   paymentType,
   metadata = {},
   reference,
-  paymentGateway = 'monicredit'
+  paymentGateway = PAYMENT_GATEWAY.MONIPAY
 }) {
   const amountValidation = validatePaymentAmount(amount);
   if (!amountValidation.valid) {
@@ -49,7 +50,13 @@ export async function createTransaction({
     throw new TransactionError('Invalid payment type', HTTP_STATUS.BAD_REQUEST, 'INVALID_TYPE');
   }
   
-  if (paymentGateway !== 'paystack' && paymentGateway !== 'monicredit' && paymentGateway !== 'wallet') {
+  const allowedGateways = [
+    PAYMENT_GATEWAY.PAYSTACK,
+    PAYMENT_GATEWAY.MONIPAY,
+    PAYMENT_GATEWAY.MONICREDIT,
+    PAYMENT_GATEWAY.WALLET,
+  ];
+  if (!allowedGateways.includes(paymentGateway)) {
     throw new TransactionError('Invalid payment gateway', HTTP_STATUS.BAD_REQUEST, 'INVALID_GATEWAY');
   }
   
@@ -242,6 +249,28 @@ export async function updateTransactionWithPaystackInit(reference, paystackData)
   return transaction;
 }
 
+export async function updateTransactionWithMonipayInit(reference, monipayData) {
+  const supabaseAdmin = getSupabaseAdmin();
+
+  const { data: transaction, error } = await supabaseAdmin
+    .from('payment_transactions')
+    .update({
+      payment_gateway: PAYMENT_GATEWAY.MONIPAY,
+      paystack_access_code: monipayData.access_code || null,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('reference', reference)
+    .select('*')
+    .single();
+
+  if (error) {
+    logError('Update transaction with Monipay init error', { error, reference });
+    throw new TransactionError('Failed to update transaction', HTTP_STATUS.SERVER_ERROR);
+  }
+
+  return transaction;
+}
+
 export async function updateTransactionWithMonicreditInit(reference, monicreditData) {
   const supabaseAdmin = getSupabaseAdmin();
   
@@ -410,19 +439,23 @@ const DUPLICATE_CHARGE_WINDOW_MS = Number(process.env.DUPLICATE_CHARGE_WINDOW_MS
  */
 async function findAlreadyFulfilledOrder(supabaseAdmin, tx) {
   const none = { fulfilled: null, siblingCount: 0 };
-  if (!tx?.car_id || !tx?.user_id) return none;
+  if (!tx?.user_id || !tx?.payment_type) return none;
 
   const since = new Date(Date.now() - DUPLICATE_CHARGE_WINDOW_MS).toISOString();
 
-  const { data: earlier } = await supabaseAdmin
+  let query = supabaseAdmin
     .from('payment_transactions')
     .select('id, reference, created_at')
     .eq('user_id', tx.user_id)
-    .eq('car_id', tx.car_id)
     .eq('payment_type', tx.payment_type)
     .eq('status', PAYMENT_STATUS.SUCCESSFUL)
     .neq('reference', tx.reference)
     .gte('created_at', since);
+
+  if (tx.car_id) query = query.eq('car_id', tx.car_id);
+  else query = query.is('car_id', null);
+
+  const { data: earlier } = await query;
 
   if (!earlier?.length) return none;
 
@@ -584,7 +617,7 @@ export async function getUserTransactions(userId, options = {}) {
   const { data: allOrders } = txIds.length > 0
     ? await supabaseAdmin
         .from('renewal_orders')
-        .select('id, order_number, status, selected_items, transaction_id')
+        .select('id, order_number, status, selected_items, transaction_id, delivery_address, delivery_fee')
         .in('transaction_id', txIds)
     : { data: [] };
 
@@ -621,7 +654,7 @@ export async function getUserTransactions(userId, options = {}) {
   // ── Guest renewals linked to this user (upgraded from guest flow) ─────────
   const { data: guestOrders, error: guestError } = await supabaseAdmin
     .from('guest_renewal_orders')
-    .select('id, payment_reference, total_amount, payment_status, payment_gateway, plate_number, created_at, selected_items, receipt_token')
+    .select('id, payment_reference, total_amount, payment_status, payment_gateway, plate_number, created_at, selected_items, receipt_token, delivery_fee, delivery_details')
     .eq('linked_user_id', userId)
     .eq('payment_status', 'payment_success')
     .order('created_at', { ascending: false });
@@ -667,7 +700,9 @@ export async function getUserTransactions(userId, options = {}) {
         id: order.id,
         order_number: order.payment_reference || order.id,
         status: order.payment_status,
-        selected_items: order.selected_items
+        selected_items: order.selected_items,
+        delivery_fee: order.delivery_fee,
+        delivery_address: order.delivery_details?.address || null,
       },
       items,
       receipt_token: order.receipt_token

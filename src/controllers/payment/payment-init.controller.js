@@ -9,6 +9,7 @@ import {
   createTransaction,
   updateTransactionWithPaystackInit,
   updateTransactionWithMonicreditInit,
+  updateTransactionWithMonipayInit,
   TransactionError
 } from '../../services/payment/transaction.service.js';
 import {
@@ -33,6 +34,7 @@ import {
 } from '../../constants/payment.constants.js';
 import { PaystackError } from '../../services/payment/paystack.service.js';
 import { MonicreditError } from '../../services/payment/monicredit/index.js';
+import { MonipayError } from '../../services/payment/monipay/index.js';
 import {
   getIdempotencyResponse,
   reserveIdempotencyKey,
@@ -131,13 +133,15 @@ export const getLGAs = async (req, res) => {
 export const getPaymentConfig = async (req, res) => {
   try {
     const publicKey = process.env.PAYSTACK_PUBLIC_KEY;
-    
-    if (!publicKey) {
+    const monipayPublicKey = process.env.MONIPAY_PUBLIC_KEY || null;
+
+    if (!publicKey && !monipayPublicKey) {
       return paymentResponse.error(res, 'Payment not configured', HTTP_STATUS.SERVER_ERROR);
     }
     
     return paymentResponse.success(res, {
-      public_key: publicKey,
+      public_key: publicKey || null,
+      monipay_public_key: monipayPublicKey,
       currency: 'NGN'
     }, 'Payment configuration retrieved');
   } catch (error) {
@@ -147,6 +151,47 @@ export const getPaymentConfig = async (req, res) => {
 };
 
 // POST /api/payments/initialize
+
+/**
+ * Derive the frontend base URL from the incoming request's Origin header so
+ * that both motoka.ng and motokapp.ng get the correct callback URL rather than
+ * always routing through FRONTEND_URL.
+ */
+export function buildCallbackUrl(req, path) {
+  const allowedOrigins = (process.env.ALLOWED_ORIGINS || process.env.FRONTEND_URL || '')
+    .split(',')
+    .map(s => s.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  const rawOrigin = req.headers.origin || req.headers.referer || '';
+
+  // Compare parsed origins, not string prefixes. `startsWith` treated
+  // https://motoka.ng.evil.com as a match for https://motoka.ng, which handed an
+  // attacker-controlled host the post-payment redirect — carrying the payment
+  // reference with it.
+  let requestOrigin = null;
+  try {
+    if (rawOrigin) {
+      const parsed = new URL(rawOrigin);
+      requestOrigin = `${parsed.protocol}//${parsed.host}`;
+    }
+  } catch {
+    requestOrigin = null;
+  }
+
+  const matched = requestOrigin
+    ? allowedOrigins.find(o => {
+        try {
+          const allowed = new URL(o);
+          return `${allowed.protocol}//${allowed.host}` === requestOrigin;
+        } catch {
+          return false;
+        }
+      })
+    : null;
+
+  const base = matched || process.env.FRONTEND_URL || 'http://localhost:3001';
+  return `${base.replace(/\/$/, '')}${path}`;
+}
 export const initializePayment = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -225,15 +270,17 @@ export const initializePayment = async (req, res) => {
     }
     
     let payment_gateway = rawPaymentGateway?.toLowerCase().trim() || null;
-    
+    if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
+      payment_gateway = PAYMENT_GATEWAY.MONIPAY;
+    }
     if (!payment_gateway ||
-        (payment_gateway !== PAYMENT_GATEWAY.PAYSTACK && payment_gateway !== PAYMENT_GATEWAY.MONICREDIT)) {
-      if (payment_gateway) {
-        logWarn('[Payment Init] Invalid gateway provided, defaulting to Monicredit', {
+        (payment_gateway !== PAYMENT_GATEWAY.PAYSTACK && payment_gateway !== PAYMENT_GATEWAY.MONIPAY)) {
+      if (rawPaymentGateway) {
+        logWarn('[Payment Init] Invalid gateway provided, defaulting to Monipay', {
           provided: rawPaymentGateway
         });
       }
-      payment_gateway = PAYMENT_GATEWAY.MONICREDIT;
+      payment_gateway = PAYMENT_GATEWAY.MONIPAY;
     }
     
     logDebug('[Payment Init] Request received', {
@@ -262,18 +309,18 @@ export const initializePayment = async (req, res) => {
 
       hasDeliveryDetails = !!(
         deliveryData &&
-        (deliveryData.address || deliveryData.delivery_address || 
-         deliveryData.state || deliveryData.state_id || 
-         deliveryData.lga || deliveryData.lga_id || 
+        (deliveryData.address || deliveryData.delivery_address ||
+         deliveryData.state || deliveryData.state_id ||
+         deliveryData.lga || deliveryData.lga_id ||
          deliveryData.delivery_contact || deliveryData.contact)
       );
-      
+
       if (hasDeliveryDetails) {
         const address = deliveryData.address || deliveryData.delivery_address;
         const stateInput = deliveryData.state_id !== undefined ? deliveryData.state_id : deliveryData.state;
         const lgaInput = deliveryData.lga_id !== undefined ? deliveryData.lga_id : deliveryData.lga;
         const contact = deliveryData.contact || deliveryData.delivery_contact;
-        
+
         if (!address || stateInput === undefined || stateInput === null || lgaInput === undefined || lgaInput === null || !contact) {
           return paymentResponse.error(
             res,
@@ -281,12 +328,12 @@ export const initializePayment = async (req, res) => {
             HTTP_STATUS.BAD_REQUEST
           );
         }
-        
+
         stateValidation = await resolveStateAndLGA(stateInput, lgaInput);
         if (!stateValidation.valid) {
           return paymentResponse.error(res, stateValidation.error, HTTP_STATUS.BAD_REQUEST);
         }
-        
+
         deliveryData.state = stateValidation.stateCode || (typeof stateInput === 'string' ? stateInput : null);
         deliveryData.lga = stateValidation.lgaName || (typeof lgaInput === 'string' ? lgaInput : null);
       }
@@ -395,7 +442,7 @@ export const initializePayment = async (req, res) => {
       deliveryFee = stateValidation.delivery_fee;
       amount = renewalAmount + deliveryFee;
     }
-    
+
     logDebug('[Payment Init] Amount breakdown', {
       renewalAmount_naira: renewalAmount / 100,
       deliveryFee_naira: deliveryFee / 100,
@@ -519,7 +566,8 @@ export const initializePayment = async (req, res) => {
         plateType: isPlatePayment ? plate_type : null,
         subType: isPlatePayment ? (sub_type || null) : null,
         licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
-        licenseDuration: isDriverLicensePayment ? (duration || null) : null
+        licenseDuration: isDriverLicensePayment ? (duration || null) : null,
+        callbackUrl: buildCallbackUrl(req, '/payment/monipay/callback'),
       });
     } catch (initError) {
       logError('[Payment Init] Gateway initialization failed', {
@@ -531,7 +579,9 @@ export const initializePayment = async (req, res) => {
       throw initError;
     }
     
-    if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
+    if (payment_gateway === PAYMENT_GATEWAY.MONIPAY) {
+      await updateTransactionWithMonipayInit(transaction.reference, gatewayResult);
+    } else if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
       await updateTransactionWithMonicreditInit(transaction.reference, gatewayResult);
     } else {
       await updateTransactionWithPaystackInit(transaction.reference, gatewayResult);
@@ -623,6 +673,9 @@ export const initializePayment = async (req, res) => {
     const isProduction = process.env.NODE_ENV === 'production';
     
     if (error instanceof PaystackError) {
+      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
+    }
+    if (error instanceof MonipayError) {
       return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
     if (error instanceof MonicreditError) {

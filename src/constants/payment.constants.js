@@ -140,6 +140,7 @@ export const PAYMENT_LIMITS = {
 
 export const PAYMENT_GATEWAY = {
   PAYSTACK: 'paystack',
+  MONIPAY: 'monipay',
   MONICREDIT: 'monicredit',
   WALLET: 'wallet'
 };
@@ -166,6 +167,16 @@ export const PAYSTACK_ENDPOINTS = {
   LIST_TRANSACTIONS: '/transaction',
   REFUND: '/refund',
   RESOLVE_ACCOUNT: '/bank/resolve'
+};
+
+export const MONIPAY_EVENTS = {
+  CHARGE_SUCCESS: 'charge.success',
+  CHARGE_FAILED: 'charge.failed'
+};
+
+export const MONIPAY_ENDPOINTS = {
+  INITIALIZE: '/transaction/initialize',
+  VERIFY: '/transaction/verify'
 };
 
 export const MONICREDIT_ENDPOINTS = {
@@ -200,6 +211,9 @@ export const ERROR_MESSAGES = {
   PAYSTACK_WEBHOOK_INVALID: 'Invalid webhook signature',
   PAYSTACK_API_ERROR: 'Paystack API error',
   
+  MONIPAY_INIT_FAILED: 'Failed to initialize Monipay payment',
+  MONIPAY_VERIFY_FAILED: 'Failed to verify Monipay payment',
+  MONIPAY_API_ERROR: 'Monipay API error',
   MONICREDIT_INIT_FAILED: 'Failed to initialize Monicredit payment',
   MONICREDIT_VERIFY_FAILED: 'Failed to verify Monicredit payment',
   MONICREDIT_API_ERROR: 'Monicredit API error',

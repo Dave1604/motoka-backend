@@ -2,6 +2,7 @@ import express, { Router } from 'express';
 import { authenticate } from '../middleware/authenticate.js';
 import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
 import { verifyPaystackWebhook } from '../middleware/verifyPaystackWebhook.js';
+import { verifyMonipayWebhook } from '../middleware/verifyMonipayWebhook.js';
 import { verifyMonicreditWebhook } from '../middleware/verifyMonicreditWebhook.js';
 import { paymentLimiter, webhookLimiter } from '../middleware/rateLimiter.js';
 import {
@@ -30,6 +31,7 @@ import {
 
 import {
   handlePaystackWebhook,
+  handleMonipayWebhook,
   handleMonicreditWebhook
 } from '../controllers/payment/webhook.controller.js';
 
@@ -91,6 +93,26 @@ router.post(
     }
   },
   handlePaystackWebhook
+);
+
+router.post(
+  '/webhooks/monipay',
+  webhookLimiter,
+  express.raw({ type: 'application/json', limit: '2mb' }),
+  verifyMonipayWebhook,
+  (req, res, next) => {
+    try {
+      const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
+      req.body = raw ? JSON.parse(raw) : {};
+      next();
+    } catch (error) {
+      return res.status(400).json({
+        status: false,
+        message: 'Invalid JSON payload'
+      });
+    }
+  },
+  handleMonipayWebhook
 );
 
 router.post(

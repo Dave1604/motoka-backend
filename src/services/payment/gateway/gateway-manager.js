@@ -6,7 +6,7 @@ import { GatewayError } from './gateway.interface.js';
 
 class GatewayManager {
   constructor() {
-    this.primaryGateway = process.env.PRIMARY_GATEWAY?.toLowerCase() || PAYMENT_GATEWAY.MONICREDIT;
+    this.primaryGateway = process.env.PRIMARY_GATEWAY?.toLowerCase() || PAYMENT_GATEWAY.MONIPAY;
     this.fallbackGateway = process.env.FALLBACK_GATEWAY?.toLowerCase() || PAYMENT_GATEWAY.PAYSTACK;
     this.circuitBreakerThreshold = parseInt(process.env.GATEWAY_CIRCUIT_BREAKER_THRESHOLD || '5', 10);
     this.circuitBreakerTimeout = parseInt(process.env.GATEWAY_CIRCUIT_BREAKER_TIMEOUT_MS || '60000', 10);

@@ -1331,7 +1331,7 @@ export const listTransactions = async (req, res) => {
       : status === 'abandoned' ? 'abandoned'
       : null;
 
-    const dbGateway = (gateway === 'paystack' || gateway === 'monicredit') ? gateway : null;
+    const dbGateway = (gateway === 'paystack' || gateway === 'monipay' || gateway === 'monicredit') ? gateway : null;
 
     // Hide rows tagged as duplicate_init by default — they're noise from users
     // re-initialising payment (gateway switches, rapid retries). Pass
@@ -1385,6 +1385,7 @@ export const listTransactions = async (req, res) => {
       headCount(q => q.eq('status', 'failed')),
       headCount(q => q.eq('status', 'abandoned')),
       headCount(q => q.eq('payment_gateway', 'paystack')),
+      headCount(q => q.eq('payment_gateway', 'monipay')),
       headCount(q => q.eq('payment_gateway', 'monicredit')),
       sumQuery(q => q.eq('status', 'successful')),
       sumQuery(q => q.eq('status', 'pending')),
@@ -1409,6 +1410,7 @@ export const listTransactions = async (req, res) => {
       { count: cntFailed },
       { count: cntAbandoned },
       { count: cntPaystack },
+      { count: cntMonipay },
       { count: cntMonicredit },
       { data: successfulAmounts },
       { data: pendingAmounts },
@@ -1434,6 +1436,7 @@ export const listTransactions = async (req, res) => {
       },
       by_gateway: {
         paystack: cntPaystack || 0,
+        monipay: cntMonipay || 0,
         monicredit: cntMonicredit || 0,
       },
       // Back-compat: old AdminPayments.jsx still reads these field names. Keep
@@ -2458,7 +2461,7 @@ export const listGuestOrders = async (req, res) => {
 
     let query = supabase
       .from('guest_renewal_orders')
-      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference', { count: 'exact' })
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference, delivery_fee, delivery_details, selected_items', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
 

@@ -246,7 +246,10 @@ export const getCarPaymentReceipt = async (req, res) => {
         id: order.id,
         order_number: order.order_number,
         status: order.status,
-        amount_paid: order.amount_paid
+        amount_paid: order.amount_paid,
+        delivery_address: order.delivery_address || null,
+        delivery_fee: order.delivery_fee || 0,
+        delivery_contact: order.delivery_contact || null,
       } : null,
       car: { id: car.id, slug: car.slug }
     }, 'Payment receipt retrieved');

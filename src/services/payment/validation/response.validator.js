@@ -97,6 +97,12 @@ export function validateWebhookPayload(payload, gateway) {
     if (!payload.data || typeof payload.data !== 'object') {
       throw new ValidationError('Paystack webhook must have data', 'data', payload.data);
     }
+  } else if (gateway === 'monipay') {
+    const hasRef = payload.reference || payload.data?.reference || payload.order_id || payload.data?.order_id;
+    const hasEvent = payload.event || payload.type || payload.status;
+    if (!hasRef && !hasEvent) {
+      throw new ValidationError('Monipay webhook must have an event or reference', 'event', payload.event);
+    }
   } else if (gateway === 'monicredit') {
     // Monicredit webhooks may have varying structures
     const hasOrderId = payload.order_id || payload.data?.order_id || payload.transid;

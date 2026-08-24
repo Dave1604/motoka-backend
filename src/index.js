@@ -32,6 +32,7 @@ import { getCorsConfig } from './config/cors.config.js';
 import paymentMetrics from './services/payment/metrics.service.js';
 import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
 import { monicreditPoller } from './services/payment/monicredit/poller.service.js';
+import { monipayPoller } from './services/payment/monipay/poller.service.js';
 import { logInfo, logWarn } from './utils/logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -43,7 +44,7 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const productionRequiredEnvVars = [
-  'MONICREDIT_WEBHOOK_SECRET',
+  'MONIPAY_SECRET_KEY',
   'ALLOWED_ORIGINS',
 ];
 
@@ -56,9 +57,27 @@ if (missingEnvVars.length > 0) {
   process.exit(1);
 }
 
+// SKIP_WEBHOOK_VERIFY exists so webhooks can be POSTed by hand in local dev.
+// In production it turns every webhook endpoint into an unauthenticated
+// "mark this order paid" API, so refuse to start rather than run exposed.
+if (isProduction && process.env.SKIP_WEBHOOK_VERIFY === 'true') {
+  console.error('╔══════════════════════════════════════════════════════════════╗');
+  console.error('║  PRODUCTION CONFIGURATION ERROR                             ║');
+  console.error('╚══════════════════════════════════════════════════════════════╝');
+  console.error('');
+  console.error('  ❌ SKIP_WEBHOOK_VERIFY=true with NODE_ENV=production');
+  console.error('');
+  console.error('This disables webhook signature verification on every gateway.');
+  console.error('Anyone who can reach /api/webhooks/* could mark orders as paid.');
+  console.error('It is a local-development flag only.');
+  console.error('');
+  console.error('Remove it, or set SKIP_WEBHOOK_VERIFY=false, then restart.');
+  process.exit(1);
+}
+
 if (isProduction) {
   const missingProductionVars = productionRequiredEnvVars.filter(key => !process.env[key]);
-  
+
   if (missingProductionVars.length > 0) {
     console.error('╔══════════════════════════════════════════════════════════════╗');
     console.error('║  PRODUCTION CONFIGURATION ERROR                             ║');
@@ -70,7 +89,7 @@ if (isProduction) {
     });
     console.error('');
     console.error('These variables are mandatory for production security:');
-    console.error('  • MONICREDIT_WEBHOOK_SECRET: Required for webhook signature verification');
+    console.error('  • MONIPAY_SECRET_KEY: Required for verify + webhook HMAC (pri_live_… / pri_test_…)');
     console.error('  • ALLOWED_ORIGINS: Required for CORS origin restrictions');
     console.error('  • CLOUDINARY_*: Required for Ladipo product image uploads');
     console.error('');
@@ -122,6 +141,7 @@ app.use(helmet({
 app.use(cors(getCorsConfig()));
 
 app.use('/api/webhooks/paystack', express.raw({ type: 'application/json', limit: '2mb' }));
+app.use('/api/webhooks/monipay', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monicredit', express.raw({ type: 'application/json', limit: '2mb' }));
 
 app.use(express.json({ limit: '10mb' }));
@@ -604,6 +624,10 @@ app.listen(PORT, '0.0.0.0', () => {
             total: snapshot.gateways.paystack.total,
             successRate: `${paymentMetrics.getGatewaySuccessRate('paystack')}%`
           },
+          monipay: {
+            total: snapshot.gateways.monipay?.total || 0,
+            successRate: `${paymentMetrics.getGatewaySuccessRate('monipay')}%`
+          },
           monicredit: {
             total: snapshot.gateways.monicredit.total,
             successRate: `${paymentMetrics.getGatewaySuccessRate('monicredit')}%`
@@ -690,8 +714,8 @@ app.listen(PORT, '0.0.0.0', () => {
 
   logInfo('Auto-billing job scheduled', { interval_minutes: AUTO_BILLING_INTERVAL_MS / 60000 });
 
-  // Monicredit pending-txn poller — fills in for the webhook (which hasn't
-  // fired in this account's history). See poller.service.js for the rationale.
+  // Pending-txn pollers — fill in if webhooks are delayed or missed.
+  monipayPoller.start();
   monicreditPoller.start();
 });
 

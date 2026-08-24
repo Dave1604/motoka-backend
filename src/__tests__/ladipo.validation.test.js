@@ -55,7 +55,7 @@ describe('Ladipo Zod validators', () => {
   it('pay body defaults payment_gateway', () => {
     const r = ladipoPayOrderBodySchema.safeParse({});
     expect(r.success).toBe(true);
-    expect(r.data.payment_gateway).toBe('paystack');
+    expect(r.data.payment_gateway).toBe('monipay');
   });
 
   it('verify payment reference length', () => {

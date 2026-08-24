@@ -110,7 +110,12 @@ const RATE_LIMITS = {
     message: 'Too many messages — please wait a moment before continuing'
   },
 
-  // Ladipo marketplace — cart mutations (per IP)
+  // Contact form — keep spam/cost down
+  CONTACT: {
+    windowMs: 15 * 60 * 1000,
+    max: IS_DEV ? 30 : 5,
+    message: 'Too many messages, please try again later'
+  },
   LADIPO_CART: {
     windowMs: 5 * 60 * 1000,
     max: IS_DEV ? 500 : 50,
@@ -157,6 +162,7 @@ export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);
 export const webhookLimiter = createLimiter(RATE_LIMITS.WEBHOOK);
 export const ladipoCartLimiter = createLimiter(RATE_LIMITS.LADIPO_CART);
 export const ladipoCheckoutLimiter = createLimiter(RATE_LIMITS.LADIPO_CHECKOUT);
+export const contactLimiter = createLimiter(RATE_LIMITS.CONTACT);
 
 // Per-account login limiter — keyed by email address (KAGE-008).
 export const loginAccountLimiter = rateLimit({

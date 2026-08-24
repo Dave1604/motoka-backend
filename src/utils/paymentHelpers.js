@@ -166,6 +166,7 @@ export function buildPaymentMetadata({
   subType = null,
   // Driver license specific (optional)
   licenseType = null,
+  licenseDuration = null,
   // State of renewal (which state processes the renewal)
   renewalState = null
 }) {
@@ -183,7 +184,7 @@ export function buildPaymentMetadata({
     delivery_fee: deliveryFee,
     delivery_details: deliveryDetails,
     ...(plateType ? { plate_type: plateType, sub_type: subType } : {}),
-    ...(licenseType ? { license_type: licenseType } : {}),
+    ...(licenseType ? { license_type: licenseType, duration: licenseDuration || null } : {}),
     ...(renewalState ? { renewal_state: renewalState } : {}),
     initiated_at: new Date().toISOString()
   });

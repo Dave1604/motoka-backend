@@ -738,6 +738,7 @@ export async function findRecentActiveOrder({ carId, userId, paymentType, within
 
   if (carId) {
     query = query.eq('car_id', carId);
+    if (paymentType) query = query.eq('order_type', paymentType);
   } else {
     query = query.eq('user_id', userId).eq('order_type', paymentType).is('car_id', null);
   }

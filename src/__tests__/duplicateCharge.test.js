@@ -32,7 +32,7 @@ const { processPaymentSuccess } = await import('../services/payment/transaction.
 /** Minimal chainable stub mirroring the supabase-js builder surface we use. */
 function builder(result) {
   const chain = {};
-  for (const m of ['select', 'eq', 'neq', 'gte', 'in', 'limit', 'update']) {
+  for (const m of ['select', 'eq', 'neq', 'gte', 'in', 'limit', 'update', 'is']) {
     chain[m] = jest.fn(() => chain);
   }
   chain.maybeSingle = jest.fn(async () => result);
