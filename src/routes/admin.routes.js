@@ -148,10 +148,11 @@ router.get('/wallets/:userId/ledger', authenticateAdmin, walletAdmin.getUserLedg
 router.post('/wallets/:userId/adjust', authenticateAdmin, walletAdmin.adjustWallet);
 router.post('/wallets/:userId/status', authenticateAdmin, walletAdmin.updateWalletStatus);
 
-// ── Renewals (read-only) ─────────────────────────────────────────────────────
+// ── Renewals ─────────────────────────────────────────────────────────────────
 // Static paths before /renewals so they are not swallowed by a future /:id
 router.get('/renewals/summary', authenticateAdmin, renewals.getRenewalsSummary);
 router.get('/renewals/deferred', authenticateAdmin, renewals.listDeferredRenewals);
+router.post('/renewals/:carId/channel', authenticateAdmin, renewals.markRenewalChannel);
 router.get('/renewals', authenticateAdmin, renewals.listRenewals);
 
 // ── Vehicle document (renewal item) pricing ───────────────────────────────────

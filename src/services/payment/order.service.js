@@ -157,7 +157,9 @@ export async function getOrderById(orderId) {
         vehicle_model,
         registration_no,
         expiry_date,
-        status
+        status,
+        last_renewal_channel,
+        last_renewal_marked_at
       ),
       payment_transactions:transaction_id (
         id,
@@ -529,23 +531,39 @@ export async function completeOrder(orderId, adminId, options = {}) {
   // Driver's license orders have no associated car — skip all car-related logic.
   const isDriverLicense = !order.car_id;
 
+  const alreadyRolledByAdmin = Boolean(
+    !isDriverLicense
+    && order.cars?.last_renewal_marked_at
+    && new Date(order.cars.last_renewal_marked_at) > new Date(order.created_at)
+  );
+
   const renewalMonths = options.renewalMonths || order.renewal_months || 12;
-  const newExpiryDate = isDriverLicense
-    ? null
+  const newExpiryDate = isDriverLicense || alreadyRolledByAdmin
+    ? (isDriverLicense ? null : order.cars?.expiry_date || null)
     : calculateNewExpiryDate(order.cars?.expiry_date, renewalMonths);
   const newDateIssued = isDriverLicense ? null : getTodayDateString();
 
   let updatedCar = null;
 
   if (!isDriverLicense) {
-    // Update car expiry and status for vehicle renewal orders
+    const carUpdate = {
+      status: 'approved',
+      last_renewal_channel: alreadyRolledByAdmin
+        ? (order.cars?.last_renewal_channel || 'internal')
+        : 'internal',
+      last_renewal_marked_at: alreadyRolledByAdmin
+        ? order.cars.last_renewal_marked_at
+        : new Date().toISOString(),
+      last_renewal_marked_by: adminId ? String(adminId) : null,
+    };
+    if (!alreadyRolledByAdmin) {
+      carUpdate.expiry_date = newExpiryDate;
+      carUpdate.date_issued = newDateIssued;
+    }
+
     const { data: carData, error: carError } = await supabaseAdmin
       .from('cars')
-      .update({
-        expiry_date: newExpiryDate,
-        date_issued: newDateIssued,
-        status: 'approved'
-      })
+      .update(carUpdate)
       .eq('id', order.car_id)
       .select('*')
       .single();
