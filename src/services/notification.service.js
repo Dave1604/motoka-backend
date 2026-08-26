@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { logError } from '../utils/logger.js';
+import { pushFromInAppNotification } from './push/webPush.service.js';
 
 /**
  * NOTIFICATION SERVICE
@@ -87,6 +88,9 @@ export async function createInAppNotification(userId, type, action, message, dat
       type,
       action
     });
+
+    // Mirror to device push (PWA) — never blocks this call
+    pushFromInAppNotification(userId, type, action, message, data);
 
     return createdNotification;
   } catch (error) {
