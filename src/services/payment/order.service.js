@@ -554,8 +554,12 @@ export async function completeOrder(orderId, adminId, options = {}) {
       last_renewal_marked_at: alreadyRolledByAdmin
         ? order.cars.last_renewal_marked_at
         : new Date().toISOString(),
-      last_renewal_marked_by: adminId ? String(adminId) : null,
     };
+    // Keep the audit pair consistent: when the roll-forward already happened,
+    // the mark belongs to whoever made it, not to the admin closing the order.
+    if (!alreadyRolledByAdmin) {
+      carUpdate.last_renewal_marked_by = adminId ? String(adminId) : null;
+    }
     if (!alreadyRolledByAdmin) {
       carUpdate.expiry_date = newExpiryDate;
       carUpdate.date_issued = newDateIssued;
