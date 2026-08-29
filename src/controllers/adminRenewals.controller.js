@@ -18,6 +18,10 @@ import { logError } from '../utils/logger.js';
  * question being asked is always "who do we call today".
  */
 
+// Marking a renewal rolls expiry forward twelve months. Anything inside that
+// window is the same renewal being marked again.
+const RENEWAL_MARK_COOLDOWN_MS = 330 * 24 * 60 * 60 * 1000;
+
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Ordered most-urgent-first; `expired` is deliberately first — it is the
@@ -358,10 +362,13 @@ export const markRenewalChannel = async (req, res) => {
       return response.notFound(res, 'Vehicle not found');
     }
 
-    // Same click twice in a short window should not add another year.
+    // A mark buys twelve months, so a second mark inside that period is a
+    // repeat of the same renewal, not a new one. A 30-second window only
+    // caught the double-click; an admin re-marking an hour later because the
+    // list looked stale would have silently granted another free year.
     if (car.last_renewal_marked_at) {
       const markedAt = new Date(car.last_renewal_marked_at).getTime();
-      if (Number.isFinite(markedAt) && Date.now() - markedAt < 30_000) {
+      if (Number.isFinite(markedAt) && Date.now() - markedAt < RENEWAL_MARK_COOLDOWN_MS) {
         return response.success(res, {
           car_id: car.id,
           channel: car.last_renewal_channel,

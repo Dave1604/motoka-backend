@@ -45,6 +45,20 @@ export async function savePushSubscription(userId, subscription, userAgent = nul
     updated_at: new Date().toISOString(),
   };
 
+  // A push endpoint belongs to a browser, not an account, so a second user
+  // signing in on the same device legitimately re-registers the same endpoint
+  // and the row has to move to them. That also means anyone holding a leaked
+  // endpoint could point it at their own account, so record the handover and
+  // clear the previous owner's push flag rather than leaving them marked as
+  // subscribed with no device.
+  const { data: existing } = await supabaseAdmin
+    .from('push_subscriptions')
+    .select('user_id')
+    .eq('endpoint', subscription.endpoint)
+    .maybeSingle();
+
+  const previousOwnerId = existing?.user_id && existing.user_id !== userId ? existing.user_id : null;
+
   const { data, error } = await supabaseAdmin
     .from('push_subscriptions')
     .upsert(row, { onConflict: 'endpoint' })
@@ -54,6 +68,22 @@ export async function savePushSubscription(userId, subscription, userAgent = nul
   if (error) {
     logError('Failed to save push subscription', { userId, error: error.message });
     throw new Error(`Failed to save push subscription: ${error.message}`);
+  }
+
+  if (previousOwnerId) {
+    logWarn('Push endpoint reassigned to a different user', { userId, previousOwnerId });
+
+    const { count } = await supabaseAdmin
+      .from('push_subscriptions')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', previousOwnerId);
+
+    if (!count) {
+      await supabaseAdmin
+        .from('profiles')
+        .update({ notify_push: false })
+        .eq('id', previousOwnerId);
+    }
   }
 
   // Opt user into push prefs when they grant permission
