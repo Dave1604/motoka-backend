@@ -62,6 +62,10 @@ const withLabels = (rows) =>
  * Cached briefly so the dashboard tile, summary endpoint, and call-list
  * page do not each hit Postgres on every click.
  */
+export const invalidateRenewalsSummaryCache = () => {
+  summaryCache = { value: null, expiresAt: 0 };
+};
+
 export const loadRenewalsSummary = async (supabase, now = new Date(), { fresh = false } = {}) => {
   if (!fresh && summaryCache.value && Date.now() < summaryCache.expiresAt) {
     return summaryCache.value;

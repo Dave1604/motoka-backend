@@ -1,7 +1,8 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { buildExpiryStatus } from '../utils/expiryStatus.js';
 import { parseMonthKey, bucketBounds, monthBounds } from '../utils/expiryMonth.js';
-import { loadRenewalsSummary, sanitizeSearch } from '../services/renewalsSummary.service.js';
+import { loadRenewalsSummary, invalidateRenewalsSummaryCache, sanitizeSearch } from '../services/renewalsSummary.service.js';
+import { calculateNewExpiryDate, getTodayDateString } from '../utils/paymentHelpers.js';
 import * as response from '../utils/responses.js';
 import { logError } from '../utils/logger.js';
 
@@ -16,6 +17,10 @@ import { logError } from '../utils/logger.js';
  * Grouped by urgency rather than paged through a flat list, because the
  * question being asked is always "who do we call today".
  */
+
+// Marking a renewal rolls expiry forward twelve months. Anything inside that
+// window is the same renewal being marked again.
+const RENEWAL_MARK_COOLDOWN_MS = 330 * 24 * 60 * 60 * 1000;
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
@@ -141,7 +146,7 @@ export const listRenewals = async (req, res) => {
     let pageQuery = applyWindow(
       supabaseAdmin
         .from('cars')
-        .select('id, slug, registration_no, plate_number, vehicle_make, vehicle_model, vehicle_year, expiry_date, status, user_id', { count: 'exact' })
+        .select('id, slug, registration_no, plate_number, vehicle_make, vehicle_model, vehicle_year, expiry_date, status, user_id, last_renewal_channel, last_renewal_marked_at', { count: 'exact' })
     )
       .order('expiry_date', { ascending })
       .range(from, to);
@@ -211,6 +216,8 @@ export const listRenewals = async (req, res) => {
         vehicle: [car.vehicle_year, car.vehicle_make, car.vehicle_model].filter(Boolean).join(' ') || null,
         car_status: car.status,
         expiry_date: car.expiry_date,
+        last_renewal_channel: car.last_renewal_channel || null,
+        last_renewal_marked_at: car.last_renewal_marked_at || null,
         days_left: daysUntil(car.expiry_date, todayUtc),
         expiry_message: expiry.message,
         is_expired: expiry.is_expired,
@@ -317,5 +324,92 @@ export const listDeferredRenewals = async (req, res) => {
   } catch (err) {
     logError('[Renewals] Unexpected error in deferred', { error: err.message });
     return response.error(res, 'Failed to load deferred reminders');
+  }
+};
+
+/**
+ * POST /admin/renewals/:carId/channel
+ *
+ * Mark a vehicle as renewed internally (through Motoka) or externally
+ * (papers done elsewhere). Moves expiry forward 12 months so it drops
+ * off the call list until next year.
+ */
+export const markRenewalChannel = async (req, res) => {
+  try {
+    const channel = String(req.body?.channel || '').toLowerCase();
+    if (channel !== 'internal' && channel !== 'external') {
+      return response.error(res, 'channel must be internal or external');
+    }
+
+    const carId = parseInt(req.params.carId, 10);
+    if (!Number.isFinite(carId) || carId < 1) {
+      return response.notFound(res, 'Vehicle not found');
+    }
+
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: car, error: fetchError } = await supabaseAdmin
+      .from('cars')
+      .select('id, expiry_date, deleted_at, last_renewal_marked_at, last_renewal_channel')
+      .eq('id', carId)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (fetchError) {
+      logError('[Renewals] Failed to load car for channel mark', { error: fetchError.message, carId });
+      return response.error(res, 'Failed to mark renewal');
+    }
+    if (!car) {
+      return response.notFound(res, 'Vehicle not found');
+    }
+
+    // A mark buys twelve months, so a second mark inside that period is a
+    // repeat of the same renewal, not a new one. A 30-second window only
+    // caught the double-click; an admin re-marking an hour later because the
+    // list looked stale would have silently granted another free year.
+    if (car.last_renewal_marked_at) {
+      const markedAt = new Date(car.last_renewal_marked_at).getTime();
+      if (Number.isFinite(markedAt) && Date.now() - markedAt < RENEWAL_MARK_COOLDOWN_MS) {
+        return response.success(res, {
+          car_id: car.id,
+          channel: car.last_renewal_channel,
+          previous_expiry_date: car.expiry_date,
+          expiry_date: car.expiry_date,
+          last_renewal_marked_at: car.last_renewal_marked_at,
+        }, `Already marked as ${car.last_renewal_channel || channel} renewal`);
+      }
+    }
+
+    const newExpiryDate = calculateNewExpiryDate(car.expiry_date, 12);
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('cars')
+      .update({
+        expiry_date: newExpiryDate,
+        date_issued: getTodayDateString(),
+        last_renewal_channel: channel,
+        last_renewal_marked_at: new Date().toISOString(),
+        last_renewal_marked_by: req.admin?.id ? String(req.admin.id) : null,
+      })
+      .eq('id', carId)
+      .is('deleted_at', null)
+      .select('id, expiry_date, last_renewal_channel, last_renewal_marked_at')
+      .single();
+
+    if (updateError) {
+      logError('[Renewals] Failed to mark renewal channel', { error: updateError.message, carId, channel });
+      return response.error(res, 'Failed to mark renewal');
+    }
+
+    invalidateRenewalsSummaryCache();
+
+    return response.success(res, {
+      car_id: updated.id,
+      channel: updated.last_renewal_channel,
+      previous_expiry_date: car.expiry_date,
+      expiry_date: updated.expiry_date,
+      last_renewal_marked_at: updated.last_renewal_marked_at,
+    }, `Marked as ${channel} renewal`);
+  } catch (err) {
+    logError('[Renewals] Unexpected error marking channel', err);
+    return response.error(res, 'Failed to mark renewal');
   }
 };
