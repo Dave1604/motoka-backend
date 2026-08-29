@@ -110,6 +110,15 @@ const RATE_LIMITS = {
     message: 'Too many messages — please wait a moment before continuing'
   },
 
+  // Mo on the marketing site — unauthenticated, so keyed on IP and much
+  // tighter than the signed-in limit. Every message is a paid model call and
+  // there is no account behind it to hold responsible.
+  MO_PUBLIC_CHAT: {
+    windowMs: 15 * 60 * 1000,
+    max: IS_DEV ? 100 : 8,
+    message: 'Too many messages — please try again shortly, or sign up to keep chatting'
+  },
+
   // Contact form — keep spam/cost down
   CONTACT: {
     windowMs: 15 * 60 * 1000,
@@ -193,6 +202,16 @@ export const twoFAAccountLimiter = rateLimit({
 });
 
 // Mo chat limiter — keyed by user ID (not IP) since the endpoint requires auth
+export const moPublicChatLimiter = rateLimit({
+  windowMs: RATE_LIMITS.MO_PUBLIC_CHAT.windowMs,
+  max: RATE_LIMITS.MO_PUBLIC_CHAT.max,
+  message: { success: false, message: RATE_LIMITS.MO_PUBLIC_CHAT.message },
+  standardHeaders: true,
+  legacyHeaders: false,
+  // IP only — there is deliberately no req.user to fall back to here.
+  keyGenerator: (req) => req.ip,
+});
+
 export const moChatLimiter = rateLimit({
   windowMs: RATE_LIMITS.MO_CHAT.windowMs,
   max: RATE_LIMITS.MO_CHAT.max,
