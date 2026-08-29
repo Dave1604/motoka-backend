@@ -414,3 +414,98 @@ export const chat = async (req, res) => {
     res.status(500).json({ success: false, message: 'Internal server error' });
   }
 };
+
+// ── Public Mo ────────────────────────────────────────────────────────────────
+//
+// The signed-in `chat` above trusts userProfile/cars from the request body,
+// which is fine when a session stands behind it. Anonymously it is a prompt
+// injection surface, so this ignores those fields entirely and answers from a
+// much smaller pre-sales prompt rather than the full assistant.
+//
+// Kept as its own controller rather than a flag on `chat` so the signed-in
+// path cannot accidentally inherit the looser rules.
+
+const PUBLIC_MAX_MESSAGES = 12;
+const PUBLIC_MAX_CHARS = 800;
+
+function buildPublicSystemPrompt() {
+  return `You are Mo, the assistant on Motoka's website. You are talking to a visitor who has not signed up yet.
+
+About Motoka:
+- Nigerian platform for renewing vehicle papers online: vehicle licence, road worthiness, third-party insurance, driver's licence, plate numbers, proof of ownership.
+- Renewals are handled through a licensed, MVAA-certified agent network. Most complete within 24-48 hours.
+- Motoka stores digital copies of documents and sends reminders before anything expires.
+- Ladipo marketplace sells verified car parts with fitment filters.
+
+Rules:
+- Answer only questions about Motoka and Nigerian vehicle paperwork. For anything else, say that is outside what you can help with here.
+- Never quote a specific price. Prices vary by state and vehicle; tell them the exact fee is shown before they pay.
+- You cannot look up a plate number, check anyone's documents, or see any account. If asked, explain that they need to sign up first.
+- Never ask for or accept BVN, NIN, card details, passwords, or any document number.
+- Keep answers to three sentences or fewer. Plain English.
+- If they want to actually renew something, point them at the plate number box on the homepage.`;
+}
+
+export const publicChat = async (req, res) => {
+  const { messages } = req.body || {};
+
+  if (!messages || !Array.isArray(messages) || messages.length === 0) {
+    return res.status(400).json({ success: false, message: 'messages array is required' });
+  }
+
+  if (messages.length > PUBLIC_MAX_MESSAGES) {
+    return res.status(400).json({ success: false, message: 'Conversation too long — please start a new one' });
+  }
+
+  // Only role/content, only the two roles a visitor can legitimately send.
+  const safeMessages = [];
+  for (const m of messages) {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) {
+      return res.status(400).json({ success: false, message: 'Invalid message in conversation' });
+    }
+    if (typeof m.content !== 'string' || !m.content.trim()) {
+      return res.status(400).json({ success: false, message: 'Invalid message in conversation' });
+    }
+    if (m.content.length > PUBLIC_MAX_CHARS) {
+      return res.status(400).json({ success: false, message: 'Message too long' });
+    }
+    safeMessages.push({ role: m.role, content: m.content });
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    return res.status(503).json({ success: false, message: 'Assistant is unavailable right now' });
+  }
+
+  try {
+    const response = await fetch(OPENAI_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [{ role: 'system', content: buildPublicSystemPrompt() }, ...safeMessages],
+        temperature: 0.3,
+        max_tokens: 300,
+      }),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error('[Mo public] OpenAI error:', data);
+      return res.status(502).json({ success: false, message: 'Assistant is unavailable right now' });
+    }
+
+    const raw = data.choices?.[0]?.message?.content?.trim() || "I'm not sure how to help with that.";
+
+    // No ACTION or LADIPO_SEARCH parsing here — those drive in-app navigation
+    // and a signed-out visitor has nowhere to be navigated to.
+    res.json({ success: true, reply: cleanResponse(raw) });
+  } catch (err) {
+    console.error('[Mo public] controller error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+  }
+};
