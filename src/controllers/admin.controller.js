@@ -928,6 +928,78 @@ export const getRecentOrders = async (req, res) => {
 };
 
 // ─── Recent Transactions (last 5) ────────────────────────────────────────────
+// GET /api/admin/activity/since?since=<ISO>
+//
+// Feeds the admin tab's new-activity ping, so it is polled every ~45s and has to
+// stay cheap. listUsers and listTransactions both exist but neither is pollable:
+// listUsers does per-page car and email lookups, and listTransactions runs eight
+// count queries plus amount sums for its summary cards. This is two counts and
+// at most ten rows.
+export const getActivitySince = async (req, res) => {
+  try {
+    const supabaseAdmin = getSupabaseAdmin();
+    const since = req.query.since;
+
+    if (!since || Number.isNaN(Date.parse(since))) {
+      return res.status(400).json({ status: false, message: 'A valid ISO `since` timestamp is required' });
+    }
+
+    // Sent back so the client polls from the server's clock, not the browser's —
+    // a skewed laptop would otherwise replay or skip activity every tick.
+    const now = new Date().toISOString();
+
+    const [usersResult, paymentsResult] = await Promise.all([
+      supabaseAdmin
+        .from('profiles')
+        .select('id, first_name, last_name, email, created_at', { count: 'exact' })
+        .is('deleted_at', null)
+        .gt('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(5),
+      supabaseAdmin
+        .from('payment_transactions')
+        .select('reference, amount, payment_type, created_at', { count: 'exact' })
+        .eq('status', 'successful')
+        .gt('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(5)
+    ]);
+
+    if (usersResult.error || paymentsResult.error) {
+      logError('Admin activity since', usersResult.error || paymentsResult.error);
+      return res.status(500).json({ status: false, message: 'Failed to retrieve activity' });
+    }
+
+    return res.status(200).json({
+      status: true,
+      message: 'Activity retrieved successfully',
+      data: {
+        now,
+        users: {
+          count: usersResult.count || 0,
+          latest: (usersResult.data || []).map((p) => ({
+            id: p.id,
+            name: [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email || 'New user',
+            created_at: p.created_at
+          }))
+        },
+        payments: {
+          count: paymentsResult.count || 0,
+          latest: (paymentsResult.data || []).map((t) => ({
+            reference: t.reference,
+            amount_kobo: Number(t.amount) || 0,
+            payment_type: t.payment_type,
+            created_at: t.created_at
+          }))
+        }
+      }
+    });
+  } catch (error) {
+    logError('Admin activity since', error);
+    return res.status(500).json({ status: false, message: 'Failed to retrieve activity' });
+  }
+};
+
 export const getRecentTransactions = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();

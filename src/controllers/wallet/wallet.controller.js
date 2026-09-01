@@ -33,6 +33,12 @@ function resolveKobo(source) {
   return null;
 }
 
+// Kobo -> "₦20,000.00", for the human-readable rows shown on the Paystack
+// transaction. Display only; every stored amount stays in kobo.
+function formatNaira(kobo) {
+  return `₦${(kobo / 100).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 // GET /api/wallet
 export const getWalletBalance = async (req, res) => {
   try {
@@ -381,16 +387,36 @@ export const initFunding = async (req, res) => {
     });
 
     const callbackUrl = process.env.WALLET_CALLBACK_URL || process.env.PAYMENT_CALLBACK_URL || undefined;
+
+    // Who paid. The reference stays opaque — it travels in callback URLs, webhook
+    // bodies and logs, and is the idempotency key for wallet_credit(), so it is a
+    // bad place for personal data. Paystack renders custom_fields as labelled rows
+    // on the transaction instead, which is where someone reconciling actually looks.
+    const profile = req.user.profile || {};
+    const payerName = [profile.first_name, profile.last_name].filter(Boolean).join(' ');
+    const customFields = [
+      payerName && { display_name: 'Customer', variable_name: 'customer_name', value: payerName },
+      profile.phone_number && { display_name: 'Phone', variable_name: 'phone', value: profile.phone_number },
+      { display_name: 'Purpose', variable_name: 'purpose', value: 'Wallet top-up' },
+      { display_name: 'Wallet credit', variable_name: 'wallet_credit', value: formatNaira(desiredKobo) },
+      { display_name: 'Fee (paid by user)', variable_name: 'funding_fee', value: formatNaira(feeKobo) },
+      { display_name: 'Motoka user ID', variable_name: 'motoka_user_id', value: userId }
+    ].filter(Boolean);
+
     const init = await initializeTransaction({
       email: userEmail,
       amount: chargeKobo,
       reference: transaction.reference,
       callback_url: callbackUrl,
+      first_name: profile.first_name || undefined,
+      last_name: profile.last_name || undefined,
+      phone: profile.phone_number || undefined,
       metadata: {
         payment_type: PAYMENT_TYPE.WALLET_FUNDING,
         wallet_credit_kobo: desiredKobo,
         fee_kobo: feeKobo,
-        user_id: userId
+        user_id: userId,
+        custom_fields: customFields
       },
       // Card + bank transfer + USSD by default. Override via env without a redeploy.
       // The fee gross-up is computed at the (higher) card rate, so the wallet is
