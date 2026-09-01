@@ -83,6 +83,8 @@ router.get('/gateways/health', authenticateAdmin, admin.getGatewayHealth);
 router.get('/dashboard/stats', authenticateAdmin, admin.getDashboardStats);
 router.get('/recent-orders', authenticateAdmin, admin.getRecentOrders);
 router.get('/recent-transactions', authenticateAdmin, admin.getRecentTransactions);
+// Polled by the admin tab's new-activity ping; deliberately light.
+router.get('/activity/since', authenticateAdmin, admin.getActivitySince);
 
 // ── Order management (authenticateAdmin) ─────────────────────────────────────
 router.get('/orders', authenticateAdmin, admin.listOrders);

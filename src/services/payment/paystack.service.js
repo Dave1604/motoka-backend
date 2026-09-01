@@ -87,7 +87,10 @@ export async function initializeTransaction({
   reference,
   callback_url,
   metadata = {},
-  channels
+  channels,
+  first_name,
+  last_name,
+  phone
 }) {
   if (!email || !amount || !reference) {
     throw new PaystackError('Email, amount, and reference are required', 400, 'VALIDATION_ERROR');
@@ -112,7 +115,13 @@ export async function initializeTransaction({
   if (channels && channels.length > 0) {
     payload.channels = channels;
   }
-  
+
+  // Paystack shows these on the transaction and on the customer record, so the
+  // dashboard reads as a person rather than a bare email and a reference.
+  if (first_name) payload.first_name = first_name;
+  if (last_name) payload.last_name = last_name;
+  if (phone) payload.phone = phone;
+
   const response = await paystackRequest(PAYSTACK_ENDPOINTS.INITIALIZE, {
     method: 'POST',
     body: JSON.stringify(payload)
