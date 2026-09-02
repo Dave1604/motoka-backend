@@ -2,7 +2,7 @@ import { getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
 import { parse as csvParse } from 'csv-parse/sync';
 import { sanitizeCarInput } from '../utils/carSanitization.js';
-import { buildCarData, extractNormalizedIdentifiers } from '../utils/carDataBuilder.js';
+import { buildCarData, buildUpdateData, extractNormalizedIdentifiers } from '../utils/carDataBuilder.js';
 import { createCar, CarError } from '../services/car.service.js';
 import paymentMetrics from '../services/payment/metrics.service.js';
 import {
@@ -3004,12 +3004,32 @@ export const adminAddCar = async (req, res) => {
  * PUT /api/admin/cars/:slug
  * Admin updates an existing car's details.
  */
+
+// Names the step that failed and carries the underlying error code back to the
+// caller. Postgres ('22P02') and PostgREST ('PGRST204') codes are diagnostic,
+// not secret, and this route is behind authenticateAdmin — without them a 500
+// here is unactionable without shell access to the server logs.
+function describeFailure(stage, error) {
+  return {
+    stage,
+    error_code: error?.code || null,
+    error_detail: error?.message || null,
+    error_hint: error?.hint || error?.details || null,
+  };
+}
+
 export const adminUpdateCar = async (req, res) => {
+  // Which step we reached. Both 500s below used to return the same sentence, so
+  // a Postgres rejection and a thrown exception were indistinguishable from the
+  // outside — which is exactly why this endpoint failed silently for weeks.
+  let stage = 'start';
   try {
+    stage = 'client';
     const supabaseAdmin = getSupabaseAdmin();
     const { slug } = req.params;
 
     // Fetch the existing car
+    stage = 'lookup';
     const { data: existingCar, error: fetchError } = await supabaseAdmin
       .from('cars')
       .select('id, slug, registration_no, chasis_no, engine_no')
@@ -3021,6 +3041,7 @@ export const adminUpdateCar = async (req, res) => {
       return res.status(404).json({ status: false, message: 'Car not found' });
     }
 
+    stage = 'sanitize';
     const sanitizedBody = sanitizeCarInput(req.body);
 
     // Validate date ordering if both dates are provided
@@ -3031,6 +3052,7 @@ export const adminUpdateCar = async (req, res) => {
     }
 
     // Check for duplicate identifiers, excluding the current car
+    stage = 'duplicate_check';
     const identifiers = extractNormalizedIdentifiers(sanitizedBody);
     if (identifiers.registration_no || identifiers.chasis_no || identifiers.engine_no) {
       const orParts = [];
@@ -3056,12 +3078,14 @@ export const adminUpdateCar = async (req, res) => {
       }
     }
 
+    stage = 'build_update';
     const updateData = buildUpdateData(sanitizedBody, existingCar);
 
     if (Object.keys(updateData).length === 0) {
       return res.status(400).json({ status: false, message: 'No valid fields to update' });
     }
 
+    stage = 'update';
     const { data: updatedCar, error: updateError } = await supabaseAdmin
       .from('cars')
       .update(updateData)
@@ -3071,7 +3095,11 @@ export const adminUpdateCar = async (req, res) => {
 
     if (updateError) {
       logError('adminUpdateCar DB', updateError);
-      return res.status(500).json({ status: false, message: 'Failed to update car' });
+      return res.status(500).json({
+        status: false,
+        message: 'Failed to update car',
+        ...describeFailure('update', updateError),
+      });
     }
 
     logInfo('Admin updated car', { adminId: req.admin?.id, carSlug: slug });
@@ -3083,7 +3111,11 @@ export const adminUpdateCar = async (req, res) => {
     });
   } catch (error) {
     logError('adminUpdateCar', error);
-    return res.status(500).json({ status: false, message: 'Failed to update car' });
+    return res.status(500).json({
+      status: false,
+      message: 'Failed to update car',
+      ...describeFailure(stage, error),
+    });
   }
 };
 
