@@ -47,6 +47,8 @@ if (!process.env.OPENAI_API_KEY) {
 const productionRequiredEnvVars = [
   'MONIPAY_SECRET_KEY',
   'ALLOWED_ORIGINS',
+  'FRONTEND_URL',
+  'RESEND_API_KEY',
 ];
 
 
@@ -92,6 +94,8 @@ if (isProduction) {
     console.error('These variables are mandatory for production security:');
     console.error('  • MONIPAY_SECRET_KEY: Required for verify + webhook HMAC (pri_live_… / pri_test_…)');
     console.error('  • ALLOWED_ORIGINS: Required for CORS origin restrictions');
+    console.error('  • FRONTEND_URL: Payment callbacks and email links redirect here — an unset value silently falls back to localhost');
+    console.error('  • RESEND_API_KEY: Required for all transactional email (receipts, OTP, order updates)');
     console.error('  • CLOUDINARY_*: Required for Ladipo product image uploads');
     console.error('');
     console.error('Set these variables in your production environment before starting.');
@@ -148,7 +152,13 @@ app.use('/api/webhooks/monicredit', express.raw({ type: 'application/json', limi
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(apiLimiter);
+// Gateway webhooks arrive from a handful of fixed IPs — the per-IP apiLimiter
+// would 429 a retry storm and payments would be captured but never fulfilled.
+// They get their own webhookLimiter at the route level instead.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/webhooks/')) return next();
+  return apiLimiter(req, res, next);
+});
 
 app.get('/', (req, res) => {
   res.json({
