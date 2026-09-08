@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import { logDebug, logWarn } from '../../utils/logger.js';
+import { logWarn } from '../../utils/logger.js';
 
 const IDEMPOTENCY_KEY_TTL_HOURS = 24;
 

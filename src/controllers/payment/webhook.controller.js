@@ -1,6 +1,5 @@
 import { logError, logDebug, logInfo, logWarn } from '../../utils/logger.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
-import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
 import {
   getTransactionByReference,
   getTransactionByPaystackReference,
@@ -8,13 +7,11 @@ import {
   getTransactionByWebhookEventId,
   updateTransactionStatus,
   updateTransactionWebhookEventId,
-  processPaymentSuccess,
-  TransactionError
+  processPaymentSuccess
 } from '../../services/payment/transaction.service.js';
 import {
   getOrderById,
-  getOrderByTransactionId,
-  OrderError
+  getOrderByTransactionId
 } from '../../services/payment/order.service.js';
 import {
   validatePaymentAmount,
@@ -27,8 +24,7 @@ import {
   ORDER_TYPE,
   PAYSTACK_EVENTS,
   MONIPAY_EVENTS,
-  PAYMENT_LIMITS,
-  ERROR_MESSAGES
+  PAYMENT_LIMITS
 } from '../../constants/payment.constants.js';
 import { PaymentSuccessService } from '../../services/payment/payment-success.service.js';
 import { handleWalletFundingSuccess } from '../../services/wallet/wallet.service.js';

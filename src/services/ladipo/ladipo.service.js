@@ -18,11 +18,6 @@ let _categoryCache = null;
 let _categoryCacheAt = 0;
 const CATEGORY_CACHE_TTL = 5 * 60_000;
 
-export function clearLadipoCategoryCache() {
-  _categoryCache = null;
-  _categoryCacheAt = 0;
-}
-
 export async function getCategories() {
   if (_categoryCache && (Date.now() - _categoryCacheAt) < CATEGORY_CACHE_TTL) {
     return _categoryCache;

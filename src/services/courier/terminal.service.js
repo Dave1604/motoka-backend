@@ -132,32 +132,9 @@ async function terminalRequest(path, { method = 'GET', body, query } = {}) {
   );
 }
 
-export async function createAddress(payload) {
-  const data = await terminalRequest('/addresses', { method: 'POST', body: payload });
-  return data?.data || data;
-}
-
-export async function createParcel(payload) {
-  const data = await terminalRequest('/parcels', { method: 'POST', body: payload });
-  return data?.data || data;
-}
-
 export async function getDefaultPackaging() {
   const data = await terminalRequest('/packaging/default/terminal', { method: 'GET' });
   return data?.data || data;
-}
-
-export async function getShipmentRates({ pickupAddressId, deliveryAddressId, parcelId, currency = 'NGN' }) {
-  const data = await terminalRequest('/rates/shipment', {
-    method: 'GET',
-    query: {
-      pickup_address: pickupAddressId,
-      delivery_address: deliveryAddressId,
-      parcel_id: parcelId,
-      currency,
-    },
-  });
-  return Array.isArray(data?.data) ? data.data : [];
 }
 
 /** persist_data=false is for price-only quotes and cannot be used to book. */
@@ -194,13 +171,6 @@ export async function arrangePickup({ rateId, shipmentId }) {
 
 export async function trackTerminalShipment(shipmentId) {
   const data = await terminalRequest(`/shipments/track/${encodeURIComponent(shipmentId)}`, {
-    method: 'GET',
-  });
-  return data?.data || data;
-}
-
-export async function getTerminalShipment(shipmentId) {
-  const data = await terminalRequest(`/shipments/${encodeURIComponent(shipmentId)}`, {
     method: 'GET',
   });
   return data?.data || data;

@@ -50,21 +50,4 @@ export const logDebug = (message, data = {}) => {
   logger.debug(data, message);
 };
 
-export const logErrorStructured = (message, error) => {
-  if (error instanceof Error) {
-    logger.error({ err: error }, message);
-  } else {
-    logger.error(error, message);
-  }
-};
-
 export { logger };
-
-export default { 
-  logError, 
-  logInfo, 
-  logWarn, 
-  logDebug, 
-  logErrorStructured,
-  logger 
-};

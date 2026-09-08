@@ -37,66 +37,6 @@
  */
 
 /**
- * Payment Gateway Interface
- * 
- * All gateway adapters must implement these methods to ensure consistent
- * behavior across different payment providers.
- */
-export class GatewayInterface {
-  /**
-   * Initialize a payment transaction
-   * 
-   * @param {Object} params
-   * @param {string} params.userId - User ID
-   * @param {string} params.userEmail - User email
-   * @param {Object} params.transaction - Internal transaction record
-   * @param {Object} params.car - Car record
-   * @param {string[]} params.paymentScheduleIds - Selected renewal item IDs
-   * @param {number} params.renewalMonths - Renewal period in months
-   * @param {string} params.paymentType - Payment type
-   * @param {number} params.renewalAmount - Renewal amount in kobo
-   * @param {number} params.deliveryFee - Delivery fee in kobo
-   * @param {Object} params.deliveryData - Delivery details
-   * @param {boolean} params.hasDeliveryDetails - Whether delivery is requested
-   * @returns {Promise<InitResponse>} Normalized initialization response
-   */
-  async initializePayment(params) {
-    throw new Error('initializePayment must be implemented by gateway adapter');
-  }
-
-  /**
-   * Verify a payment transaction
-   * 
-   * @param {string} transactionId - Transaction reference or gateway order ID
-   * @returns {Promise<VerifyResponse>} Normalized verification response
-   */
-  async verifyPayment(transactionId) {
-    throw new Error('verifyPayment must be implemented by gateway adapter');
-  }
-
-  /**
-   * Process a webhook event
-   * 
-   * @param {Object} webhookPayload - Raw webhook payload
-   * @returns {Promise<Object>} Normalized webhook data
-   */
-  async processWebhook(webhookPayload) {
-    throw new Error('processWebhook must be implemented by gateway adapter');
-  }
-
-  /**
-   * Verify webhook signature
-   * 
-   * @param {string|Buffer} payload - Raw webhook payload
-   * @param {string} signature - Webhook signature header
-   * @returns {Promise<boolean>} Whether signature is valid
-   */
-  async verifyWebhookSignature(payload, signature) {
-    throw new Error('verifyWebhookSignature must be implemented by gateway adapter');
-  }
-}
-
-/**
  * Gateway error base class
  */
 export class GatewayError extends Error {

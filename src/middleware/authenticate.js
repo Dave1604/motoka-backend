@@ -103,51 +103,6 @@ export const authenticate = async (req, res, next) => {
   }
 };
 
-export const optionalAuth = async (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    
-    if (!authHeader?.startsWith('Bearer ')) {
-      req.user = null;
-      return next();
-    }
-    
-    const token = authHeader.split(' ')[1];
-    const supabaseAdmin = getSupabaseAdmin();
-    
-    const { data: { user } } = await supabaseAdmin.auth.getUser(token);
-    
-    if (!user) {
-      req.user = null;
-      return next();
-    }
-    
-    // SCALABILITY: Use cache for optional auth too
-    let profile = getCachedProfile(user.id);
-    
-    if (!profile) {
-      const { data: fetchedProfile } = await supabaseAdmin
-        .from('profiles')
-        .select('id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, created_at, updated_at')
-        .eq('id', user.id)
-        .single();
-
-      if (fetchedProfile) {
-        profile = fetchedProfile;
-        setCachedProfile(user.id, profile);
-      }
-    }
-
-    req.user = profile ? { ...user, profile } : null;
-    req.token = token;
-    
-    next();
-  } catch {
-    req.user = null;
-    next();
-  }
-};
-
 /**
  * Invalidate profile cache for a specific user
  * Call this when user suspension status changes to ensure immediate effect

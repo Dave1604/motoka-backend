@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-import { logError, logInfo, logWarn, logDebug } from '../../../utils/logger.js';
+import { logError, logInfo, logDebug } from '../../../utils/logger.js';
 import { retryWithBackoff } from '../../../utils/retry.js';
 import {
   ERROR_MESSAGES,
@@ -340,15 +340,6 @@ export function isConfigured() {
     process.env.MONICREDIT_PUBLIC_KEY &&
     process.env.MONICREDIT_PRIVATE_KEY
   );
-}
-
-/**
- * Exposes the Monicredit public key for scenarios that require client-side
- * SDK initialisation. The private key must never be exposed through this or
- * any other public-facing path.
- */
-export function getPublicKeyValue() {
-  return getPublicKey();
 }
 
 /**

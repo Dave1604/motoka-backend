@@ -102,16 +102,3 @@ export async function retryWithBackoff(fn, options = {}) {
   }
 }
 
-export async function retryMonicreditRequest(apiCall, operation) {
-  return retryWithBackoff(apiCall, {
-    maxRetries: DEFAULT_MAX_RETRIES,
-    initialDelay: DEFAULT_INITIAL_DELAY_MS,
-    maxDelay: DEFAULT_MAX_DELAY_MS,
-    context: `Monicredit ${operation}`
-  });
-}
-
-export default {
-  retryWithBackoff,
-  retryMonicreditRequest
-};

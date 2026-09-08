@@ -1,4 +1,3 @@
-import { buildCarData, buildUpdateData } from '../utils/carDataBuilder.js';
 import { extractDuplicateFields, buildDuplicateErrorMessage } from '../utils/carErrorHelpers.js';
 import { logError } from '../utils/logger.js';
 import { DB_ERROR_CODES, HTTP_STATUS, ERROR_MESSAGES } from '../constants/car.constants.js';

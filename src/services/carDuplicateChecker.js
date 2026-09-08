@@ -1,6 +1,4 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
-import { buildDuplicateErrorMessage } from '../utils/carErrorHelpers.js';
-import { logError } from '../utils/logger.js';
 
 /**
  * SCALABILITY: DEPRECATED - Remove redundant duplicate checking

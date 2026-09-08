@@ -42,10 +42,7 @@ jest.unstable_mockModule('../services/payment/transaction.service.js', () => ({
   processPaymentSuccess: (...args) => mockProcessPaymentSuccess(...args),
   getUserTransactions: jest.fn(),
   getCarTransactions: jest.fn(),
-  hasSuccessfulPayment: jest.fn(),
-  getLatestSuccessfulTransaction: jest.fn(),
   markTransactionAbandoned: jest.fn(),
-  markTransactionRefunded: jest.fn(),
   TransactionError: class TransactionError extends Error {
     constructor(message, statusCode = 500, code = null) {
       super(message);
@@ -85,12 +82,8 @@ jest.unstable_mockModule('../services/email/paymentEmail.service.js', () => ({
   sendPaymentSuccessEmail: jest.fn(),
   sendPaymentFailedEmail: (...args) => mockSendPaymentFailedEmail(...args),
   sendOrderInProgressEmail: jest.fn(),
-  sendSubscriptionCreatedEmail: jest.fn(),
-  sendSubscriptionCancelledEmail: jest.fn(),
   sendGuestPaymentConfirmationEmail: jest.fn(),
-  sendOrderCompletedEmail: jest.fn(),
-  sendDeferredDocReminderEmail: jest.fn(),
-  sendSkippedDocNudgeEmail: jest.fn()
+  sendOrderCompletedEmail: jest.fn()
 }));
 
 jest.unstable_mockModule('../config/supabase.js', () => ({

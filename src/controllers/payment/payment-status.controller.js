@@ -3,8 +3,7 @@ import { logError } from '../../utils/logger.js';
 import { paymentResponse } from './payment-response.util.js';
 import {
   getUserTransactions,
-  getCarTransactions,
-  TransactionError
+  getCarTransactions
 } from '../../services/payment/transaction.service.js';
 import {
   getOrderByNumber,

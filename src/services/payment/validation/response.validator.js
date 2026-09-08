@@ -113,28 +113,3 @@ export function validateWebhookPayload(payload, gateway) {
   
   return true;
 }
-
-/**
- * Validate response with optional logging
- * 
- * @param {Function} validator - Validation function
- * @param {Object} response - Response to validate
- * @param {string} context - Context for logging (e.g., 'init', 'verify')
- * @param {boolean} logErrors - Whether to log validation errors
- * @returns {boolean} True if valid
- * @throws {ValidationError} If validation fails
- */
-export function validateResponse(validator, response, context = 'unknown', logErrors = true) {
-  try {
-    return validator(response);
-  } catch (error) {
-    if (logErrors && error instanceof ValidationError) {
-      console.warn(`[Response Validator] Validation failed for ${context}:`, {
-        field: error.field,
-        value: error.value,
-        message: error.message
-      });
-    }
-    throw error;
-  }
-}

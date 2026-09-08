@@ -14,10 +14,6 @@ export const ladipoCartItemIdParamSchema = z.object({
   id: uuid,
 });
 
-export const ladipoProductIdParamSchema = z.object({
-  productId: uuid,
-});
-
 export const ladipoAddToCartBodySchema = z.object({
   product_id: uuid,
   quantity: z.coerce.number().int().min(1).max(99).optional().default(1),
