@@ -4,9 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 const migrationsDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'supabase', 'migrations');
-const migrationPath = join(migrationsDir, '082_referral_system.sql');
+const migrationPath = join(migrationsDir, '084_referral_system.sql');
 
-describe('referral migration 082', () => {
+describe('referral migration 084', () => {
   it('exists', () => {
     expect(existsSync(migrationPath)).toBe(true);
   });

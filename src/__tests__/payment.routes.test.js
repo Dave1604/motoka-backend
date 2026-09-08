@@ -10,6 +10,7 @@ const mockPaystackInitialize = jest.fn();
 const mockGetSupabaseAdmin = jest.fn();
 const mockValidateStateAndLGA = jest.fn();
 const mockResolveStateAndLGA = jest.fn();
+const mockQuoteFromDeliveryFields = jest.fn();
 const mockGetTransactionByReference = jest.fn();
 const mockPaystackVerify = jest.fn();
 const mockUpdateTransactionStatus = jest.fn();
@@ -29,6 +30,9 @@ jest.unstable_mockModule('../services/payment/renewalItems.service.js', () => ({
 jest.unstable_mockModule('../services/payment/transaction.service.js', () => ({
   createTransaction: (...args) => mockCreateTransaction(...args),
   updateTransactionWithPaystackInit: (...args) => mockUpdateTransactionWithPaystackInit(...args),
+  updateTransactionWithMonicreditInit: jest.fn(),
+  updateTransactionWithMonipayInit: jest.fn(),
+  getTransactionByMonicreditOrderId: jest.fn(),
   updateTransactionStatus: (...args) => mockUpdateTransactionStatus(...args),
   getTransactionByReference: (...args) => mockGetTransactionByReference(...args),
   getTransactionByPaystackReference: (...args) => mockGetTransactionByPaystackReference(...args),
@@ -57,6 +61,11 @@ jest.unstable_mockModule('../services/payment/paystack.service.js', () => ({
   verifyTransaction: (...args) => mockPaystackVerify(...args),
   verifyWebhookSignature: (...args) => mockVerifyWebhookSignature(...args),
   parseWebhookEvent: (...args) => mockParseWebhookEvent(...args),
+  chargeAuthorization: jest.fn(),
+  listTransactions: jest.fn(),
+  createRefund: jest.fn(),
+  isConfigured: jest.fn(() => true),
+  getPublicKey: jest.fn(),
   PaystackError: class PaystackError extends Error {
     constructor(message, statusCode = 500, code = null, data = null) {
       super(message);
@@ -74,7 +83,14 @@ jest.unstable_mockModule('../services/notification.service.js', () => ({
 
 jest.unstable_mockModule('../services/email/paymentEmail.service.js', () => ({
   sendPaymentSuccessEmail: jest.fn(),
-  sendPaymentFailedEmail: (...args) => mockSendPaymentFailedEmail(...args)
+  sendPaymentFailedEmail: (...args) => mockSendPaymentFailedEmail(...args),
+  sendOrderInProgressEmail: jest.fn(),
+  sendSubscriptionCreatedEmail: jest.fn(),
+  sendSubscriptionCancelledEmail: jest.fn(),
+  sendGuestPaymentConfirmationEmail: jest.fn(),
+  sendOrderCompletedEmail: jest.fn(),
+  sendDeferredDocReminderEmail: jest.fn(),
+  sendSkippedDocNudgeEmail: jest.fn()
 }));
 
 jest.unstable_mockModule('../config/supabase.js', () => ({
@@ -100,6 +116,32 @@ jest.unstable_mockModule('../services/location.service.js', () => ({
   validateStateAndLGA: (...args) => mockValidateStateAndLGA(...args)
 }));
 
+// The courier quote hits Supabase + Terminal/Shipbubble when unmocked.
+// Mocked ESM modules must cover EVERY export any importer touches.
+jest.unstable_mockModule('../services/courier/deliveryQuote.service.js', () => ({
+  quoteFromDeliveryFields: (...args) => mockQuoteFromDeliveryFields(...args),
+  quoteDelivery: jest.fn(),
+  toE164Ng: jest.fn(),
+  splitPersonName: jest.fn(),
+  pickupAddressPayload: jest.fn(),
+  pickupAddressString: jest.fn(),
+  deliveryAddressPayload: jest.fn(),
+  deliveryAddressString: jest.fn(),
+  parcelPayload: jest.fn(),
+  shipbubblePackageItems: jest.fn(),
+  shipbubblePackageDimension: jest.fn(),
+  pickCheapestNgnRate: jest.fn(),
+  getPackagingId: jest.fn(),
+  DeliveryQuoteError: class DeliveryQuoteError extends Error {
+    constructor(message, statusCode = 400, code = null) {
+      super(message);
+      this.name = 'DeliveryQuoteError';
+      this.statusCode = statusCode;
+      this.code = code;
+    }
+  }
+}));
+
 // Mock authentication middleware
 jest.unstable_mockModule('../middleware/authenticate.js', () => ({
   authenticate: (req, res, next) => {
@@ -122,9 +164,25 @@ jest.unstable_mockModule('../middleware/checkEmailVerified.js', () => ({
 }));
 
 // Mock rate limiter
-jest.unstable_mockModule('../middleware/rateLimiter.js', () => ({
-  paymentLimiter: (req, res, next) => next()
-}));
+jest.unstable_mockModule('../middleware/rateLimiter.js', () => {
+  const passthrough = (req, res, next) => next();
+  return {
+    apiLimiter: passthrough,
+    authLimiter: passthrough,
+    otpLimiter: passthrough,
+    passwordResetLimiter: passthrough,
+    carRegistrationLimiter: passthrough,
+    paymentLimiter: passthrough,
+    webhookLimiter: passthrough,
+    ladipoCartLimiter: passthrough,
+    ladipoCheckoutLimiter: passthrough,
+    contactLimiter: passthrough,
+    loginAccountLimiter: passthrough,
+    twoFAAccountLimiter: passthrough,
+    moPublicChatLimiter: passthrough,
+    moChatLimiter: passthrough
+  };
+});
 
 describe('Payment routes', () => {
   let app;
@@ -173,6 +231,9 @@ describe('Payment routes', () => {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
       is: jest.fn().mockReturnThis(),
+      // duplicate-init guard: .update(...).eq(...)...select('id') — awaiting the
+      // chainable mock yields { data: undefined }, so the guard no-ops
+      update: jest.fn().mockReturnThis(),
       single: jest.fn().mockResolvedValue({
         data: {
           id: 10,
@@ -199,6 +260,15 @@ describe('Payment routes', () => {
       amount: 250000
     });
 
+    mockQuoteFromDeliveryFields.mockResolvedValue({
+      fee_kobo: 50000,
+      stateCode: 'LA',
+      lgaName: 'Ikeja',
+      address: '1 Test St',
+      contact: '08000000000',
+      weight_kg: 1
+    });
+
     mockPaystackInitialize.mockResolvedValue({
       authorization_url: 'https://paystack.test/auth',
       access_code: 'access-123',
@@ -214,6 +284,9 @@ describe('Payment routes', () => {
       car_slug: 'car-slug',
       payment_schedule_id: ['vehicle_licence', 'insurance'],
       renewal_months: 12,
+      // The default gateway is monipay now; this suite mocks the Paystack
+      // service, so pin the gateway the mocks are written for.
+      payment_gateway: 'paystack',
       delivery_details: {
         address: '1 Test St',
         state: 'LA',
@@ -230,6 +303,10 @@ describe('Payment routes', () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe(true);
     expect(res.body.data.reference).toBe('ref-123');
+    // 200000 (DB items) + 50000 (delivery quote) — the "calculates total" claim
+    expect(mockCreateTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 250000 })
+    );
 
     expect(mockCreateTransaction).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -288,6 +365,10 @@ describe('Payment routes', () => {
       car_id: 10,
       metadata: {}
     });
+
+    // The webhook re-verifies against Paystack before crediting; the verify
+    // reports the real charge (300000), which mismatches the 250000 txn.
+    mockPaystackVerify.mockResolvedValue({ status: 'success', amount: 300000 });
 
     const webhookApp = express();
     webhookApp.use('/api/webhooks/paystack', express.raw({ type: 'application/json' }));
@@ -348,6 +429,14 @@ describe('Payment routes', () => {
       user_id: 'user-123',
       car_id: 10,
       metadata: {}
+    });
+
+    mockPaystackVerify.mockResolvedValue({ status: 'success', amount: 250000 });
+
+    // Post-fulfilment audit reads the transaction back by reference
+    mockGetTransactionByReference.mockResolvedValue({
+      id: 2, reference: 'ref-dup', amount: 250000, currency: 'NGN',
+      status: 'successful', user_id: 'user-123', car_id: 10, metadata: {}
     });
 
     mockProcessPaymentSuccess.mockResolvedValue({
@@ -425,6 +514,16 @@ describe('Payment routes', () => {
   });
 
   it('POST /api/webhooks/paystack handles concurrent duplicate deliveries safely', async () => {
+    const mockSupabaseClient = {
+      from: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      is: jest.fn().mockReturnThis(),
+      update: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({ data: null, error: null })
+    };
+    mockGetSupabaseAdmin.mockReturnValue(mockSupabaseClient);
+
     const webhookApp = express();
     webhookApp.use('/api/webhooks/paystack', express.raw({ type: 'application/json' }));
     const paymentRoutes = (await import('../routes/payment.routes.js')).default;
@@ -455,6 +554,14 @@ describe('Payment routes', () => {
       user_id: 'user-123',
       car_id: 10,
       metadata: {}
+    });
+
+    mockPaystackVerify.mockResolvedValue({ status: 'success', amount: 250000 });
+
+    // Post-fulfilment audit reads the transaction back by reference
+    mockGetTransactionByReference.mockResolvedValue({
+      id: 3, reference: 'ref-concurrent', amount: 250000, currency: 'NGN',
+      status: 'successful', user_id: 'user-123', car_id: 10, metadata: {}
     });
 
     mockProcessPaymentSuccess

@@ -6,7 +6,7 @@ describe('buildExpiryStatus', () => {
 
   it('should return no_reminder when expiry date is null/undefined', () => {
     expect(buildExpiryStatus(null, fixedNow)).toEqual({
-      message: 'No reminder available',
+      message: 'Up to date',
       days_left: null,
       status: 'no_reminder',
       is_urgent: false,
@@ -17,7 +17,7 @@ describe('buildExpiryStatus', () => {
     });
 
     expect(buildExpiryStatus(undefined, fixedNow)).toEqual({
-      message: 'No reminder available',
+      message: 'Up to date',
       days_left: null,
       status: 'no_reminder',
       is_urgent: false,
@@ -92,7 +92,7 @@ describe('buildExpiryStatus', () => {
     const result = buildExpiryStatus('2025-02-15', fixedNow);
 
     expect(result).toEqual({
-      message: 'No reminder available',
+      message: 'Up to date',
       days_left: 45,
       status: 'no_reminder',
       is_urgent: false,
