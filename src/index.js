@@ -46,6 +46,7 @@ if (!process.env.OPENAI_API_KEY) {
 
 const productionRequiredEnvVars = [
   'MONIPAY_SECRET_KEY',
+  'MONIPAY_PUBLIC_KEY',
   'ALLOWED_ORIGINS',
 ];
 
@@ -91,6 +92,7 @@ if (isProduction) {
     console.error('');
     console.error('These variables are mandatory for production security:');
     console.error('  • MONIPAY_SECRET_KEY: Required for verify + webhook HMAC (pri_live_… / pri_test_…)');
+    console.error('  • MONIPAY_PUBLIC_KEY: Required for checkout initialize (pub_live_… / pub_test_…)');
     console.error('  • ALLOWED_ORIGINS: Required for CORS origin restrictions');
     console.error('  • CLOUDINARY_*: Required for Ladipo product image uploads');
     console.error('');
