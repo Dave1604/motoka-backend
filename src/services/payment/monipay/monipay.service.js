@@ -18,8 +18,14 @@ export class MonipayError extends Error {
   }
 }
 
+// No fallback to the secret key: Monipay rejects pri_* keys on checkout
+// initialize, so falling back turns a config mistake into a silent prod outage.
 function getPublicKey() {
-  return process.env.MONIPAY_PUBLIC_KEY || process.env.MONIPAY_SECRET_KEY;
+  const key = process.env.MONIPAY_PUBLIC_KEY;
+  if (!key) {
+    throw new MonipayError('MONIPAY_PUBLIC_KEY not configured', 500, 'CONFIG_ERROR');
+  }
+  return key;
 }
 
 function getSecretKey() {
@@ -42,9 +48,6 @@ function isPaidStatus(status) {
 
 async function monipayRequest(endpoint, { method = 'GET', body, useSecret = false } = {}) {
   const key = useSecret ? getSecretKey() : getPublicKey();
-  if (!key) {
-    throw new MonipayError('MONIPAY_PUBLIC_KEY or MONIPAY_SECRET_KEY not configured', 500, 'CONFIG_ERROR');
-  }
 
   const url = `${MONIPAY_BASE_URL}${endpoint}`;
   const headers = {
