@@ -1,16 +1,13 @@
-import { logError, logDebug, logWarn, logger } from '../../utils/logger.js';
+import { logError, logWarn, logger } from '../../utils/logger.js';
 import { getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
 import { paymentResponse } from './payment-response.util.js';
 import { handleWalletFundingSuccess } from '../../services/wallet/wallet.service.js';
 import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
-import { GatewayError } from '../../services/payment/gateway/gateway.interface.js';
 import {
   getTransactionByReference,
   getTransactionByPaystackReference,
   getTransactionByMonicreditOrderId,
-  getTransactionById,
-  updateTransactionStatus,
   markTransactionAbandoned,
   processPaymentSuccess,
   TransactionError,
@@ -21,8 +18,7 @@ import {
 } from '../../services/payment/transaction.service.js';
 import {
   getOrderById,
-  getOrderByTransactionId,
-  OrderError
+  getOrderByTransactionId
 } from '../../services/payment/order.service.js';
 import {
   validatePaymentAmount,

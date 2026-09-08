@@ -14,11 +14,6 @@ let _itemsCache = null;
 let _itemsCacheAt = 0;
 const ITEMS_CACHE_TTL = 60_000;
 
-export function clearRenewalItemsCache() {
-  _itemsCache = null;
-  _itemsCacheAt = 0;
-}
-
 export class RenewalItemsError extends Error {
   constructor(message, statusCode = 500, code = null) {
     super(message);

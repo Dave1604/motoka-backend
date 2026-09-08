@@ -249,27 +249,3 @@ export const handleLadipoProductImageUpload = (req, res, next) => {
     });
   });
 };
-
-/**
- * SCALABILITY: Cleanup temp files after processing
- * Call this in your controller after uploading to Supabase Storage
- * 
- * @param {Object} files - req.files object from multer
- */
-export function cleanupTempFiles(files) {
-  if (!files || typeof files !== 'object') return;
-  
-  const fileArrays = Object.values(files);
-  
-  for (const fileArray of fileArrays) {
-    if (Array.isArray(fileArray)) {
-      for (const file of fileArray) {
-        if (file.path) {
-          fs.unlink(file.path, (err) => {
-            if (err) console.error(`Failed to delete temp file ${file.path}:`, err);
-          });
-        }
-      }
-    }
-  }
-}

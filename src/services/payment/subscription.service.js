@@ -12,15 +12,12 @@ import {
   SUBSCRIPTION_PLAN,
   HTTP_STATUS,
   ERROR_MESSAGES,
-  PAGINATION,
-  RETRY_CONFIG
+  PAGINATION
 } from '../../constants/payment.constants.js';
 import {
   generateSubscriptionCode,
   getMonthsForPlan,
-  calculateNextBillingDate,
-  isWithinDays,
-  getTodayDateString
+  calculateNextBillingDate
 } from '../../utils/paymentHelpers.js';
 
 /**
@@ -161,39 +158,6 @@ export async function getSubscriptionById(subscriptionId) {
   
   if (error && error.code !== 'PGRST116') {
     logError('Get subscription by ID error', { error, subscriptionId });
-    throw new SubscriptionError('Failed to retrieve subscription', HTTP_STATUS.SERVER_ERROR);
-  }
-  
-  return subscription || null;
-}
-
-/**
- * Get subscription by code
- * 
- * @param {string} subscriptionCode - Subscription code
- * @returns {Promise<Object|null>} Subscription or null
- */
-export async function getSubscriptionByCode(subscriptionCode) {
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const { data: subscription, error } = await supabaseAdmin
-    .from('subscriptions')
-    .select(`
-      *,
-      cars:car_id (
-        id,
-        slug,
-        vehicle_make,
-        vehicle_model,
-        registration_no,
-        expiry_date
-      )
-    `)
-    .eq('subscription_code', subscriptionCode)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    logError('Get subscription by code error', { error, subscriptionCode });
     throw new SubscriptionError('Failed to retrieve subscription', HTTP_STATUS.SERVER_ERROR);
   }
   
@@ -357,96 +321,6 @@ export async function activateSubscription(subscriptionId, authorizationCode, ca
   }
   
   console.log('[Subscription Service] Subscription activated:', { subscriptionId });
-  
-  return updated;
-}
-
-/**
- * Update subscription after successful billing
- * 
- * @param {number} subscriptionId - Subscription ID
- * @param {number} transactionId - New transaction ID
- * @returns {Promise<Object>} Updated subscription
- */
-export async function updateSubscriptionAfterBilling(subscriptionId, transactionId) {
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const subscription = await getSubscriptionById(subscriptionId);
-  if (!subscription) {
-    throw new SubscriptionError(ERROR_MESSAGES.SUBSCRIPTION_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
-  }
-  
-  const nextBillingDate = calculateNextBillingDate(
-    getTodayDateString(),
-    subscription.plan
-  );
-  
-  const { data: updated, error } = await supabaseAdmin
-    .from('subscriptions')
-    .update({
-      last_billing_date: getTodayDateString(),
-      next_billing_date: nextBillingDate,
-      last_transaction_id: transactionId,
-      retry_count: 0,
-      last_retry_at: null
-    })
-    .eq('id', subscriptionId)
-    .select('*')
-    .single();
-  
-  if (error) {
-    logError('Update subscription after billing error', { error, subscriptionId });
-    throw new SubscriptionError('Failed to update subscription', HTTP_STATUS.SERVER_ERROR);
-  }
-  
-  console.log('[Subscription Service] Subscription updated after billing:', {
-    subscriptionId,
-    nextBillingDate
-  });
-  
-  return updated;
-}
-
-/**
- * Record a failed billing attempt
- * 
- * @param {number} subscriptionId - Subscription ID
- * @returns {Promise<Object>} Updated subscription
- */
-export async function recordFailedBilling(subscriptionId) {
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const subscription = await getSubscriptionById(subscriptionId);
-  if (!subscription) {
-    throw new SubscriptionError(ERROR_MESSAGES.SUBSCRIPTION_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
-  }
-  
-  const newRetryCount = (subscription.retry_count || 0) + 1;
-  
-  // Check if max retries exceeded
-  if (newRetryCount >= RETRY_CONFIG.MAX_RETRIES) {
-    return expireSubscription(subscriptionId, 'Max payment retries exceeded');
-  }
-  
-  const { data: updated, error } = await supabaseAdmin
-    .from('subscriptions')
-    .update({
-      retry_count: newRetryCount,
-      last_retry_at: new Date().toISOString()
-    })
-    .eq('id', subscriptionId)
-    .select('*')
-    .single();
-  
-  if (error) {
-    logError('Record failed billing error', { error, subscriptionId });
-    throw new SubscriptionError('Failed to update subscription', HTTP_STATUS.SERVER_ERROR);
-  }
-  
-  console.log('[Subscription Service] Failed billing recorded:', {
-    subscriptionId,
-    retryCount: newRetryCount
-  });
   
   return updated;
 }
@@ -619,46 +493,3 @@ export async function expireSubscription(subscriptionId, reason = 'Payment faile
   
   return updated;
 }
-
-/**
- * Get subscriptions due for billing
- * 
- * Used by cron job to process auto-renewals.
- * 
- * @param {number} [daysAhead] - Days ahead to look (default: 30)
- * @returns {Promise<Object[]>} Subscriptions due for billing
- */
-export async function getSubscriptionsDueForBilling(daysAhead = 30) {
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const today = getTodayDateString();
-  const futureDate = new Date();
-  futureDate.setDate(futureDate.getDate() + daysAhead);
-  const futureDateString = futureDate.toISOString().split('T')[0];
-  
-  const { data: subscriptions, error } = await supabaseAdmin
-    .from('subscriptions')
-    .select(`
-      *,
-      cars:car_id (
-        id,
-        slug,
-        vehicle_make,
-        vehicle_model,
-        registration_no,
-        expiry_date
-      )
-    `)
-    .eq('status', SUBSCRIPTION_STATUS.ACTIVE)
-    .lte('next_billing_date', futureDateString)
-    .not('authorization_code', 'is', null)
-    .order('next_billing_date', { ascending: true });
-  
-  if (error) {
-    logError('Get subscriptions due for billing error', { error });
-    throw new SubscriptionError('Failed to retrieve subscriptions', HTTP_STATUS.SERVER_ERROR);
-  }
-  
-  return subscriptions || [];
-}
-

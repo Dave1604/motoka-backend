@@ -18,7 +18,7 @@ import { quoteFromDeliveryFields, DeliveryQuoteError } from '../courier/delivery
 import { TerminalError } from '../courier/terminal.service.js';
 import { generatePaymentReference } from '../../utils/paymentHelpers.js';
 import { verifyTransaction as monicreditVerify } from '../payment/monicredit/monicredit.service.js';
-import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify, PaystackError } from '../payment/paystack.service.js';
+import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify } from '../payment/paystack.service.js';
 import { initializeTransaction as monipayInit, verifyTransaction as monipayVerify } from '../payment/monipay/monipay.service.js';
 import { PAYMENT_GATEWAY } from '../../constants/payment.constants.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';

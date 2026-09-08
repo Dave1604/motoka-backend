@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { logError, logDebug, logWarn, logInfo } from '../../utils/logger.js';
-import { sanitizeError, getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
+import { getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
 import { paymentResponse } from './payment-response.util.js';
 import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
