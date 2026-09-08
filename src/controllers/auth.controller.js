@@ -520,8 +520,29 @@ export const verify2FALogin = async (req, res) => {
     const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(user_id);
     const { data: fullProfile } = await supabaseAdmin.from('profiles').select(SAFE_PROFILE_SELECT).eq('id', user_id).single();
 
+    // The password session from step one is never returned to the client, so a
+    // verified 2FA login must mint its own. generateLink + verifyOtp is the only
+    // server-side way to create a session without re-asking for the password.
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email: user.email,
+    });
+    if (linkError) {
+      console.error('2FA session mint failed (generateLink):', linkError.message);
+      return response.serverError(res, 'Could not create login session');
+    }
+    const { data: otpData, error: otpError } = await getSupabase().auth.verifyOtp({
+      token_hash: linkData.properties.hashed_token,
+      type: 'email',
+    });
+    if (otpError || !otpData?.session) {
+      console.error('2FA session mint failed (verifyOtp):', otpError?.message);
+      return response.serverError(res, 'Could not create login session');
+    }
+
     return response.success(res, {
-      user: { id: user.id, email: user.email, email_verified: !!user.email_confirmed_at, ...sanitizeProfile(fullProfile) }
+      user: { id: user.id, email: user.email, email_verified: !!user.email_confirmed_at, ...sanitizeProfile(fullProfile) },
+      session: otpData.session
     }, '2FA verified successfully');
   } catch (error) {
     console.error('2FA verify login error:', error);
