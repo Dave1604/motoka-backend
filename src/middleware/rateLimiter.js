@@ -51,6 +51,18 @@ function resolveRateLimitKey(req) {
   return ip;
 }
 
+// Composite account+IP key for the auth/OTP limiters (NAT-001): users behind
+// one public IP (shared WiFi, carrier-grade NAT) must not share a bucket, so
+// the key includes the account identifier from the body when present.
+// Requests without one (e.g. Google idToken-only) fall back to the IP key.
+function resolveAuthKey(req) {
+  const account = (req.body?.email || req.body?.user_id || '')
+    .toString()
+    .toLowerCase();
+  const ip = resolveRateLimitKey(req);
+  return account ? `${account}|${ip}` : ip;
+}
+
 const IS_DEV = process.env.NODE_ENV !== 'production';
 
 const RATE_LIMITS = {
@@ -61,10 +73,13 @@ const RATE_LIMITS = {
     message: 'Too many requests from this IP, please try again later'
   },
   
-  // Authentication - moderate limits to prevent brute force
+  // Authentication - moderate limits to prevent brute force.
+  // Keyed per account+IP (see resolveAuthKey), so the max only needs to
+  // cover one user's multi-step login flow + retries. The strict
+  // per-account cap lives in loginAccountLimiter.
   AUTH: {
     windowMs: 15 * 60 * 1000, // 15 minutes
-    max: IS_DEV ? 100 : 10,
+    max: IS_DEV ? 100 : 20,
     message: 'Too many authentication attempts, please try again later'
   },
   
@@ -145,7 +160,7 @@ const RATE_LIMITS = {
  * @param {Object} config - Rate limit configuration
  * @returns {Function} Express middleware
  */
-function createLimiter(config) {
+function createLimiter(config, keyGenerator = resolveRateLimitKey) {
   return rateLimit({
     windowMs: config.windowMs,
     max: config.max,
@@ -153,7 +168,7 @@ function createLimiter(config) {
     standardHeaders: true,
     legacyHeaders: false,
     // Use validated IP — ignores spoofed RFC 1918 X-Forwarded-For values (KAGE-002)
-    keyGenerator: resolveRateLimitKey,
+    keyGenerator,
     skip: (req) => {
       const ip = req.ip || req.connection?.remoteAddress || '';
       return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
@@ -161,10 +176,12 @@ function createLimiter(config) {
   });
 }
 
-// Export configured limiters
+// Export configured limiters.
+// auth/OTP limiters use the composite account+IP key (NAT-001) so users
+// sharing one public IP don't consume each other's budgets.
 export const apiLimiter = createLimiter(RATE_LIMITS.API);
-export const authLimiter = createLimiter(RATE_LIMITS.AUTH);
-export const otpLimiter = createLimiter(RATE_LIMITS.OTP);
+export const authLimiter = createLimiter(RATE_LIMITS.AUTH, resolveAuthKey);
+export const otpLimiter = createLimiter(RATE_LIMITS.OTP, resolveAuthKey);
 export const passwordResetLimiter = createLimiter(RATE_LIMITS.PASSWORD_RESET);
 export const carRegistrationLimiter = createLimiter(RATE_LIMITS.CAR_REGISTRATION);
 export const paymentLimiter = createLimiter(RATE_LIMITS.PAYMENT);
