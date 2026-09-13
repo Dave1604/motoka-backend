@@ -111,7 +111,6 @@ router.get('/ladipo/categories', authenticateAdmin, listLadipoCategories);
 router.patch('/ladipo/categories/:id/image', authenticateAdmin, handleLadipoProductImageUpload, updateLadipoCategoryImage);
 
 // ── Transaction management (authenticateAdmin) ────────────────────────────────
-router.get('/transactions/failed', authenticateAdmin, admin.getFailedTransactions);
 router.get('/transactions', authenticateAdmin, admin.listTransactions);
 router.get('/transactions/:reference', authenticateAdmin, admin.getTransactionDetails);
 

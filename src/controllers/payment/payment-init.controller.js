@@ -108,7 +108,7 @@ export const getStates = async (req, res) => {
   }
 };
 
-// GET /api/payments/states/:stateCode/lgas  |  GET /api/get-lga/:stateCode
+// GET /api/get-lga/:stateCode
 export const getLGAs = async (req, res) => {
   try {
     const { stateCode } = req.params;
@@ -130,26 +130,6 @@ export const getLGAs = async (req, res) => {
   }
 };
 
-// GET /api/payments/config
-export const getPaymentConfig = async (req, res) => {
-  try {
-    const publicKey = process.env.PAYSTACK_PUBLIC_KEY;
-    const monipayPublicKey = process.env.MONIPAY_PUBLIC_KEY || null;
-
-    if (!publicKey && !monipayPublicKey) {
-      return paymentResponse.error(res, 'Payment not configured', HTTP_STATUS.SERVER_ERROR);
-    }
-    
-    return paymentResponse.success(res, {
-      public_key: publicKey || null,
-      monipay_public_key: monipayPublicKey,
-      currency: 'NGN'
-    }, 'Payment configuration retrieved');
-  } catch (error) {
-    logError('Get payment config error', error);
-    return paymentResponse.serverError(res, 'Failed to retrieve payment configuration');
-  }
-};
 
 // POST /api/payments/initialize
 
@@ -219,7 +199,15 @@ export const initializePayment = async (req, res) => {
         });
       }
       const reserved = await reserveIdempotencyKey(idempotencyKey, userId);
-      if (!reserved) {
+      if (reserved === 'error') {
+        // Transient DB failure, NOT a duplicate — a 409 here sent users in
+        // circles ("Duplicate request" for a payment that never happened).
+        return res.status(503).json({
+          status: false,
+          message: 'Payment service is temporarily unavailable. Please try again.'
+        });
+      }
+      if (reserved === 'duplicate') {
         const retry = await getIdempotencyResponse(idempotencyKey, userId);
         if (retry?.cached && retry.response) {
           return paymentResponse.success(res, retry.response, SUCCESS_MESSAGES.PAYMENT_INITIALIZED);

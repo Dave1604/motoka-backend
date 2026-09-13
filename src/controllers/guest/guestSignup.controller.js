@@ -125,7 +125,11 @@ export const guestSignup = async (req, res) => {
 
       if (!newUserId) {
         logError('[GuestSignup] Could not generate unique user_id after 10 attempts', { userId });
-        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch((delErr) => {
+          console.error('[GuestSignup] ORPHANED AUTH USER — rollback delete failed. Manual cleanup required.', {
+            userId, error: delErr?.message
+          });
+        });
         return response.serverError(res, 'Account creation failed. Please try again.');
       }
 
@@ -143,7 +147,11 @@ export const guestSignup = async (req, res) => {
 
       if (profileError) {
         logError('[GuestSignup] Profile insert failed', profileError);
-        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch((delErr) => {
+          console.error('[GuestSignup] ORPHANED AUTH USER — rollback delete failed. Manual cleanup required.', {
+            userId, error: delErr?.message
+          });
+        });
         return response.serverError(res, 'Account creation failed. Please try again.');
       }
     }
@@ -160,7 +168,9 @@ export const guestSignup = async (req, res) => {
     await supabase.auth.signInWithOtp({
       email,
       options: { shouldCreateUser: false }
-    }).catch(() => {}); // non-fatal
+    }).catch((otpErr) => {
+      console.error('[GuestSignup] Verification email failed to send', { error: otpErr?.message });
+    }); // non-fatal, but never silent
 
     // ── Return same shape as existing /register endpoint ──────────────────────
     return response.created(res, {
