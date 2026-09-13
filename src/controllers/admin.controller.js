@@ -1587,40 +1587,6 @@ export const listTransactions = async (req, res) => {
 };
 
 // ─── Failed Transactions (top N) ─────────────────────────────────────────────
-export const getFailedTransactions = async (req, res) => {
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const { per_page = 8 } = req.query;
-    const limit = Math.min(50, Math.max(1, parseInt(per_page)));
-
-    const { data: transactions, error } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('id, reference, amount, status, payment_type, user_id, created_at')
-      .in('status', ['failed', 'abandoned'])
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (error) return res.status(500).json({ status: false, message: 'Failed to retrieve failed transactions' });
-
-    const formatted = (transactions || []).map(t => ({
-      id: t.id,
-      transaction_id: t.reference,
-      amount: koboToNaira(t.amount),
-      status: t.status,
-      payment_description: t.payment_type?.replace(/_/g, ' ') || 'Transaction',
-      created_at: t.created_at,
-    }));
-
-    return res.status(200).json({
-      status: true,
-      message: 'Failed transactions retrieved',
-      data: { data: formatted },
-    });
-  } catch (error) {
-    logError('Get failed transactions', error);
-    return response.serverError(res, 'Failed to retrieve failed transactions');
-  }
-};
 
 // GET /admin/transactions/:reference
 export const getTransactionDetails = async (req, res) => {
@@ -2852,7 +2818,11 @@ export const adminCreateUser = async (req, res) => {
 
       if (profileError) {
         logError('[Admin] createUser profile insert failed', profileError);
-        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch((delErr) => {
+          console.error('[Admin] ORPHANED AUTH USER — rollback delete failed. Manual cleanup required.', {
+            userId, error: delErr?.message
+          });
+        });
         return res.status(500).json({ status: false, message: 'Failed to create user profile' });
       }
     }

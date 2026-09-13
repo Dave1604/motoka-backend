@@ -11,8 +11,7 @@ import {
   getRenewalItems,
   getPaymentHeads,
   getStates,
-  getLGAs,
-  getPaymentConfig
+  getLGAs
 } from '../controllers/payment/payment-init.controller.js';
 
 import {
@@ -158,11 +157,9 @@ router.post(
   handleMonicreditWebhook
 );
 
-router.get('/payments/config', authenticate, getPaymentConfig);
 router.get('/payment-schedule', authenticate, getRenewalItems);
 router.get('/payment-schedule/get-payment-head', authenticate, getPaymentHeads);
 router.get('/get-all-state', authenticate, getStates);
-router.get('/payments/states/:stateCode/lgas', authenticate, getLGAs);
 router.get('/get-lga/:stateCode', authenticate, getLGAs);
 
 router.post(

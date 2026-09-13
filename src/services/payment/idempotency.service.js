@@ -40,13 +40,18 @@ export async function getIdempotencyResponse(key, userId) {
 }
 
 /**
- * Reserve idempotency key (call at start of processing). Returns true if we got the lock.
+ * Reserve idempotency key (call at start of processing).
+ * Returns 'reserved' when we got the lock, 'duplicate' when the key already
+ * exists, and 'error' on any other database failure. Callers must NOT present
+ * 'error' as a duplicate — a transient DB error used to surface as
+ * "Duplicate request" (409), which misdirected both the user and whoever
+ * debugged it.
  * @param {string} key
  * @param {string} userId
- * @returns {Promise<boolean>}
+ * @returns {Promise<'reserved'|'duplicate'|'error'>}
  */
 export async function reserveIdempotencyKey(key, userId) {
-  if (!key || typeof key !== 'string' || key.length > 255) return false;
+  if (!key || typeof key !== 'string' || key.length > 255) return 'duplicate';
 
   const supabase = getSupabaseAdmin();
   const { error } = await supabase.from('payment_idempotency').insert({
@@ -57,11 +62,11 @@ export async function reserveIdempotencyKey(key, userId) {
   });
 
   if (error) {
-    if (error.code === '23505') return false; // Unique violation = already exists
+    if (error.code === '23505') return 'duplicate'; // Unique violation = already exists
     logWarn('[Idempotency] Reserve failed', { error: error.message });
-    return false;
+    return 'error';
   }
-  return true;
+  return 'reserved';
 }
 
 /**

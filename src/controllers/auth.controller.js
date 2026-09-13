@@ -99,8 +99,15 @@ export const register = async (req, res) => {
 
       if (insertError) {
         console.error('[Register] Profile insert failed:', insertError);
-        // Auth user was created — delete it to avoid orphaned auth records
-        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        // Auth user was created — delete it to avoid orphaned auth records.
+        // If THIS delete also fails, the email is permanently stuck: it can
+        // neither register again (auth.users unique) nor log in (no profile).
+        // Log it loudly so support can find and clean the orphan.
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch((delErr) => {
+          console.error('[Register] ORPHANED AUTH USER — rollback delete failed. Manual cleanup required.', {
+            userId, email, error: delErr?.message
+          });
+        });
         return response.error(res, 'Registration failed. Please try again.', 500);
       }
       profile = inserted;
@@ -108,11 +115,19 @@ export const register = async (req, res) => {
       profile = existingProfile;
     }
 
-    // Send OTP for email verification
+    // Send OTP for email verification. Non-fatal, but never silent: if this
+    // fails the user is registered yet can never verify, and every gated
+    // route will block them with no trace of why.
+    let verificationEmailSent = true;
     await supabase.auth.signInWithOtp({
       email,
       options: { shouldCreateUser: false }
-    }).catch(() => {}); // non-fatal if OTP fails
+    }).catch((otpErr) => {
+      verificationEmailSent = false;
+      console.error('[Register] Verification email failed to send — user cannot verify until resend', {
+        email, error: otpErr?.message
+      });
+    });
 
     // Referral: attribute if code provided, then ensure this user has a share code.
     // Never fail registration because of referral errors.
@@ -127,8 +142,11 @@ export const register = async (req, res) => {
 
     return response.created(res, {
       user: { id: userId, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...sanitizeProfile(profile) },
-      session: data.session
-    }, 'Registration successful. Please check your email for verification code.');
+      session: data.session,
+      verification_email_sent: verificationEmailSent
+    }, verificationEmailSent
+      ? 'Registration successful. Please check your email for verification code.'
+      : 'Registration successful, but the verification email could not be sent. Use "Resend code" on the verification screen.');
   } catch (error) {
     console.error('Registration error:', error);
     return response.serverError(res, 'Registration failed');
