@@ -15,10 +15,12 @@
     "seed:ladipo": "node scripts/seed-ladipo-products.js",
     "cleanup:ladipo-demo": "node scripts/cleanup-ladipo-demo-products.js",
     "import:ladipo:autofactor": "node scripts/import-ladipo-autofactor.js",
-    "import:ladipo:market": "node scripts/import-ladipo-market.js",
     "seed:motoka:catalog": "node scripts/seed_motoka_catalog.js",
     "backfill:ladipo:compatibility": "node scripts/backfill-ladipo-compatibility.js",
-    "fix:ladipo:filters": "node scripts/fix-ladipo-filter-data.js"
+    "fix:ladipo:filters": "node scripts/fix-ladipo-filter-data.js",
+    "build:vehicle-catalog": "node scripts/build-vehicle-catalog.js",
+    "merchandize:ladipo": "node scripts/merchandize-ladipo.js",
+    "verify:ladipo:catalog": "node scripts/verify-ladipo-catalog.js"
   },
   "keywords": [
     "authentication",
