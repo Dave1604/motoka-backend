@@ -67,8 +67,16 @@ export async function getParts({
       case 'name_asc':
         return { column: 'name', ascending: true };
       case 'newest':
-      default:
         return { column: 'created_at', ascending: false };
+      case 'recommended':
+      default:
+        // The catalogue is seeded one category at a time, so created_at
+        // clusters by category: newest-first then serves a page of nothing
+        // but engine oil, followed by a page of nothing but filters. The
+        // primary key is a random uuid, so ordering by it interleaves the
+        // categories the way a storefront grid should — and unlike random()
+        // it is stable, so paging never repeats or skips a product.
+        return { column: 'id', ascending: true };
     }
   })();
 
@@ -95,9 +103,7 @@ export async function getParts({
       ${inventoryEmbed},
       compatibility:ladipo_part_compatibility(id, make, model, year_min, year_max, engine_code, notes)
     `, { count: 'exact' })
-    .eq('is_active', true)
-    .range(offset, offset + limit - 1)
-    .order(sortConfig.column, { ascending: sortConfig.ascending });
+    .eq('is_active', true);
 
   if (tag === 'essential') query = query.eq('is_essential', true);
   if (tag === 'must_have') query = query.eq('is_must_have', true);
@@ -161,6 +167,7 @@ export async function getParts({
     ? null
     : Number.parseInt(year, 10);
 
+  let rankExactFirst = false;
   if (normalizedMake) {
     // Fitment is resolved in PostgreSQL so the API, admin tooling and every
     // client use the same case/spacing/punctuation normalisation.  The RPC is
@@ -183,35 +190,34 @@ export async function getParts({
       throw new Error('Failed to fetch parts');
     }
 
-    const compatibleIds = new Set((compatResult.data || []).map((r) => r.part_id).filter(Boolean));
+    const exactIds = new Set((compatResult.data || []).map((r) => r.part_id).filter(Boolean));
+    const universalIds = new Set((universalResult.data || []).map((r) => r.id).filter(Boolean));
 
     // Drop corrupt fitment rows where the product title/brand clearly names a
     // different OEM than the selected car (e.g. "Mercedes …" tagged as BMW).
-    if (compatibleIds.size > 0) {
+    if (exactIds.size > 0) {
       const { data: compatParts, error: compatPartsError } = await supabase
         .from('ladipo_parts')
         .select('id, name, brand')
-        .in('id', [...compatibleIds]);
+        .in('id', [...exactIds]);
       if (compatPartsError) {
         logError('[Ladipo] getParts compatibility title check failed', compatPartsError);
         throw new Error('Failed to fetch parts');
       }
       for (const part of compatParts || []) {
         if (compatibilityConflictsWithTitle(normalizedMake, part.name, part.brand)) {
-          compatibleIds.delete(part.id);
+          exactIds.delete(part.id);
         }
       }
     }
 
-    for (const row of universalResult.data || []) {
-      if (row?.id) compatibleIds.add(row.id);
-    }
-
-    if (compatibleIds.size === 0) {
+    const allowedIds = new Set([...exactIds, ...universalIds]);
+    if (allowedIds.size === 0) {
       return { parts: [], total: 0 };
     }
 
-    idConstraintSets.push(compatibleIds);
+    idConstraintSets.push(allowedIds);
+    rankExactFirst = exactIds.size > 0;
   }
 
   if (q && q.trim()) {
@@ -296,6 +302,16 @@ export async function getParts({
     }
     query = query.in('id', Array.from(intersection));
   }
+
+  // When a car is selected, exact-fitment parts (is_universal = false) lead.
+  // The user's sort still applies, but only within each group — otherwise
+  // newest engine oil buries the brake pads that actually fit the car.
+  if (rankExactFirst) {
+    query = query.order('is_universal', { ascending: true });
+  }
+  query = query
+    .order(sortConfig.column, { ascending: sortConfig.ascending })
+    .range(offset, offset + limit - 1);
 
   const { data, error, count } = await query;
 

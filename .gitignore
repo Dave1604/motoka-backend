@@ -15,6 +15,7 @@ __pycache__/
 # Supabase temp files
 .temp/
 supabase/.temp/
+supabase/.branches/
 
 .cursor/mcp.json
 
@@ -39,6 +40,10 @@ pids/
 
 # Test coverage
 coverage/
+
+# Ladipo catalog pipeline caches (not the reference vehicle-catalog.json, which is committed)
+scripts/data/ai-fitment-cache.json
+scripts/data/pipeline-checkpoint.json
 
 # Build output
 dist/
