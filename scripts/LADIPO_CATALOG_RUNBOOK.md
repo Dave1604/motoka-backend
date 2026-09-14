@@ -14,21 +14,21 @@ npm install
 
 ### 2. Apply Supabase migrations (required)
 
-Apply any pending migrations through **096** on the target project (local / staging / prod):
+Apply any pending migrations through **099** on the target project (local / staging / prod):
 
 | Migration | Purpose |
 |-----------|---------|
 | `054` … `071` | Existing Ladipo schema (if not already applied) |
 | `072_ladipo_fitment_matching.sql` | `get_ladipo_compatible_part_ids` + make-key normalisation |
 | `073_ladipo_transmission_category.sql` | **Transmission & Drivetrain** under Spare Parts |
-| `096_ladipo_catalog_integrity.sql` | Re-declares merchandising flags (`is_must_have` etc.), adds idempotency constraints on compatibility/inventory, records fitment provenance |
+| `099_ladipo_catalog_integrity.sql` | Re-declares merchandising flags (`is_must_have` etc.), adds idempotency constraints on compatibility/inventory, records fitment provenance |
 
 Example (Supabase CLI linked to the project):
 
-```bash
-supabase db push
-# or apply SQL files in order in the Supabase SQL editor
-```
+Apply each pending SQL file **in order** in the Supabase SQL editor (or via the
+Management API). **Never run `supabase db push` against the live project** — its
+migration ledger does not match reality and a push would install schema that is
+deliberately kept off prod.
 
 Env required for seed scripts:
 

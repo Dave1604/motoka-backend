@@ -1,5 +1,8 @@
 -- =============================================
--- Migration 096: Ladipo catalog integrity
+-- Migration 099: Ladipo catalog integrity
+-- (renumbered from 096 — main already carries
+-- 096_payment_cancellation_reason; duplicate numbers
+-- are how migrations got lost in the 064-067 incident)
 --
 -- Prepares the catalog tables for repeatable, auditable
 -- AI-assisted seeding:
@@ -68,6 +71,9 @@ ALTER TABLE public.ladipo_part_compatibility
   ADD COLUMN IF NOT EXISTS source TEXT,
   ADD COLUMN IF NOT EXISTS confidence NUMERIC(4, 3),
   ADD COLUMN IF NOT EXISTS verified_by TEXT;
+
+ALTER TABLE public.ladipo_part_compatibility
+  DROP CONSTRAINT IF EXISTS ladipo_part_compatibility_source_check;
 
 ALTER TABLE public.ladipo_part_compatibility
   DROP CONSTRAINT IF EXISTS ladipo_part_compatibility_source_check;
