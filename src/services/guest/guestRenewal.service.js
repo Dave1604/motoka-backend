@@ -500,10 +500,14 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
 export async function markGuestOrderFailed(paymentReference) {
   const supabase = getSupabaseAdmin();
 
+  // Only a pending order can become failed. Without this guard a late or
+  // out-of-order charge.failed event could overwrite a success, and a
+  // pre-retry failure would keep re-asserting itself.
   await supabase
     .from('guest_renewal_orders')
     .update({ payment_status: 'payment_failed', updated_at: new Date().toISOString() })
-    .eq('payment_reference', paymentReference);
+    .eq('payment_reference', paymentReference)
+    .eq('payment_status', 'pending_payment');
 }
 
 // ─── Active verification (used by callback page as webhook fallback) ──────────
@@ -530,13 +534,16 @@ export async function verifyGuestPayment(orderId, reference) {
     throw Object.assign(new Error('Guest order not found'), { statusCode: 404 });
   }
 
-  // Already resolved — return cached result
+  // Success is final — return cached result.
   if (order.payment_status === 'payment_success') {
     return { status: 'payment_success', receiptToken: order.receipt_token };
   }
-  if (order.payment_status === 'payment_failed') {
-    return { status: 'payment_failed' };
-  }
+  // payment_failed is deliberately NOT cached: a declined first attempt marks
+  // the order failed within seconds, but the customer can retry inside the
+  // same gateway popup under the same reference and succeed. Trusting the
+  // cached failure made that success unrecoverable — money taken, order
+  // stuck, no receipt (guest order 45bbc471, 2026-09-20). Fall through and
+  // ask the gateway again.
 
   // Reject mismatched reference (prevents marking another user's order paid)
   if (order.payment_reference && reference && order.payment_reference !== reference) {
