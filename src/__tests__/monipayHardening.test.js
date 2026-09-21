@@ -167,3 +167,52 @@ describe('initializeTransaction public key requirement', () => {
     expect(options.headers.Authorization).toBe('Bearer pub_test_public');
   });
 });
+
+describe('verifyGuestPayment failed-order recovery', () => {
+  // A declined first attempt marks the order failed, the customer retries in
+  // the same popup under the same reference and succeeds. The cached failure
+  // must not block the recovery (guest order 45bbc471, 2026-09-20).
+  it('re-verifies a payment_failed order and flips it to success when the gateway confirms', async () => {
+    const failedOrder = {
+      id: 77,
+      payment_status: 'payment_failed',
+      payment_reference: 'PAY-RETRY-1',
+      payment_gateway: 'paystack',
+      total_amount: 1550000,
+      receipt_token: 'tok77',
+      expires_at: null,
+      guest_email: 'guest@example.com',
+      guest_name: 'Guest',
+      selected_items: [],
+    };
+    const updateSpy = jest.fn(() => ({ eq: () => ({ eq: () => ({ error: null }), error: null }) }));
+    jest.unstable_mockModule('../config/supabase.js', () => ({
+      getSupabaseAdmin: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: failedOrder, error: null }) }),
+          }),
+          update: updateSpy,
+        }),
+      }),
+    }));
+    jest.unstable_mockModule('../services/payment/paystack.service.js', () => ({
+      initializeTransaction: jest.fn(),
+      verifyTransaction: jest.fn(async () => ({ status: 'success', success: true, amount: 1550000 })),
+      verifyWebhookSignature: jest.fn(),
+      parseWebhookEvent: jest.fn(),
+      chargeAuthorization: jest.fn(),
+      listTransactions: jest.fn(),
+      createRefund: jest.fn(),
+      isConfigured: jest.fn(() => true),
+      getPublicKey: jest.fn(),
+      PaystackError: class PaystackError extends Error {},
+    }));
+    const mod = await import('../services/guest/guestRenewal.service.js');
+
+    const result = await mod.verifyGuestPayment(77, 'PAY-RETRY-1');
+
+    expect(result.status).toBe('payment_success');
+    expect(updateSpy).toHaveBeenCalled();
+  });
+});
