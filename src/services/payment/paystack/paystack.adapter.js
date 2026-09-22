@@ -3,6 +3,7 @@ import {
   verifyTransaction as paystackVerify,
   verifyWebhookSignature as paystackVerifySignature,
   parseWebhookEvent as paystackParseEvent,
+  pingApi as paystackPing,
   PaystackError
 } from '../paystack.service.js';
 import { validateInitResponse, validateVerifyResponse, validateWebhookPayload } from '../validation/response.validator.js';
@@ -16,6 +17,17 @@ import { logError } from '../../../utils/logger.js';
  * to match the gateway interface contract.
  */
 export class PaystackAdapter {
+  /**
+   * Health ping for the gateway monitor: proves the Paystack API is
+   * reachable and our keys are accepted. Never moves money.
+   *
+   * @returns {Promise<{ok: true, latencyMs: number}>}
+   */
+  static async ping() {
+    const { latencyMs } = await paystackPing();
+    return { ok: true, latencyMs };
+  }
+
   /**
    * Initialize a payment transaction
    * 

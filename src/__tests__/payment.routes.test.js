@@ -61,6 +61,7 @@ jest.unstable_mockModule('../services/payment/paystack.service.js', () => ({
   chargeAuthorization: jest.fn(),
   listTransactions: jest.fn(),
   createRefund: jest.fn(),
+  pingApi: jest.fn(async () => ({ latencyMs: 1 })),
   isConfigured: jest.fn(() => true),
   getPublicKey: jest.fn(),
   PaystackError: class PaystackError extends Error {

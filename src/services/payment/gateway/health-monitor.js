@@ -1,6 +1,14 @@
 import { logInfo, logWarn, logError, logDebug } from '../../../utils/logger.js';
 import { PAYMENT_GATEWAY } from '../../../constants/payment.constants.js';
 import { GatewayFactory } from './gateway.factory.js';
+import { GatewayError } from './gateway.interface.js';
+
+// Upper bound for one gateway ping. Must stay well under the check interval
+// so a hung provider can never pile checks up faster than they resolve.
+const PING_TIMEOUT_MS = parseInt(
+  process.env.GATEWAY_HEALTH_PING_TIMEOUT_MS || '15000',
+  10
+);
 
 class HealthMonitor {
   constructor() {
@@ -98,10 +106,32 @@ class HealthMonitor {
 
     try {
       const GatewayAdapter = GatewayFactory.getGateway(gatewayName);
+      if (typeof GatewayAdapter.ping !== 'function') {
+        throw new GatewayError(
+          `Gateway adapter has no ping() for health checks: ${gatewayName}`,
+          500,
+          'PING_NOT_IMPLEMENTED'
+        );
+      }
+      // Real reachability probe (cheap read-only provider call) with a hard
+      // ceiling so one hung gateway can't jam the interval.
+      const pingResult = await Promise.race([
+        GatewayAdapter.ping(),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new GatewayError(
+              `Health check timed out after ${PING_TIMEOUT_MS}ms`,
+              504,
+              'PING_TIMEOUT'
+            )),
+            PING_TIMEOUT_MS
+          )
+        ),
+      ]);
       success = true;
-      
-      const responseTime = Date.now() - startTime;
-      
+
+      const responseTime = pingResult?.latencyMs ?? Date.now() - startTime;
+
       this.updateMetrics(gatewayName, {
         success: true,
         responseTime,
