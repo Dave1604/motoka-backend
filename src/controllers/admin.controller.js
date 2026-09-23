@@ -37,6 +37,7 @@ import { PaymentSuccessService } from '../services/payment/payment-success.servi
 import { PAYMENT_STATUS, ORDER_TYPE } from '../constants/payment.constants.js';
 import { generateOrderNumber } from '../utils/paymentHelpers.js';
 import { loadRenewalsSummary } from '../services/renewalsSummary.service.js';
+import { getRenewalItems } from '../services/payment/renewalItems.service.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -855,6 +856,7 @@ export const getDashboardStats = async (req, res) => {
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false),
       supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
       loadRenewalsSummary(supabaseAdmin),
+      supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success'),
     ]);
 
     const pick = (index) => {
@@ -873,15 +875,21 @@ export const getDashboardStats = async (req, res) => {
     const renewalsSummary = settled[4].status === 'fulfilled' ? settled[4].value : null;
     const expiredThisMonth = renewalsSummary?.expired_this_month || 0;
     const expiredTotal = renewalsSummary?.expired_total || 0;
+    const guestPaidData = pick(5).data;
 
     const totalAmountKobo = (amountData || []).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+    const guestAmountKobo = (guestPaidData || []).reduce((sum, o) => sum + parseFloat(o.total_amount || 0), 0);
+    const guestPaidOrders = (guestPaidData || []).length;
 
     return res.status(200).json({
       status: true,
       message: 'Dashboard stats retrieved',
       data: {
-        total_amount: koboToNaira(totalAmountKobo),
-        total_orders: totalOrders || 0,
+        total_amount: koboToNaira(totalAmountKobo + guestAmountKobo),
+        user_revenue: koboToNaira(totalAmountKobo),
+        guest_revenue: koboToNaira(guestAmountKobo),
+        guest_paid_orders: guestPaidOrders,
+        total_orders: (totalOrders || 0) + guestPaidOrders,
         total_agents: 0,
         total_cars: totalCars || 0,
         total_users: totalUsers || 0,
@@ -2506,6 +2514,31 @@ export async function triggerExpiryReminders(req, res) {
 // ─── Guest Orders ─────────────────────────────────────────────────────────────
 
 /**
+ * Resolve each order's selected_items (array of item_keys) into display-ready
+ * { id, name, price } objects so the admin UI can show what was bought.
+ * Inactive items still resolve — old orders may reference retired items.
+ */
+async function enrichGuestOrderItems(orders) {
+  if (!orders.length) return orders;
+  let itemMap = new Map();
+  try {
+    const allItems = await getRenewalItems({ includeInactive: true });
+    itemMap = new Map(allItems.map((i) => [i.id, i]));
+  } catch (err) {
+    logError('[Admin] enrichGuestOrderItems failed, returning raw keys', err);
+  }
+  return orders.map((order) => ({
+    ...order,
+    items: (order.selected_items || []).map((id) => {
+      const item = itemMap.get(id);
+      return item
+        ? { id, name: item.name, price: item.price }
+        : { id, name: id, price: null };
+    }),
+  }));
+}
+
+/**
  * GET /api/admin/guest-orders
  *
  * Lists all guest renewal orders with optional filters.
@@ -2541,7 +2574,7 @@ export const listGuestOrders = async (req, res) => {
     }
 
     return response.success(res, {
-      orders: orders || [],
+      orders: await enrichGuestOrderItems(orders || []),
       pagination: {
         current_page: page,
         limit,
@@ -2579,7 +2612,8 @@ export const getGuestOrderDetails = async (req, res) => {
     }
 
     const delivery = await getDeliveryProgressForGuestOrder(order, { includeLabel: true });
-    return response.success(res, { ...order, ...delivery }, 'Guest order retrieved');
+    const [enriched] = await enrichGuestOrderItems([order]);
+    return response.success(res, { ...enriched, ...delivery }, 'Guest order retrieved');
   } catch (err) {
     logError('[Admin] getGuestOrderDetails error', err);
     return response.serverError(res, 'Failed to retrieve guest order');
