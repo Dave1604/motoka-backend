@@ -5,6 +5,7 @@ import { activateSubscription } from './subscription.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
 import { sendPaymentSuccessEmail } from '../../services/email/paymentEmail.service.js';
 import { qualifyAndRewardOnFirstPurchase } from '../referral/referral.service.js';
+import { sendAdminOrderAlert } from '../../services/email/adminOrderAlert.service.js';
 
 export class PaymentSuccessService {
   static async processPaymentSuccessSideEffects({ transaction, gatewayData, order }) {
@@ -63,10 +64,22 @@ export class PaymentSuccessService {
       
       const { data: profile, error: profileError } = await supabaseAdmin
         .from('profiles')
-        .select('email, first_name, user_id')
+        .select('email, first_name, last_name, user_id')
         .eq('id', transaction.user_id)
         .single();
-      
+
+      // Alert ops before the profile early-return below: a paid order with a
+      // broken profile is exactly the one someone needs to look at by hand.
+      await sendAdminOrderAlert({
+        orderNumber: order?.order_number,
+        customerName: [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || 'Unknown customer',
+        customerEmail: profile?.email || 'unknown',
+        amountNaira: transaction.amount,
+        reference: transaction.reference,
+        paymentType,
+        plateNumber: car?.plate_number,
+      });
+
       if (profileError || !profile?.email) {
         logError('Failed to fetch profile for notifications', {
           error: profileError,
@@ -75,7 +88,7 @@ export class PaymentSuccessService {
         });
         return;
       }
-      
+
       const scheduleIds = Array.isArray(metadata?.paymentScheduleId)
         ? metadata.paymentScheduleId
         : metadata?.paymentScheduleId ? [metadata.paymentScheduleId] : [];
