@@ -37,6 +37,7 @@ import paymentMetrics from './services/payment/metrics.service.js';
 import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
 import { monicreditPoller } from './services/payment/monicredit/poller.service.js';
 import { monipayPoller } from './services/payment/monipay/poller.service.js';
+import { healthMonitor } from './services/payment/gateway/health-monitor.js';
 import { logInfo, logWarn } from './utils/logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -756,6 +757,10 @@ app.listen(PORT, '0.0.0.0', () => {
   // Pending-txn pollers — fill in if webhooks are delayed or missed.
   monipayPoller.start();
   monicreditPoller.start();
+
+  // Gateway health pings — feed the admin Payment Gateways panel. The first
+  // check runs immediately inside start() so the dashboard isn't stale.
+  healthMonitor.start();
 });
 
 export default app;

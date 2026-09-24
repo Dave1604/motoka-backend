@@ -399,6 +399,45 @@ export function parseWebhookEvent(payload) {
 }
 
 /**
+ * Health ping: cheap authenticated read proving the Paystack API is
+ * reachable AND our secret key is accepted. Used by the gateway health
+ * monitor — not on any payment path.
+ *
+ * @returns {Promise<{latencyMs: number}>}
+ * @throws {PaystackError} on unreachable API, bad keys, or timeout
+ */
+export async function pingApi() {
+  const startedAt = Date.now();
+  const secretKey = getSecretKey();
+  let response;
+  try {
+    response = await fetch(`${PAYSTACK_BASE_URL}/bank?currency=NGN`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${secretKey}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (error) {
+    throw new PaystackError(
+      ERROR_MESSAGES.PAYSTACK_API_ERROR,
+      500,
+      'PING_FAILED',
+      { originalError: error.message }
+    );
+  }
+  if (!response.ok) {
+    throw new PaystackError(
+      `Paystack health check failed with HTTP ${response.status}`,
+      response.status,
+      response.status === 401 ? 'PING_UNAUTHORIZED' : 'PING_FAILED'
+    );
+  }
+  return { latencyMs: Date.now() - startedAt };
+}
+
+/**
  * Check if Paystack is properly configured
  * 
  * @returns {boolean} True if configured

@@ -4,12 +4,24 @@ import {
   verifyTransaction,
   verifyWebhookSignature,
   parseWebhookEvent,
+  pingApi as monipayPing,
   MonipayError,
 } from './monipay.service.js';
 import { validateInitResponse, validateVerifyResponse } from '../validation/response.validator.js';
 import { logError } from '../../../utils/logger.js';
 
 export class MonipayAdapter {
+  /**
+   * Health ping for the gateway monitor: proves the Monipay API is
+   * reachable and our keys are accepted. Never moves money.
+   *
+   * @returns {Promise<{ok: true, latencyMs: number}>}
+   */
+  static async ping() {
+    const { latencyMs } = await monipayPing();
+    return { ok: true, latencyMs };
+  }
+
   static async initializePayment({
     userId,
     userEmail,

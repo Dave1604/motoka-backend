@@ -37,6 +37,16 @@
  */
 
 /**
+ * Health ping contract (implemented as a static `ping()` on each adapter).
+ * Must prove the provider API is reachable AND our keys are accepted, using
+ * a cheap read-only call — never moves money.
+ *
+ * @typedef {Object} PingResponse
+ * @property {true} ok - Always true on success; throws otherwise
+ * @property {number} latencyMs - Round-trip time in milliseconds
+ */
+
+/**
  * Gateway error base class
  */
 export class GatewayError extends Error {

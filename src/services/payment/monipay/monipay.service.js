@@ -190,6 +190,48 @@ export async function verifyTransaction(reference) {
   };
 }
 
+/**
+ * Health ping: verifies a deliberately bogus reference. Any HTTP response
+ * proving the API is reachable counts — a 404 for the fake reference still
+ * proves reachability AND that our secret key was accepted far enough to
+ * get an application-level answer. 401s and network failures throw, so the
+ * health monitor records them as failures. Used only by the health monitor.
+ *
+ * @returns {Promise<{latencyMs: number}>}
+ * @throws {MonipayError} on unreachable API, bad keys, or timeout
+ */
+export async function pingApi() {
+  const startedAt = Date.now();
+  const key = getSecretKey();
+  const url = `${MONIPAY_BASE_URL}${MONIPAY_ENDPOINTS.VERIFY}/${encodeURIComponent('__healthcheck__')}`;
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'Content-Type': 'application/json',
+      },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (error) {
+    throw new MonipayError(ERROR_MESSAGES.MONIPAY_API_ERROR, 500, 'PING_FAILED', {
+      originalError: error.message,
+    });
+  }
+  if (response.status === 401) {
+    throw new MonipayError('Monipay health check rejected the secret key', 401, 'PING_UNAUTHORIZED');
+  }
+  if (!response.ok && response.status !== 404) {
+    throw new MonipayError(
+      `Monipay health check failed with HTTP ${response.status}`,
+      response.status,
+      'PING_FAILED'
+    );
+  }
+  return { latencyMs: Date.now() - startedAt };
+}
+
 // Per Monipay's API docs: header `x-monipay-signature`, HMAC-SHA512 of the raw
 // request body, signed with the private/secret key. There is no separate
 // webhook secret — MONIPAY_WEBHOOK_SECRET exists only as an override in case
