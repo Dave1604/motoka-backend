@@ -22,6 +22,7 @@ import { initializeTransaction as paystackInit, verifyTransaction as paystackVer
 import { initializeTransaction as monipayInit, verifyTransaction as monipayVerify } from '../payment/monipay/monipay.service.js';
 import { PAYMENT_GATEWAY } from '../../constants/payment.constants.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';
+import { sendAdminGuestOrderAlert } from '../email/adminOrderAlert.service.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -379,7 +380,7 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
 
   const { data: order, error } = await supabase
     .from('guest_renewal_orders')
-    .select('id, payment_status, guest_email, guest_name, total_amount, selected_items, receipt_token')
+    .select('id, payment_status, guest_email, guest_name, guest_phone, plate_number, total_amount, delivery_fee, selected_items, receipt_token')
     .eq('payment_reference', paymentReference)
     .maybeSingle();
 
@@ -489,6 +490,28 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
     });
   } catch (emailErr) {
     logError('[GuestRenewal] Failed to send confirmation email', { error: emailErr.message, orderId: order.id });
+  }
+
+  // Ops alert — kept independent of the customer email above, because a
+  // bounced customer address is precisely when ops needs to hear about the
+  // order. Reached once per order: the already-paid guard returns earlier on
+  // repeat webhook/verify calls.
+  try {
+    const allItems = await getRenewalItems();
+    const itemMap = new Map(allItems.map(i => [i.id, i]));
+    await sendAdminGuestOrderAlert({
+      orderId: order.id,
+      guestName: order.guest_name,
+      guestEmail: order.guest_email,
+      guestPhone: order.guest_phone,
+      plateNumber: order.plate_number,
+      totalAmountKobo: order.total_amount,
+      deliveryFeeKobo: order.delivery_fee,
+      documentNames: (order.selected_items || []).map(id => itemMap.get(id)?.name).filter(Boolean),
+      reference: paymentReference,
+    });
+  } catch (alertErr) {
+    logError('[GuestRenewal] Admin alert failed (non-fatal)', { error: alertErr.message, orderId: order.id });
   }
 
   return order;
