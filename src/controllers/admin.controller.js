@@ -2592,6 +2592,55 @@ export const listGuestOrders = async (req, res) => {
 };
 
 /**
+ * GET /api/admin/mo-conversations
+ *
+ * Marketing-intelligence read over the Mo conversation log: what visitors
+ * and users ask Mo, newest first. Filters: source (chat|public), search
+ * (matches question text), unanswered (answer IS NULL — demand Mo failed on).
+ */
+export const listMoConversations = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const { source, search, unanswered } = req.query;
+
+    let query = supabase
+      .from('mo_conversations')
+      .select('id, user_id, source, question, answer, action_type, has_ladipo_search, model, created_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (source === 'chat' || source === 'public') query = query.eq('source', source);
+    if (search) query = query.ilike('question', `%${search}%`);
+    if (unanswered === 'true' || unanswered === '1') query = query.is('answer', null);
+
+    const { data: conversations, count, error } = await query;
+    if (error) {
+      logError('[Admin] listMoConversations query error', error);
+      return response.serverError(res, 'Failed to retrieve Mo conversations');
+    }
+
+    return response.success(res, {
+      conversations: conversations || [],
+      pagination: {
+        current_page: page,
+        limit,
+        total: count || 0,
+        total_pages: Math.ceil((count || 0) / limit),
+        has_next: page < Math.ceil((count || 0) / limit),
+        has_prev: page > 1
+      }
+    }, 'Mo conversations retrieved');
+  } catch (err) {
+    logError('[Admin] listMoConversations error', err);
+    return response.serverError(res, 'Failed to retrieve Mo conversations');
+  }
+};
+
+/**
  * GET /api/admin/guest-orders/:orderId
  *
  * Returns full details of a single guest renewal order including

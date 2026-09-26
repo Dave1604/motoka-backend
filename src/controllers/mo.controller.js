@@ -2,6 +2,7 @@ import { getPlateNumberPrices } from '../services/platePrice.service.js';
 import { getDriverLicensePrices } from '../services/driverLicensePrice.service.js';
 import { getRenewalItems } from '../services/payment/renewalItems.service.js';
 import { getParts } from '../services/ladipo/ladipo.service.js';
+import { logMoConversation, hashIp } from '../services/mo/moLog.service.js';
 
 const OPENAI_API_URL = 'https://api.openai.com/v1/chat/completions';
 const OPENAI_MODEL = 'gpt-4o';
@@ -74,6 +75,20 @@ function parseLadipoSearch(text) {
   } catch {
     return { text: text.replace(LADIPO_SEARCH_RE, '').trim(), params: null };
   }
+}
+
+// Latest user-authored message in a turn, for the marketing log. Defensive:
+// signed-in `chat` trusts the body shape, so anything non-conforming yields
+// null (and the log call skips) instead of throwing inside the handler.
+function lastUserMessage(messages) {
+  if (!Array.isArray(messages)) return null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m && m.role === 'user' && typeof m.content === 'string' && m.content.trim()) {
+      return m.content;
+    }
+  }
+  return null;
 }
 
 async function fetchLadipoSuggestions(params) {
@@ -409,9 +424,31 @@ export const chat = async (req, res) => {
     const ladipoSuggestions = await fetchLadipoSuggestions(ladipoParams);
 
     res.json({ success: true, reply, action, ladipoSuggestions: ladipoSuggestions || null });
+
+    // Marketing log, fire-and-forget after the response is sent: zero
+    // latency impact, and a logging failure can never break the reply.
+    logMoConversation({
+      userId: req.user?.id || null,
+      source: 'chat',
+      question: lastUserMessage(messages),
+      answer: reply,
+      actionType: action?.route || null,
+      hasLadipoSearch: Boolean(ladipoParams),
+      model: OPENAI_MODEL,
+      ipHash: hashIp(req.ip),
+    }).catch(() => {});
   } catch (err) {
     console.error('[Mo] controller error:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
+    // Unmet demand is signal too — log the question with no answer.
+    logMoConversation({
+      userId: req.user?.id || null,
+      source: 'chat',
+      question: lastUserMessage(messages),
+      answer: null,
+      model: OPENAI_MODEL,
+      ipHash: hashIp(req.ip),
+    }).catch(() => {});
   }
 };
 
@@ -504,8 +541,25 @@ export const publicChat = async (req, res) => {
     // No ACTION or LADIPO_SEARCH parsing here — those drive in-app navigation
     // and a signed-out visitor has nowhere to be navigated to.
     res.json({ success: true, reply: cleanResponse(raw) });
+
+    logMoConversation({
+      userId: null,
+      source: 'public',
+      question: lastUserMessage(safeMessages),
+      answer: cleanResponse(raw),
+      model: OPENAI_MODEL,
+      ipHash: hashIp(req.ip),
+    }).catch(() => {});
   } catch (err) {
     console.error('[Mo public] controller error:', err);
     res.status(500).json({ success: false, message: 'Internal server error' });
+    logMoConversation({
+      userId: null,
+      source: 'public',
+      question: lastUserMessage(safeMessages),
+      answer: null,
+      model: OPENAI_MODEL,
+      ipHash: hashIp(req.ip),
+    }).catch(() => {});
   }
 };
