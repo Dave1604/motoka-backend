@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
+import { checkFulfillmentLag } from '../services/payment/fulfillment-lag.service.js';
 import * as response from '../utils/responses.js';
 import { parse as csvParse } from 'csv-parse/sync';
 import { sanitizeCarInput } from '../utils/carSanitization.js';
@@ -2637,6 +2638,37 @@ export const listMoConversations = async (req, res) => {
   } catch (err) {
     logError('[Admin] listMoConversations error', err);
     return response.serverError(res, 'Failed to retrieve Mo conversations');
+  }
+};
+
+/**
+ * GET /api/admin/fulfillment-lag
+ *
+ * Fulfillment-lag watch: paid money and orders stuck between payment and
+ * processing. Query params (all optional): orphan_grace_minutes (default
+ * 30), pending_order_hours (24), processing_order_hours (48),
+ * guest_stale_hours (24), reconcile=true to also sweep Paystack for ghost
+ * money (our-prefix successes with no local row), recon_days (7).
+ */
+export const listFulfillmentLag = async (req, res) => {
+  try {
+    const num = (v, fallback, min, max) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.min(max, Math.max(min, n));
+    };
+    const result = await checkFulfillmentLag({
+      orphanGraceMinutes: num(req.query.orphan_grace_minutes, 30, 0, 1440),
+      pendingOrderHours: num(req.query.pending_order_hours, 24, 1, 720),
+      processingOrderHours: num(req.query.processing_order_hours, 48, 1, 1440),
+      guestStaleHours: num(req.query.guest_stale_hours, 24, 1, 720),
+      reconcile: req.query.reconcile === 'true' || req.query.reconcile === '1',
+      reconDays: num(req.query.recon_days, 7, 1, 90),
+    });
+    return response.success(res, result, 'Fulfillment lag checked');
+  } catch (err) {
+    logError('[Admin] listFulfillmentLag error', err);
+    return response.serverError(res, 'Failed to check fulfillment lag');
   }
 };
 
