@@ -16,7 +16,7 @@ import { logError, logInfo, logDebug } from '../../utils/logger.js';
 import { getRenewalItems, validateRenewalItemsSelection } from '../payment/renewalItems.service.js';
 import { quoteFromDeliveryFields, DeliveryQuoteError } from '../courier/deliveryQuote.service.js';
 import { TerminalError } from '../courier/terminal.service.js';
-import { generatePaymentReference } from '../../utils/paymentHelpers.js';
+import { generatePaymentReference, sanitizeAttribution } from '../../utils/paymentHelpers.js';
 import { verifyTransaction as monicreditVerify } from '../payment/monicredit/monicredit.service.js';
 import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify, PaystackError } from '../payment/paystack.service.js';
 import { initializeTransaction as monipayInit, verifyTransaction as monipayVerify } from '../payment/monipay/monipay.service.js';
@@ -56,6 +56,7 @@ function splitName(fullName = '') {
  * @param {string} params.deliveryDetails.contact
  * @param {string} params.paymentGateway  - "monipay" | "paystack"
  * @param {string} params.frontendBaseUrl - Used to build callback URL
+ * @param {Object} [params.attribution] - Marketing attribution { source, campaign }
  * @returns {Promise<Object>} { orderId, paymentReference, paymentUrl, expiresAt, gateway }
  */
 export async function initiateGuestRenewal({
@@ -69,7 +70,8 @@ export async function initiateGuestRenewal({
   deliveryDetails,
   paymentGateway = PAYMENT_GATEWAY.MONIPAY,
   frontendBaseUrl,
-  renewalState = null
+  renewalState = null,
+  attribution = null
 }) {
   if (paymentGateway === PAYMENT_GATEWAY.MONICREDIT) {
     paymentGateway = PAYMENT_GATEWAY.MONIPAY;
@@ -151,6 +153,7 @@ export async function initiateGuestRenewal({
   // ── 4. Create guest_renewal_order in pending_payment ──────────────────────
   const paymentReference = generatePaymentReference();
   const receiptToken = generateReceiptToken();
+  const cleanAttribution = sanitizeAttribution(attribution);
 
   const { data: order, error: orderError } = await supabase
     .from('guest_renewal_orders')
@@ -169,6 +172,8 @@ export async function initiateGuestRenewal({
       renewal_state: renewalState || null,
       payment_gateway: paymentGateway,
       payment_reference: paymentReference,
+      attribution_source: cleanAttribution?.source || null,
+      attribution_campaign: cleanAttribution?.campaign || null,
       payment_status: 'pending_payment',
       receipt_token: receiptToken,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
@@ -199,7 +204,8 @@ export async function initiateGuestRenewal({
       name,
       plateNumber,
       selectedItems,
-      deliveryDetails: resolvedDelivery
+      deliveryDetails: resolvedDelivery,
+      attribution: cleanAttribution
     });
   } else {
     gatewayResult = await _initMonipay({
@@ -247,16 +253,19 @@ export async function initiateGuestRenewal({
 
 // ─── Gateway initialisation helpers (direct API calls, no auth-user lookup) ──
 
-async function _initPaystack({ email, amount, reference, callbackUrl, name, plateNumber, selectedItems, deliveryDetails }) {
+async function _initPaystack({ email, amount, reference, callbackUrl, name, plateNumber, selectedItems, deliveryDetails, attribution = null }) {
   const metadata = {
     is_guest: true,
     guest_name: name,
     guest_plate: plateNumber,
     selected_items: selectedItems,
     delivery_details: deliveryDetails,
+    ...(attribution ? { attribution } : {}),
     custom_fields: [
       { display_name: 'Plate Number', variable_name: 'plate_number', value: plateNumber },
-      { display_name: 'Customer', variable_name: 'customer', value: name }
+      { display_name: 'Customer', variable_name: 'customer', value: name },
+      ...(attribution?.source ? [{ display_name: 'Source', variable_name: 'attribution_source', value: attribution.source }] : []),
+      ...(attribution?.campaign ? [{ display_name: 'Campaign', variable_name: 'attribution_campaign', value: attribution.campaign }] : [])
     ]
   };
 

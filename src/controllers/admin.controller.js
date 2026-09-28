@@ -2560,7 +2560,7 @@ export const listGuestOrders = async (req, res) => {
 
     let query = supabase
       .from('guest_renewal_orders')
-      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference, delivery_fee, delivery_details, selected_items', { count: 'exact' })
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference, delivery_fee, delivery_details, selected_items, attribution_source, attribution_campaign', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
 

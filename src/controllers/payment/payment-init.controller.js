@@ -23,6 +23,7 @@ import { quoteFromDeliveryFields, DeliveryQuoteError } from '../../services/cour
 import { TerminalError } from '../../services/courier/terminal.service.js';
 import {
   buildPaymentMetadata,
+  sanitizeAttribution,
   nairaToKobo
 } from '../../utils/paymentHelpers.js';
 import {
@@ -246,7 +247,9 @@ export const initializePayment = async (req, res) => {
       license_type = null,
       duration = null,          // '3yr' | '5yr' | 'international'
       // State of renewal
-      renewal_state = null
+      renewal_state = null,
+      // Marketing attribution ({ source, campaign }) — sanitized, optional
+      attribution = null
     } = req.body;
 
     const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER;
@@ -528,7 +531,8 @@ export const initializePayment = async (req, res) => {
         subType: isPlatePayment ? (sub_type || null) : null,
         licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
         licenseDuration: isDriverLicensePayment ? (duration || null) : null,
-        renewalState: (!isNonCarPayment && renewal_state) ? renewal_state : null
+        renewalState: (!isNonCarPayment && renewal_state) ? renewal_state : null,
+        attribution: sanitizeAttribution(attribution)
       })
     });
 

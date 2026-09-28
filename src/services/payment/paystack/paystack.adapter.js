@@ -73,6 +73,23 @@ export class PaystackAdapter {
           ]
         : []);
 
+    // Marketing attribution onto the Paystack dashboard (same custom_fields
+    // surface as Vehicle/Registration) so a dashboard transaction answers
+    // "where did this payer come from" with no backend lookup.
+    try {
+      const rawMeta = transaction.metadata;
+      const txMeta = typeof rawMeta === 'string' ? JSON.parse(rawMeta) : (rawMeta || {});
+      const attr = txMeta?.attribution || null;
+      if (attr?.source) {
+        customFields.push({ display_name: 'Source', variable_name: 'attribution_source', value: String(attr.source).slice(0, 60) });
+      }
+      if (attr?.campaign) {
+        customFields.push({ display_name: 'Campaign', variable_name: 'attribution_campaign', value: String(attr.campaign).slice(0, 120) });
+      }
+    } catch {
+      // Unparseable metadata must never block payment init.
+    }
+
     const metadata = {
       transaction_id: transaction.id,
       car_id: car?.id ?? null,

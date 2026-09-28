@@ -25,6 +25,21 @@ export function generateOrderNumber() {
   return `${REFERENCE_PREFIX.ORDER}-${datePart}-${randomPart}`;
 }
 
+// Marketing attribution attached at payment init (UTMs captured by the
+// frontend). Strictly additive metadata: unknown shapes collapse to null so
+// a malformed client payload can never poison the payment record.
+export function sanitizeAttribution(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+  const source = typeof input.source === 'string' ? input.source.trim().slice(0, 60) : '';
+  const campaign = typeof input.campaign === 'string' ? input.campaign.trim().slice(0, 120) : '';
+  if (!source && !campaign) return null;
+  return {
+    ...(source ? { source } : {}),
+    ...(campaign ? { campaign } : {}),
+    captured_at: new Date().toISOString(),
+  };
+}
+
 export function validatePaymentAmount(amount) {
   if (typeof amount !== 'number' || isNaN(amount)) {
     return { valid: false, error: ERROR_MESSAGES.INVALID_AMOUNT };
@@ -168,7 +183,10 @@ export function buildPaymentMetadata({
   licenseType = null,
   licenseDuration = null,
   // State of renewal (which state processes the renewal)
-  renewalState = null
+  renewalState = null,
+  // Marketing attribution ({ source, campaign } | null) — rides along so
+  // orders and gateway dashboards can answer "where did this payer come from"
+  attribution = null
 }) {
   const scheduleIds = paymentScheduleId.length > 0 ? paymentScheduleId : selectedItems;
   
@@ -186,6 +204,7 @@ export function buildPaymentMetadata({
     ...(plateType ? { plate_type: plateType, sub_type: subType } : {}),
     ...(licenseType ? { license_type: licenseType, duration: licenseDuration || null } : {}),
     ...(renewalState ? { renewal_state: renewalState } : {}),
+    ...(attribution ? { attribution } : {}),
     initiated_at: new Date().toISOString()
   });
 }
