@@ -26,6 +26,7 @@ import moRoutes from './routes/mo.routes.js';
 import deferredRemindersRoutes from './routes/deferredReminders.routes.js';
 import ladipoRoutes from './routes/ladipo.routes.js';
 import referralRoutes from './routes/referral.routes.js';
+import insuranceRoutes from './routes/insurance.routes.js';
 // DEV-ONLY: WhatsApp sandbox webhook route — not loaded in production
 import whatsappRoutes from './routes/whatsapp.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
@@ -188,6 +189,7 @@ app.use('/api', moRoutes);
 app.use('/api', deferredRemindersRoutes);
 app.use('/api', ladipoRoutes);
 app.use('/api', referralRoutes);
+app.use('/api', insuranceRoutes);
 
 // WhatsApp inbound webhook — receives replies from users via Twilio
 // Sandbox mode: no signature validation (dev/testing)
