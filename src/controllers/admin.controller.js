@@ -849,6 +849,7 @@ export const getDashboardStats = async (req, res) => {
 
     const now = new Date();
     const monthStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString();
 
     const settled = await Promise.allSettled([
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }),
@@ -856,6 +857,8 @@ export const getDashboardStats = async (req, res) => {
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false),
       supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
       loadRenewalsSummary(supabaseAdmin),
+      supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false).gte('created_at', sevenDaysAgo),
+      supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null).gte('created_at', sevenDaysAgo),
     ]);
 
     const pick = (index) => {
@@ -870,6 +873,8 @@ export const getDashboardStats = async (req, res) => {
     const totalOrders = pick(0).count;
     const totalCars = pick(1).count;
     const totalUsers = pick(2).count;
+    const usersLast7Days = pick(5).count || 0;
+    const carsLast7Days = pick(6).count || 0;
     const amountData = pick(3).data;
     const renewalsSummary = settled[4].status === 'fulfilled' ? settled[4].value : null;
     const expiredThisMonth = renewalsSummary?.expired_this_month || 0;
@@ -886,6 +891,8 @@ export const getDashboardStats = async (req, res) => {
         total_agents: 0,
         total_cars: totalCars || 0,
         total_users: totalUsers || 0,
+        users_last_7_days: usersLast7Days,
+        cars_last_7_days: carsLast7Days,
         expired_cars_this_month: expiredThisMonth || 0,
         expired_cars_total: expiredTotal || 0,
         expired_month: renewalsSummary?.expired_month || monthStart.slice(0, 7),
