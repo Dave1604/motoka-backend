@@ -37,6 +37,7 @@ import paymentMetrics from './services/payment/metrics.service.js';
 import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
 import { monicreditPoller } from './services/payment/monicredit/poller.service.js';
 import { monipayPoller } from './services/payment/monipay/poller.service.js';
+import { paystackPoller } from './services/payment/paystack/poller.service.js';
 import { logInfo, logWarn } from './utils/logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -756,6 +757,7 @@ app.listen(PORT, '0.0.0.0', () => {
   // Pending-txn pollers — fill in if webhooks are delayed or missed.
   monipayPoller.start();
   monicreditPoller.start();
+  paystackPoller.start();
 });
 
 export default app;
