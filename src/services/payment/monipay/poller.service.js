@@ -12,6 +12,7 @@ import {
   getTransactionByReference,
 } from '../transaction.service.js';
 import { getOrderById } from '../order.service.js';
+import { handleWalletFundingSuccess } from '../../wallet/wallet.service.js';
 import { validatePaymentAmount, AmountValidationError } from '../validation/amount.validator.js';
 import { PaymentSuccessService } from '../payment-success.service.js';
 import { logPaymentAudit } from '../audit.service.js';
@@ -137,6 +138,12 @@ class MonipayPoller {
     try {
       metadata = typeof txn.metadata === 'string' ? JSON.parse(txn.metadata) : (txn.metadata || {});
     } catch {
+      return;
+    }
+
+    // Wallet top-ups credit the ledger; they must never reach the order RPC.
+    if (metadata.payment_type === PAYMENT_TYPE.WALLET_FUNDING || txn.payment_type === PAYMENT_TYPE.WALLET_FUNDING) {
+      await handleWalletFundingSuccess(txn, verifyResult, metadata);
       return;
     }
 
