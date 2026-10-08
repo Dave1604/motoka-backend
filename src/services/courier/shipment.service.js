@@ -10,32 +10,13 @@ import {
   trackTerminalShipment,
 } from './terminal.service.js';
 import {
-  createShipmentLabel,
-  isShipbubbleBookingEnabled,
-  isShipbubbleConfigured,
-  ShipbubbleError,
-  trackShipbubbleShipment,
-} from './shipbubble.service.js';
-import {
   DeliveryQuoteError,
   deliveryAddressPayload,
-  deliveryAddressString,
   getPackagingId,
   parcelPayload,
   pickCheapestNgnRate,
   pickupAddressPayload,
-  shipbubblePackageDimension,
-  shipbubblePackageItems,
-  pickupAddressString,
-  toE164Ng,
 } from './deliveryQuote.service.js';
-import {
-  fetchShippingRates,
-  nextPickupDate,
-  pickCheapestShipbubbleCourier,
-  resolveDocumentCategoryId,
-  validateAddress,
-} from './shipbubble.service.js';
 
 export class ShipmentError extends Error {
   constructor(message, statusCode = 400, code = 'SHIPMENT_ERROR') {
@@ -152,17 +133,6 @@ function parseTerminalPickupResult(booked) {
   };
 }
 
-function parseShipbubbleLabelResult(booked) {
-  return {
-    shipmentId: booked?.order_id || null,
-    trackingUrl: booked?.tracking_url || null,
-    labelUrl: booked?.waybill_document || booked?.label_url || null,
-    trackingNumber: booked?.courier?.tracking_code || booked?.order_id || null,
-    amountNaira: booked?.payment?.shipping_fee ?? null,
-    status: booked?.status || 'pending',
-  };
-}
-
 function customerDeliveryFeeKobo(order, isGuest) {
   const n = Number(order?.delivery_fee);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -177,84 +147,7 @@ function pickupAttempted(row) {
 const BOOKING_LOCK_WAIT_MS = 2 * 60 * 1000;
 
 function activeProvider() {
-  if (isShipbubbleConfigured()) return 'shipbubble';
-  if (isTerminalConfigured()) return 'terminal';
-  return null;
-}
-
-async function bookViaShipbubble({
-  stateName,
-  deliveryLga,
-  deliveryAddress,
-  receiverName,
-  receiverEmail,
-  receiverPhone,
-  purpose,
-  weightKg,
-}) {
-  const pickup = pickupAddressPayload();
-  const delivery = deliveryAddressPayload({
-    stateName,
-    city: deliveryLga || stateName,
-    street: deliveryAddress,
-    contact: receiverPhone,
-    name: receiverName,
-    email: receiverEmail,
-  });
-
-  const [senderValidated, receiverValidated, categoryId] = await Promise.all([
-    process.env.SHIPBUBBLE_PICKUP_ADDRESS_CODE
-      ? Promise.resolve({ address_code: process.env.SHIPBUBBLE_PICKUP_ADDRESS_CODE })
-      : validateAddress({
-          name: pickup.name || `${pickup.first_name} ${pickup.last_name}`.trim(),
-          email: pickup.email,
-          phone: pickup.phone,
-          address: pickupAddressString(),
-        }),
-    validateAddress({
-      name: delivery.name,
-      email: delivery.email,
-      phone: toE164Ng(receiverPhone) || delivery.phone,
-      address: deliveryAddressString({
-        stateName,
-        city: deliveryLga || stateName,
-        street: deliveryAddress,
-      }),
-    }),
-    resolveDocumentCategoryId(),
-  ]);
-
-  const ratesPayload = await fetchShippingRates({
-    senderAddressCode: senderValidated.address_code,
-    receiverAddressCode: receiverValidated.address_code,
-    categoryId,
-    packageItems: shipbubblePackageItems({ purpose, weightKg }),
-    packageDimension: shipbubblePackageDimension(),
-    pickupDate: nextPickupDate(),
-    serviceType: 'pickup',
-    deliveryInstructions: `Motoka ${purpose} documents`,
-  });
-
-  const cheapest = pickCheapestShipbubbleCourier(ratesPayload);
-  if (!cheapest?.service_code || cheapest.courier_id == null || !ratesPayload?.request_token) {
-    throw new ShipmentError(
-      'No Shipbubble courier rates are available for this destination.',
-      400,
-      'NO_RATES'
-    );
-  }
-
-  return {
-    cheapest,
-    ratesPayload,
-    amountNaira: Number(cheapest.total ?? cheapest.rate_card_amount),
-    book: async () =>
-      createShipmentLabel({
-        requestToken: ratesPayload.request_token,
-        serviceCode: cheapest.service_code,
-        courierId: cheapest.courier_id,
-      }),
-  };
+  return isTerminalConfigured() ? 'terminal' : null;
 }
 
 async function bookViaTerminal({
@@ -313,16 +206,9 @@ export async function createWaybill({
   const provider = activeProvider();
   if (!provider) {
     throw new ShipmentError(
-      'No courier provider configured. Set SHIPBUBBLE_API_KEY (preferred) or TERMINAL_SECRET_KEY.',
+      'No courier provider configured. Set TERMINAL_SECRET_KEY.',
       503,
       'CONFIG_ERROR'
-    );
-  }
-  if (provider === 'shipbubble' && !isShipbubbleBookingEnabled()) {
-    throw new ShipmentError(
-      'Live Shipbubble booking is disabled. Fund the wallet, then set SHIPBUBBLE_BOOKING_ENABLED=true.',
-      503,
-      'BOOKING_DISABLED'
     );
   }
   if (provider === 'terminal' && !isTerminalBookingEnabled()) {
@@ -386,7 +272,7 @@ export async function createWaybill({
   }
   if (existing && pickupAttempted(existing) && !existing.waybill_number) {
     throw new ShipmentError(
-      'A courier booking was already attempted for this order. Check the Shipbubble/Terminal dashboard before retrying — a second click can charge the wallet twice.',
+      'A courier booking was already attempted for this order. Check the Terminal dashboard before retrying — a second click can charge the wallet twice.',
       409,
       'BOOKING_IN_PROGRESS'
     );
@@ -445,32 +331,20 @@ export async function createWaybill({
 
   let prepared;
   try {
-    prepared = provider === 'shipbubble'
-      ? await bookViaShipbubble({
-          stateName,
-          deliveryLga,
-          deliveryAddress,
-          receiverName,
-          receiverEmail,
-          receiverPhone,
-          purpose,
-          weightKg,
-        })
-      : await bookViaTerminal({
-          stateName,
-          deliveryLga,
-          deliveryAddress,
-          receiverName,
-          receiverEmail,
-          receiverPhone,
-          purpose,
-          weightKg,
-        });
+    prepared = await bookViaTerminal({
+      stateName,
+      deliveryLga,
+      deliveryAddress,
+      receiverName,
+      receiverEmail,
+      receiverPhone,
+      purpose,
+      weightKg,
+    });
   } catch (error) {
     await supabase.from('shipments').delete().eq('id', bookingRow.id).is('waybill_number', null);
     if (
       error instanceof TerminalError ||
-      error instanceof ShipbubbleError ||
       error instanceof DeliveryQuoteError ||
       error instanceof ShipmentError
     ) {
@@ -512,9 +386,7 @@ export async function createWaybill({
     );
   }
 
-  const parsed = provider === 'shipbubble'
-    ? parseShipbubbleLabelResult(booked)
-    : parseTerminalPickupResult(booked);
+  const parsed = parseTerminalPickupResult(booked);
 
   if (!parsed.shipmentId && !parsed.trackingNumber) {
     throw new ShipmentError(
@@ -580,11 +452,6 @@ export async function trackShipment(shipment) {
   if (shipment?.provider === 'kxpress') {
     return { shipment, tracking: null };
   }
-  if (shipment?.provider === 'shipbubble' || (isShipbubbleConfigured() && String(shipmentId).startsWith('SB-'))) {
-    if (!isShipbubbleConfigured()) return { shipment, tracking: null };
-    const live = await trackShipbubbleShipment(shipmentId);
-    return { shipment, tracking: live };
-  }
   if (!isTerminalConfigured()) {
     return { shipment, tracking: null };
   }
@@ -592,104 +459,5 @@ export async function trackShipment(shipment) {
   return {
     shipment,
     tracking: live,
-  };
-}
-
-/**
- * Apply a Shipbubble webhook payload onto the matching Motoka shipments row.
- * Looks up by Shipbubble order_id (SB-…) stored as waybill_number / raw_response.shipment_id.
- */
-export async function applyShipbubbleWebhookEvent(payload = {}) {
-  const orderId = payload.order_id || payload.data?.order_id || null;
-  if (!orderId) {
-    return { updated: false, reason: 'missing_order_id' };
-  }
-
-  const supabase = getSupabaseAdmin();
-  const { data: rows, error } = await supabase
-    .from('shipments')
-    .select('*')
-    .or(`waybill_number.eq.${orderId},waybill_number.eq.${payload.courier?.tracking_code || orderId}`)
-    .order('created_at', { ascending: false })
-    .limit(5);
-
-  if (error) {
-    throw new ShipmentError(error.message || 'Failed to load shipment for webhook', 500, 'DB_ERROR');
-  }
-
-  let shipment = (rows || []).find((r) => {
-    const sid = r?.raw_response?.shipment_id || r?.waybill_number;
-    return String(sid) === String(orderId) || String(r?.waybill_number) === String(orderId);
-  });
-
-  if (!shipment) {
-    // Fallback: scan recent shipbubble rows for matching shipment_id in JSON
-    const { data: recent } = await supabase
-      .from('shipments')
-      .select('*')
-      .eq('provider', 'shipbubble')
-      .order('created_at', { ascending: false })
-      .limit(40);
-    shipment = (recent || []).find((r) => {
-      const sid = r?.raw_response?.shipment_id || r?.waybill_number;
-      const track = r?.raw_response?.booked?.courier?.tracking_code;
-      return (
-        String(sid) === String(orderId) ||
-        String(r?.waybill_number) === String(orderId) ||
-        (track && String(track) === String(payload.courier?.tracking_code || ''))
-      );
-    });
-  }
-
-  if (!shipment) {
-    return { updated: false, reason: 'shipment_not_found', orderId };
-  }
-
-  const status = String(payload.status || 'pending').toLowerCase().replace(/\s+/g, '_');
-  const trackingCode = payload.courier?.tracking_code || shipment.waybill_number;
-  const trackingUrl = payload.tracking_url || shipment.tracking_url;
-  const labelUrl = payload.waybill_document || shipment.label_url;
-  const prevRaw = shipment.raw_response && typeof shipment.raw_response === 'object'
-    ? shipment.raw_response
-    : {};
-
-  const packageStatus = Array.isArray(payload.package_status) ? payload.package_status : [];
-  const events = Array.isArray(payload.events) ? payload.events : [];
-
-  const patch = {
-    status,
-    waybill_number: trackingCode || shipment.waybill_number || orderId,
-    tracking_url: trackingUrl,
-    label_url: labelUrl,
-    raw_response: {
-      ...prevRaw,
-      shipment_id: orderId,
-      pickup_attempted: true,
-      last_webhook_event: payload.event || 'shipment.status.changed',
-      last_webhook_at: new Date().toISOString(),
-      webhook: payload,
-      package_status: packageStatus,
-      events,
-      courier_name: payload.courier?.name || prevRaw.carrier_name || prevRaw.courier_name || null,
-    },
-    updated_at: new Date().toISOString(),
-  };
-
-  const { data: saved, error: updateError } = await supabase
-    .from('shipments')
-    .update(patch)
-    .eq('id', shipment.id)
-    .select('*')
-    .single();
-
-  if (updateError) {
-    throw new ShipmentError(updateError.message || 'Failed to update shipment from webhook', 500, 'DB_ERROR');
-  }
-
-  return {
-    updated: true,
-    shipmentId: saved.id,
-    orderId,
-    status: saved.status,
   };
 }

@@ -109,7 +109,7 @@ jest.unstable_mockModule('../services/location.service.js', () => ({
   validateStateAndLGA: (...args) => mockValidateStateAndLGA(...args)
 }));
 
-// The courier quote hits Supabase + Terminal/Shipbubble when unmocked.
+// The courier quote hits Supabase + Terminal when unmocked.
 // Mocked ESM modules must cover EVERY export any importer touches.
 jest.unstable_mockModule('../services/courier/deliveryQuote.service.js', () => ({
   quoteFromDeliveryFields: (...args) => mockQuoteFromDeliveryFields(...args),
@@ -117,12 +117,8 @@ jest.unstable_mockModule('../services/courier/deliveryQuote.service.js', () => (
   toE164Ng: jest.fn(),
   splitPersonName: jest.fn(),
   pickupAddressPayload: jest.fn(),
-  pickupAddressString: jest.fn(),
   deliveryAddressPayload: jest.fn(),
-  deliveryAddressString: jest.fn(),
   parcelPayload: jest.fn(),
-  shipbubblePackageItems: jest.fn(),
-  shipbubblePackageDimension: jest.fn(),
   pickCheapestNgnRate: jest.fn(),
   getPackagingId: jest.fn(),
   DeliveryQuoteError: class DeliveryQuoteError extends Error {
