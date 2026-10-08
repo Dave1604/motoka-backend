@@ -53,27 +53,13 @@ services:
         sync: false
       - key: PAYMENT_CANCEL_URL
         sync: false
-      # Shipbubble - courier quotes and admin waybills. Leave
-      # SHIPBUBBLE_BOOKING_ENABLED unset until the Shipbubble wallet is funded,
+      # Terminal Africa - courier quotes and admin waybills. Leave
+      # TERMINAL_BOOKING_ENABLED unset until the Terminal wallet is funded,
       # since live booking charges it.
-      - key: SHIPBUBBLE_API_KEY
+      - key: TERMINAL_SECRET_KEY
         sync: false
-      - key: SHIPBUBBLE_BASE_URL
-        value: https://api.shipbubble.com/v1
-      - key: SHIPBUBBLE_PICKUP_STATE
-        value: Ogun
-      - key: SHIPBUBBLE_PICKUP_CITY
-        value: Ijebu Ode
-      - key: SHIPBUBBLE_PICKUP_STREET
-        value: Motoka office, Ijebu Ode
-      - key: SHIPBUBBLE_PICKUP_ZIP
-        value: "120101"
-      - key: SHIPBUBBLE_PICKUP_PHONE
+      - key: TERMINAL_BASE_URL
         sync: false
-      - key: SHIPBUBBLE_PICKUP_EMAIL
-        value: hello@motokaapp.ng
-      - key: SHIPBUBBLE_DEFAULT_ZIP
-        value: "120101"
       # Document auto-fill on POST /api/cars/extract-document
       - key: GEMINI_API_KEY
         sync: false
