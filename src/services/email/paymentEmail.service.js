@@ -11,6 +11,7 @@
 
 import { sendEmail } from './email.service.js';
 import { formatAmount } from '../../utils/paymentHelpers.js';
+import { buildWhatsAppUrl, SUPPORT_PHONE_DISPLAY } from '../../constants/support.constants.js';
 
 /**
  * Send payment success email
@@ -25,6 +26,11 @@ import { formatAmount } from '../../utils/paymentHelpers.js';
  */
 export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType }) {
   const subject = 'Payment Successful - Motoka';
+  const whatsappUrl = buildWhatsAppUrl([
+    "Hello Motoka, I've just made a payment.",
+    orderNumber ? `Order: ${orderNumber}` : null,
+    `Reference: ${reference}`,
+  ]);
   const isPlateNumber = paymentType === 'plate_number';
   const isDriverLicense = paymentType === 'driver_license';
   
@@ -115,10 +121,15 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
           </div>
           
           <p>${bodyOutro}</p>
+
+          <p>To follow progress, log in to your Motoka account with this email address. Your order and this receipt are under <strong>Settings &rarr; Payment &amp; Billing</strong> (My Orders and Transaction History) on your dashboard.</p>
           
           <center>
             <a href="${process.env.FRONTEND_URL}/orders/${orderNumber}/track" class="cta-button">Track your order</a>
+            <br>
+            <a href="${whatsappUrl}" class="cta-button" style="background-color: #25D366; margin-top: 12px;">Message us on WhatsApp</a>
           </center>
+          <p style="text-align: center; font-size: 13px; color: #6c757d; margin-top: 14px;">You can also text us on ${SUPPORT_PHONE_DISPLAY} to let us know your payment went through. Keep this email as your receipt. Reference: ${reference}</p>
         </div>
         <div class="footer">
           <p>Thank you for using Motoka!</p>
@@ -142,6 +153,12 @@ Order Number: ${orderNumber}
 Vehicle: ${carInfo}
 ${serviceValue ? `${serviceLabel}: ${serviceValue}\n` : ''}
 ${bodyOutro}
+
+To follow progress, log in to your Motoka account with this email address and open Settings > Payment & Billing (My Orders / Transaction History).
+Track your order: ${process.env.FRONTEND_URL}/orders/${orderNumber}/track
+Or text us on WhatsApp (${SUPPORT_PHONE_DISPLAY}) to let us know your payment went through: ${whatsappUrl}
+
+Keep this email as your receipt.
 
 Thank you for using Motoka!
   `.trim();
@@ -362,6 +379,11 @@ export async function sendGuestPaymentConfirmationEmail({
 }) {
   const subject = 'Payment Confirmed – Your Motoka Renewal';
   const firstName = guestName?.split(' ')[0] || 'there';
+  const whatsappUrl = buildWhatsAppUrl([
+    "Hello Motoka, I've just made a payment.",
+    plateNumber ? `Plate: ${plateNumber}` : null,
+    `Reference: ${reference}`,
+  ]);
   const docList = documentNames.length > 0
     ? documentNames.map(d => `<li style="padding:4px 0;">${d}</li>`).join('')
     : '<li>Vehicle Document Renewal</li>';
@@ -434,7 +456,11 @@ export async function sendGuestPaymentConfirmationEmail({
             💡 <strong>Tip:</strong> Create a free Motoka account to track your documents, get expiry reminders, and manage renewals in one place.
           </div>
 
-          ${receiptUrl ? `<center><a href="${receiptUrl}" class="cta-button">View Your Receipt</a></center>` : ''}
+          <center>
+            ${receiptUrl ? `<a href="${receiptUrl}" class="cta-button">View Your Receipt</a><br>` : ''}
+            <a href="${whatsappUrl}" class="cta-button" style="background-color:#25D366;margin-top:12px;">Message us on WhatsApp</a>
+          </center>
+          <p style="text-align:center;font-size:13px;color:#697c8c;margin-top:14px;">You can also text us on ${SUPPORT_PHONE_DISPLAY} to let us know your payment went through.</p>
         </div>
         <div class="footer">
           <p>Thank you for using Motoka!</p>
@@ -459,6 +485,7 @@ Documents   : ${documentNames.join(', ') || 'Vehicle Document Renewal'}
 Status      : Payment Received
 
 ${receiptUrl ? `View your receipt: ${receiptUrl}` : ''}
+Text us on WhatsApp (${SUPPORT_PHONE_DISPLAY}) to let us know your payment went through: ${whatsappUrl}
 
 Thank you for using Motoka!
   `.trim();

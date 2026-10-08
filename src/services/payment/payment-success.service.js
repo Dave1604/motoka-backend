@@ -39,6 +39,7 @@ export class PaymentSuccessService {
 
       if (order?.order_number) {
         logInfo('[Payment Success] Order created', { orderNumber: order.order_number });
+        await this._startProcessing(order, transaction.reference);
       } else {
         logError('No order found for transaction', { reference: transaction.reference });
       }
@@ -131,6 +132,34 @@ export class PaymentSuccessService {
     }
   }
 
+  // A paid order is work the ops team has to do, so it goes straight to
+  // processing. Leaving it pending until an admin clicked "Mark In Progress"
+  // made the user's tracker sit on "Payment received" for no reason.
+  // assigned_to stays null: nobody has picked it up yet.
+  static async _startProcessing(order, reference) {
+    if (order.status !== 'pending') return;
+    try {
+      const { error } = await getSupabaseAdmin()
+        .from('renewal_orders')
+        .update({
+          status: 'processing',
+          processing_started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', order.id)
+        .eq('status', 'pending');
+      if (error) throw error;
+      order.status = 'processing';
+      logInfo('[Payment Success] Order moved to processing', { orderNumber: order.order_number });
+    } catch (error) {
+      logError('Failed to move order to processing (non-fatal)', {
+        error: error.message,
+        orderNumber: order.order_number,
+        reference,
+      });
+    }
+  }
+
   static async _activateSubscription(subscriptionId, authorization, reference) {
     try {
       await activateSubscription(
@@ -184,7 +213,7 @@ export class PaymentSuccessService {
       const isDriverLicense = paymentType === 'driver_license';
       const productLabel = isDriverLicense ? 'driver\'s license' : isPlateNumber ? 'plate number application' : 'renewal';
       const message = orderNumber
-        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} created for your ${productLabel}.`
+        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} is now being processed for your ${productLabel}.`
         : `Payment of ${formatAmount(amount)} successful${docPart}! Your ${productLabel} is being processed.`;
       
       await createInAppNotification(
