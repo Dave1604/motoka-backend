@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
+import { getTrafficReportHandler } from '../controllers/admin-analytics.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
 import * as renewals from '../controllers/adminRenewals.controller.js';
 import { adminCreateShipmentHandler, adminTrackShipmentHandler } from '../controllers/delivery.controller.js';
@@ -83,6 +84,9 @@ router.get('/gateways/health', authenticateAdmin, admin.getGatewayHealth);
 router.get('/dashboard/stats', authenticateAdmin, admin.getDashboardStats);
 router.get('/recent-orders', authenticateAdmin, admin.getRecentOrders);
 router.get('/recent-transactions', authenticateAdmin, admin.getRecentTransactions);
+// GA4 website traffic (sessions/users by channel + top pages). 503 until the
+// GA4 service-account env vars are set; see ga4.service.js.
+router.get('/analytics/traffic', authenticateAdmin, getTrafficReportHandler);
 // Polled by the admin tab's new-activity ping; deliberately light.
 router.get('/activity/since', authenticateAdmin, admin.getActivitySince);
 
