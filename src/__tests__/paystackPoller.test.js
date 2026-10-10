@@ -36,6 +36,10 @@ jest.unstable_mockModule('../services/payment/payment-success.service.js', () =>
 jest.unstable_mockModule('../services/payment/audit.service.js', () => ({
   logPaymentAudit: (...args) => mockLogPaymentAudit(...args)
 }));
+const mockHandleWalletFundingSuccess = jest.fn();
+jest.unstable_mockModule('../services/wallet/wallet.service.js', () => ({
+  handleWalletFundingSuccess: (...args) => mockHandleWalletFundingSuccess(...args)
+}));
 
 // Fluent Supabase mock: returns a chainable thenable per query. Results are
 // assigned in call order: sweep-update, pending select, abandoned select.
@@ -142,5 +146,44 @@ describe('PaystackPoller', () => {
 
     expect(mockUpdateTransactionStatus).not.toHaveBeenCalled();
     expect(mockProcessPaymentSuccess).not.toHaveBeenCalled();
+  });
+
+  it('credits the wallet for a paid wallet top-up instead of creating an order', async () => {
+    const txn = baseTxn({
+      status: 'pending',
+      car_id: null,
+      payment_type: 'wallet_funding',
+      metadata: JSON.stringify({ payment_type: 'wallet_funding', wallet_credit_kobo: 240000, fee_kobo: 10000 })
+    });
+    mockGetSupabaseAdmin.mockReturnValue(mockDb([[], [txn], []]));
+    mockVerifyPayment.mockResolvedValue({ success: true, status: 'success', amount: 250000 });
+    mockHandleWalletFundingSuccess.mockResolvedValue({ credited: true });
+
+    const poller = new Poller();
+    await poller.tick();
+
+    expect(mockHandleWalletFundingSuccess).toHaveBeenCalledWith(
+      expect.objectContaining({ reference: 'ref-1' }),
+      expect.objectContaining({ success: true }),
+      expect.objectContaining({ wallet_credit_kobo: 240000 })
+    );
+    expect(mockProcessPaymentSuccess).not.toHaveBeenCalled();
+  });
+
+  it('never turns a paid tokenization charge into an order', async () => {
+    const txn = baseTxn({
+      status: 'abandoned',
+      amount: 5000,
+      metadata: JSON.stringify({ is_tokenization: true, subscription_id: 'sub-1' })
+    });
+    mockGetSupabaseAdmin.mockReturnValue(mockDb([[], [], [txn]]));
+    mockVerifyPayment.mockResolvedValue({ success: true, status: 'success', amount: 5000 });
+
+    const poller = new Poller();
+    await poller.tick();
+
+    expect(mockUpdateTransactionStatus).not.toHaveBeenCalled();
+    expect(mockProcessPaymentSuccess).not.toHaveBeenCalled();
+    expect(mockHandleWalletFundingSuccess).not.toHaveBeenCalled();
   });
 });

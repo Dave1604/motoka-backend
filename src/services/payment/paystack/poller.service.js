@@ -12,6 +12,7 @@ import {
   getTransactionByReference,
 } from '../transaction.service.js';
 import { getOrderById } from '../order.service.js';
+import { handleWalletFundingSuccess } from '../../wallet/wallet.service.js';
 import { validatePaymentAmount, AmountValidationError } from '../validation/amount.validator.js';
 import { PaymentSuccessService } from '../payment-success.service.js';
 import { logPaymentAudit } from '../audit.service.js';
@@ -155,6 +156,21 @@ export class PaystackPoller {
       }
     }
 
+    let metadata = {};
+    try {
+      metadata = typeof txn.metadata === 'string' ? JSON.parse(txn.metadata) : (txn.metadata || {});
+    } catch {
+      return;
+    }
+
+    // The ₦50 card-tokenization charge only exists to capture an auth code;
+    // the webhook activates the subscription and refunds it. Never turn it
+    // into an order.
+    if (metadata.is_tokenization === true) {
+      logDebug('[Paystack Poller] Skipping tokenization charge', { reference: txn.reference });
+      return;
+    }
+
     const wasAbandoned = txn.status === PAYMENT_STATUS.ABANDONED;
     if (wasAbandoned) {
       // The order-creating RPC expects status = pending; reset first exactly
@@ -165,10 +181,9 @@ export class PaystackPoller {
       await updateTransactionStatus(txn.reference, { status: PAYMENT_STATUS.PENDING });
     }
 
-    let metadata = {};
-    try {
-      metadata = typeof txn.metadata === 'string' ? JSON.parse(txn.metadata) : (txn.metadata || {});
-    } catch {
+    // Wallet top-ups credit the ledger; they must never reach the order RPC.
+    if (metadata.payment_type === PAYMENT_TYPE.WALLET_FUNDING || txn.payment_type === PAYMENT_TYPE.WALLET_FUNDING) {
+      await handleWalletFundingSuccess(txn, verifyResult, metadata);
       return;
     }
 
