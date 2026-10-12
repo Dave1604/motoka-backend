@@ -27,6 +27,7 @@ import {
   getCarPaymentReceipt,
   checkExistingPayments
 } from '../controllers/payment/payment-status.controller.js';
+import { releaseSweepHandler } from '../services/payment/renewalSweeper.service.js';
 
 import {
   handlePaystackWebhook,
@@ -197,6 +198,10 @@ router.post(
 
 router.post('/payment/check-existing', authenticate, checkExistingPayments);
 router.get('/payment/car-receipt/:identifier', authenticate, getCarPaymentReceipt);
+
+// Internal pg_cron trigger (migration 102). Secret-gated, no auth/limiter:
+// the sweeper is idempotent and the header is the only credential.
+router.post('/internal/sweeper/release', releaseSweepHandler);
 
 router.post('/delivery/quote', authenticate, paymentLimiter, quoteDeliveryHandler);
 router.get('/orders', authenticate, getUserOrdersHandler);

@@ -300,3 +300,66 @@ describe('rollover endpoints', () => {
     );
   });
 });
+
+describe('releaseSweepHandler (pg_cron trigger)', () => {
+  let handler;
+  let mockGetSupabaseAdmin;
+  const OLD_ENV = { ...process.env };
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    process.env = { ...OLD_ENV };
+    ({ releaseSweepHandler: handler } = await import('../services/payment/renewalSweeper.service.js'));
+    ({ getSupabaseAdmin: mockGetSupabaseAdmin } = await import('../config/supabase.js'));
+  });
+
+  afterEach(() => {
+    process.env = { ...OLD_ENV };
+  });
+
+  const req = (secret) => ({ headers: secret === undefined ? {} : { 'x-cron-secret': secret } });
+
+  it('refuses to run open when no secret is configured', async () => {
+    delete process.env.INTERNAL_CRON_SECRET;
+    const r = res();
+    await handler(req('anything'), r);
+    expect(r.status).toHaveBeenCalledWith(503);
+  });
+
+  it('rejects a wrong secret without touching the database', async () => {
+    process.env.INTERNAL_CRON_SECRET = 'correct-secret';
+    const fake = dbFake({ rows: { renewal_orders: [], guest_renewal_orders: [] } });
+    mockGetSupabaseAdmin.mockReturnValue(fake);
+    const r = res();
+    await handler(req('wrong-secret'), r);
+    expect(r.status).toHaveBeenCalledWith(401);
+    expect(fake.from).not.toHaveBeenCalled();
+  });
+
+  it('runs the sweep immediately on a valid secret', async () => {
+    process.env.INTERNAL_CRON_SECRET = 'correct-secret';
+    const in10 = new Date(Date.now() + 10 * 864e5).toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 864e5).toISOString().slice(0, 10);
+    const fake = dbFake({
+      rows: {
+        renewal_orders: [
+          { id: 9, order_number: 'ORD-9', user_id: 'u9', car_id: 9, previous_expiry_date: in10, renewal_months: 12, scheduled_for: yesterday, amount_paid: 10000, processing_notes: null },
+        ],
+        guest_renewal_orders: [],
+      },
+      singles: {
+        cars: { id: 9, expiry_date: in10 },
+        profiles: { email: 'a@b.c', first_name: 'A', last_name: 'B' },
+      },
+    });
+    mockGetSupabaseAdmin.mockReturnValue(fake);
+    const r = res();
+    await handler(req('correct-secret'), r);
+    expect(r.status).toHaveBeenCalledWith(200);
+    expect(r.json).toHaveBeenCalledWith({ status: true, message: 'Sweep started' });
+    // Background tick runs to completion (await a macrotask).
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const flip = fake.updates.find((u) => u.table === 'renewal_orders');
+    expect(flip.row.status).toBe('pending');
+  });
+});

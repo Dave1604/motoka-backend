@@ -241,3 +241,21 @@ class RenewalSweeper {
 }
 
 export const renewalSweeper = new RenewalSweeper();
+
+// POST /api/internal/sweeper/release — pg_cron trigger (migration 102).
+// Shared-secret gated, NOT admin-authed: this is service-to-service.
+// Responds 200 immediately and sweeps in the background, so a cold-starting
+// instance still does the work after pg_net's short timeout gives up waiting.
+export const releaseSweepHandler = async (req, res) => {
+  const expected = process.env.INTERNAL_CRON_SECRET || '';
+  if (!expected) {
+    return res.status(503).json({ status: false, message: 'Sweeper trigger not configured' });
+  }
+  if (req.headers?.['x-cron-secret'] !== expected) {
+    return res.status(401).json({ status: false, message: 'Unauthorized' });
+  }
+  res.status(200).json({ status: true, message: 'Sweep started' });
+  renewalSweeper.tick().catch((err) =>
+    logError('[Renewal Sweeper] Triggered tick failed', { error: err.message })
+  );
+};
