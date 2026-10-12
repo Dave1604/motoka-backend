@@ -23,6 +23,7 @@ import { initializeTransaction as monipayInit, verifyTransaction as monipayVerif
 import { PAYMENT_GATEWAY } from '../../constants/payment.constants.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';
 import { sendAdminGuestOrderAlert } from '../email/adminOrderAlert.service.js';
+import { computeSchedule } from '../payment/scheduling.util.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -468,6 +469,26 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
     logError('[GuestRenewal] Auto-link check failed (non-fatal)', { error: linkErr.message, orderId: order.id });
   }
 
+  // Scheduled hold: renewals paid more than the window before expiry wait
+  // for the window instead of landing on ops' desk months early. Unclaimed
+  // orders (no linked account — registration required before processing)
+  // are held the same way; the sweeper only releases claimed orders.
+  let guestScheduledFor = null;
+  try {
+    const { scheduledFor } = computeSchedule({ expiryDate: order.expiry_date });
+    if (scheduledFor) {
+      const { error: schedErr } = await supabase
+        .from('guest_renewal_orders')
+        .update({ scheduled_for: scheduledFor, updated_at: new Date().toISOString() })
+        .eq('id', order.id);
+      if (schedErr) throw schedErr;
+      guestScheduledFor = scheduledFor;
+      logInfo('[GuestRenewal] Order held as scheduled', { orderId: order.id, scheduledFor });
+    }
+  } catch (schedErr) {
+    logError('[GuestRenewal] Schedule hold failed (non-fatal) — order stays actionable', { error: schedErr.message, orderId: order.id });
+  }
+
   // Send confirmation email — fire-and-forget so a mail failure never blocks the payment flow
   try {
     const allItems = await getRenewalItems();
@@ -486,7 +507,8 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
       amount: order.total_amount,
       plateNumber: order.plate_number,
       documentNames,
-      receiptUrl
+      receiptUrl,
+      scheduledFor: guestScheduledFor
     });
   } catch (emailErr) {
     logError('[GuestRenewal] Failed to send confirmation email', { error: emailErr.message, orderId: order.id });
@@ -495,7 +517,12 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
   // Ops alert — kept independent of the customer email above, because a
   // bounced customer address is precisely when ops needs to hear about the
   // order. Reached once per order: the already-paid guard returns earlier on
-  // repeat webhook/verify calls.
+  // repeat webhook/verify calls. Scheduled orders are deliberately NOT
+  // alerted here — the sweeper alerts when the window opens, so early
+  // payments never rot in the inbox for months.
+  if (guestScheduledFor) {
+    logInfo('[GuestRenewal] Ops alert deferred to window', { orderId: order.id, scheduledFor: guestScheduledFor });
+  } else {
   try {
     const allItems = await getRenewalItems();
     const itemMap = new Map(allItems.map(i => [i.id, i]));
@@ -512,6 +539,7 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
     });
   } catch (alertErr) {
     logError('[GuestRenewal] Admin alert failed (non-fatal)', { error: alertErr.message, orderId: order.id });
+  }
   }
 
   return order;

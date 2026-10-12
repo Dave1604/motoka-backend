@@ -857,6 +857,7 @@ export const getDashboardStats = async (req, res) => {
       supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
       loadRenewalsSummary(supabaseAdmin),
       supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success'),
+      supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }).eq('status', 'scheduled'),
     ]);
 
     const pick = (index) => {
@@ -896,6 +897,7 @@ export const getDashboardStats = async (req, res) => {
         expired_cars_this_month: expiredThisMonth || 0,
         expired_cars_total: expiredTotal || 0,
         expired_month: renewalsSummary?.expired_month || monthStart.slice(0, 7),
+        scheduled_orders: pick(6).count || 0,
       },
     });
   } catch (error) {
@@ -1058,7 +1060,7 @@ export const listOrders = async (req, res) => {
     let query = supabaseAdmin
       .from('renewal_orders')
       .select(`
-        id, order_number, order_type, amount_paid, status, user_id,
+        id, order_number, order_type, amount_paid, status, scheduled_for, user_id,
         delivery_address, delivery_state, delivery_lga, delivery_contact,
         created_at, updated_at,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
@@ -1264,9 +1266,9 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     const dbStatus = frontendStatusToDB(status);
-    const validStatuses = ['pending', 'processing', 'completed', 'cancelled'];
+    const validStatuses = ['pending', 'processing', 'completed', 'cancelled', 'scheduled'];
     if (!validStatuses.includes(dbStatus)) {
-      return res.status(400).json({ status: false, message: 'Invalid status. Must be one of: pending, in_progress, completed, declined' });
+      return res.status(400).json({ status: false, message: 'Invalid status. Must be one of: pending, in_progress, completed, declined, scheduled' });
     }
 
     // Fetch current order
@@ -1315,6 +1317,25 @@ export const updateOrderStatus = async (req, res) => {
       if (dbStatus === 'cancelled') {
         updateData.cancelled_at = new Date().toISOString();
         updateData.rejection_reason = notes || null;
+      }
+
+      // Manual (re-)scheduling: derive the hold date from the car's expiry
+      // when the admin doesn't supply one; leaving scheduled_from pending
+      // clears any hold so the order is actionable immediately.
+      if (dbStatus === 'scheduled') {
+        const carExpiry = current.cars?.expiry_date || null;
+        const holdFrom = req.body?.scheduled_for || null;
+        if (holdFrom && !Number.isNaN(new Date(holdFrom).getTime())) {
+          updateData.scheduled_for = holdFrom.slice(0, 10);
+        } else if (carExpiry && !Number.isNaN(new Date(carExpiry).getTime())) {
+          const d = new Date(carExpiry);
+          d.setDate(d.getDate() - 30);
+          updateData.scheduled_for = d.toISOString().slice(0, 10);
+        } else {
+          updateData.scheduled_for = new Date().toISOString().slice(0, 10);
+        }
+      } else if (['pending', 'processing'].includes(dbStatus)) {
+        updateData.scheduled_for = null;
       }
 
       if (notes && dbStatus !== 'cancelled') {
@@ -2558,7 +2579,7 @@ export const listGuestOrders = async (req, res) => {
 
     let query = supabase
       .from('guest_renewal_orders')
-      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference, delivery_fee, delivery_details, selected_items', { count: 'exact' })
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference, delivery_fee, delivery_details, selected_items, scheduled_for, expiry_date', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
 

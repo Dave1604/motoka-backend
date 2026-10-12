@@ -85,4 +85,12 @@ describe('process_payment_success RPC migration guard', () => {
     expect(def.sql).toMatch(/order_id\s+BIGINT/i);
     expect(def.sql).toMatch(/already_processed\s+BOOLEAN/i);
   });
+
+  it('supports scheduled holds (migration 101+)', () => {
+    // p_scheduled_for / p_previous_expiry_override must exist with defaults so
+    // old callers keep working, and the status must derive from the hold date.
+    expect(def.sql).toMatch(/p_scheduled_for\s+DATE\s+DEFAULT\s+NULL/i);
+    expect(def.sql).toMatch(/p_previous_expiry_override\s+DATE\s+DEFAULT\s+NULL/i);
+    expect(def.sql).toMatch(/CASE\s+WHEN\s+p_scheduled_for\s+IS\s+NULL\s+THEN\s+'pending'\s+ELSE\s+'scheduled'\s+END/i);
+  });
 });

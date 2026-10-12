@@ -304,6 +304,102 @@ describe('Payment routes', () => {
     );
   });
 
+  it('POST /api/payments/initialize 409s covered items without confirm_duplicate', async () => {
+    const coveringOrder = {
+      order_number: 'ORD-COVER',
+      status: 'processing',
+      scheduled_for: null,
+      previous_expiry_date: '2026-01-01',
+      renewal_months: 12,
+      selected_items: ['vehicle_licence'],
+      created_at: new Date().toISOString(),
+    };
+    const chainable = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      is: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      update: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({
+        data: {
+          id: 10, slug: 'car-slug', vehicle_make: 'Toyota', vehicle_model: 'Corolla',
+          registration_no: 'REG123', expiry_date: '2025-01-01', status: 'active', user_id: 'user-123'
+        },
+        error: null
+      }),
+      then: (resolve) => resolve({ data: [coveringOrder], error: null }),
+    };
+    mockGetSupabaseAdmin.mockReturnValue({ from: jest.fn(() => chainable) });
+    mockValidateRenewalItemsSelection.mockResolvedValue({ valid: true, total: 200000 });
+
+    const res = await request(app)
+      .post('/api/payments/initialize')
+      .set('Authorization', 'Bearer valid-token')
+      .send({
+        car_slug: 'car-slug',
+        payment_schedule_id: ['vehicle_licence'],
+        renewal_months: 12,
+        payment_gateway: 'paystack',
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toMatch(/already covered/i);
+    expect(res.body.errors.needs_confirm).toBe(true);
+    expect(res.body.errors.covering[0].order_number).toBe('ORD-COVER');
+    expect(mockCreateTransaction).not.toHaveBeenCalled();
+  });
+
+  it('POST /api/payments/initialize proceeds when confirm_duplicate is set', async () => {
+    const coveringOrder = {
+      order_number: 'ORD-COVER',
+      status: 'scheduled',
+      scheduled_for: '2027-01-01',
+      previous_expiry_date: '2027-01-31',
+      renewal_months: 12,
+      selected_items: ['vehicle_licence'],
+      created_at: new Date(Date.now() - 3600e3).toISOString(),
+    };
+    const chainable = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      is: jest.fn().mockReturnThis(),
+      in: jest.fn().mockReturnThis(),
+      update: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({
+        data: {
+          id: 10, slug: 'car-slug', vehicle_make: 'Toyota', vehicle_model: 'Corolla',
+          registration_no: 'REG123', expiry_date: '2025-01-01', status: 'active', user_id: 'user-123'
+        },
+        error: null
+      }),
+      then: (resolve) => resolve({ data: [coveringOrder], error: null }),
+    };
+    mockGetSupabaseAdmin.mockReturnValue({ from: jest.fn(() => chainable) });
+    mockValidateRenewalItemsSelection.mockResolvedValue({ valid: true, total: 200000 });
+    mockCreateTransaction.mockResolvedValue({ id: 2, reference: 'ref-chain', amount: 200000 });
+    mockPaystackInitialize.mockResolvedValue({
+      authorization_url: 'https://paystack.test/auth',
+      access_code: 'access-456',
+      reference: 'ref-chain'
+    });
+    mockUpdateTransactionWithPaystackInit.mockResolvedValue({ id: 2, reference: 'ref-chain' });
+
+    const res = await request(app)
+      .post('/api/payments/initialize')
+      .set('Authorization', 'Bearer valid-token')
+      .send({
+        car_slug: 'car-slug',
+        payment_schedule_id: ['vehicle_licence'],
+        renewal_months: 12,
+        payment_gateway: 'paystack',
+        confirm_duplicate: true,
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe(true);
+    expect(mockCreateTransaction).toHaveBeenCalled();
+  });
+
   it('GET /api/payments/verify/:reference is read-only on success', async () => {
     const mockTransaction = {
       id: 1,
