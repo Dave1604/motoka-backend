@@ -145,7 +145,7 @@ describe('renewalSweeper', () => {
     ({ getSupabaseAdmin: mockGetSupabaseAdmin } = await import('../config/supabase.js'));
   });
 
-  it('releases due orders to pending with both alerts', async () => {
+  it('releases due orders to processing with both alerts', async () => {
     const fake = dbFake({
       rows: {
         renewal_orders: [
@@ -164,7 +164,8 @@ describe('renewalSweeper', () => {
     await s.tick();
 
     const flip = fake.updates.find((u) => u.table === 'renewal_orders');
-    expect(flip.row.status).toBe('pending');
+    expect(flip.row.status).toBe('processing');
+    expect(flip.row.processing_started_at).toBeTruthy();
     expect(flip.row.scheduled_for).toBeNull();
     const { sendAdminOrderAlert } = await import('../services/email/adminOrderAlert.service.js');
     const { sendOrderInProgressEmail } = await import('../services/email/paymentEmail.service.js');
@@ -360,6 +361,7 @@ describe('releaseSweepHandler (pg_cron trigger)', () => {
     // Background tick runs to completion (await a macrotask).
     await new Promise((resolve) => setTimeout(resolve, 50));
     const flip = fake.updates.find((u) => u.table === 'renewal_orders');
-    expect(flip.row.status).toBe('pending');
+    expect(flip.row.status).toBe('processing');
+    expect(flip.row.processing_started_at).toBeTruthy();
   });
 });

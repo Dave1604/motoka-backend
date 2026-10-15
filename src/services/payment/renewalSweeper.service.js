@@ -106,10 +106,14 @@ class RenewalSweeper {
       return;
     }
 
+    // Straight to processing, same as a freshly paid order (#64): the window
+    // opening is the moment ops' work starts, and the customer gets the
+    // in-progress email below. assigned_to stays null until someone picks it up.
     const { error: flipError } = await supabaseAdmin
       .from('renewal_orders')
       .update({
-        status: 'pending',
+        status: 'processing',
+        processing_started_at: new Date().toISOString(),
         scheduled_for: null,
         processing_notes: [order.processing_notes, `[sweeper] Window opened ${todayIso()} — released for processing.`]
           .filter(Boolean).join('\n'),

@@ -1,9 +1,11 @@
 -- Scheduled renewals: pay anytime, process from 30 days before expiry.
 -- Migration 100.
 --
--- 1. New order_status value. ADD VALUE is its own statement: on PG12+ it may
---    run inside the migration transaction, but the value must not be *used*
---    in the same transaction — nothing below references 'scheduled'.
+-- 1. New order_status value. ADD VALUE may run inside the migration
+--    transaction on PG12+, but the value must not be *used* in the same
+--    transaction. Nothing below references 'scheduled' — the partial index
+--    is keyed on scheduled_for IS NOT NULL instead, which the sweeper's
+--    query (status = 'scheduled' AND scheduled_for <= today) still uses.
 ALTER TYPE public.order_status ADD VALUE IF NOT EXISTS 'scheduled';
 
 -- 2. Hold date on signed-in renewal orders. NULL = actionable now.
@@ -11,7 +13,7 @@ ALTER TABLE public.renewal_orders
   ADD COLUMN IF NOT EXISTS scheduled_for DATE;
 CREATE INDEX IF NOT EXISTS idx_renewal_orders_scheduled_due
   ON public.renewal_orders (scheduled_for)
-  WHERE status = 'scheduled';
+  WHERE scheduled_for IS NOT NULL;
 
 -- 3. Same hold date on guest orders. Their fulfilment gate is
 --    linked_user_id IS NOT NULL (registration required before processing).

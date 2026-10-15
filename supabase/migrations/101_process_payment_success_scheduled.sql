@@ -1,5 +1,15 @@
 -- Scheduled renewals: let the RPC create 'scheduled' orders.
 -- Migration 101. All new params have defaults, so existing callers keep working.
+--
+-- The parameter list changes, so CREATE OR REPLACE alone would leave the old
+-- 16-param function (migration 089) in place as a second overload. A caller
+-- passing 16 args would then match both and PostgREST refuses to choose —
+-- every payment would fail to create an order until the new backend deployed.
+-- Drop the old signature first; the new one serves old callers via defaults.
+DROP FUNCTION IF EXISTS public.process_payment_success(
+  VARCHAR, payment_status, VARCHAR, VARCHAR, TIMESTAMPTZ, order_type, INTEGER,
+  JSONB, NUMERIC, NUMERIC, TEXT, TEXT, TEXT, TEXT, JSONB, TEXT
+);
 
 CREATE OR REPLACE FUNCTION public.process_payment_success(
   p_reference VARCHAR,
