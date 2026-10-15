@@ -375,7 +375,7 @@ Need help? Contact our support team.
  * @param {string} options.receiptUrl   - Direct link to the receipt page
  */
 export async function sendGuestPaymentConfirmationEmail({
-  to, guestName, reference, amount, plateNumber, documentNames = [], receiptUrl
+  to, guestName, reference, amount, plateNumber, documentNames = [], receiptUrl, accountCreated = false
 }) {
   const subject = 'Payment Confirmed – Your Motoka Renewal';
   const firstName = guestName?.split(' ')[0] || 'there';
@@ -453,7 +453,9 @@ export async function sendGuestPaymentConfirmationEmail({
           </div>
 
           <div class="tip-box">
-            💡 <strong>Tip:</strong> Create a free Motoka account to track your documents, get expiry reminders, and manage renewals in one place.
+            💡 <strong>Tip:</strong> ${accountCreated
+              ? 'We\'ve created your free Motoka account — this renewal is already saved to it. Log in anytime with OTP using this email address, or set a password on your receipt page, to track documents and get expiry reminders.'
+              : 'Create a free Motoka account to track your documents, get expiry reminders, and manage renewals in one place.'}
           </div>
 
           <center>

@@ -362,6 +362,111 @@ export async function getGuestReceipt(orderId, receiptToken) {
 // ─── Webhook: mark order as paid ─────────────────────────────────────────────
 
 /**
+ * Creates a passwordless account for a guest payer (no existing profile) and
+ * links the paid order to it. The guest claims it with OTP login
+ * (shouldCreateUser:false accepts pre-existing users) or by setting a
+ * password on the receipt page. Never throws — returns the new user id or
+ * null. Never reassigns cars: no cars row is created here at all; the order
+ * link alone is what surfaces the renewal in the new account's history.
+ */
+export async function autoCreateGuestAccount(supabase, order) {
+  try {
+    const email = order.guest_email.toLowerCase();
+    const nameParts = (order.guest_name || '').trim().split(/\s+/);
+    const firstName = nameParts[0] || 'Guest';
+    const lastName = nameParts.slice(1).join(' ') || firstName;
+
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      email_confirm: true,
+      user_metadata: {
+        first_name: firstName,
+        last_name: lastName,
+        phone: order.guest_phone || '',
+        auto_created: true,
+        guest_order_id: order.id,
+      },
+    });
+
+    if (authError) {
+      // Lost a race with a real signup between the profile check and now:
+      // link to the winner instead of failing.
+      if (authError.message?.toLowerCase().includes('already been registered')) {
+        const { data: winner } = await supabase
+          .from('profiles').select('id').eq('email', email).maybeSingle();
+        if (winner?.id) {
+          await supabase
+            .from('guest_renewal_orders')
+            .update({ linked_user_id: winner.id, updated_at: new Date().toISOString() })
+            .eq('id', order.id);
+          logInfo('[GuestRenewal] Auto-create raced a signup — linked to winner', { orderId: order.id, userId: winner.id });
+          return winner.id;
+        }
+      }
+      logError('[GuestRenewal] Auto-create auth user failed (non-fatal)', { error: authError.message, orderId: order.id });
+      return null;
+    }
+
+    const userId = authData.user.id;
+
+    let shortUserId;
+    for (let i = 0; i < 10; i++) {
+      const candidate = Math.random().toString(36).substring(2, 8).toUpperCase();
+      const { data: conflict } = await supabase
+        .from('profiles').select('id').eq('user_id', candidate).maybeSingle();
+      if (!conflict) { shortUserId = candidate; break; }
+    }
+    if (!shortUserId) {
+      logError('[GuestRenewal] Auto-create short id exhausted (non-fatal)', { orderId: order.id });
+      await supabase.auth.admin.deleteUser(userId).catch(() => {});
+      return null;
+    }
+
+    // Phone is globally unique on profiles — a collision (shared family
+    // number, recycled line) must not sink the account; store without it.
+    let profileError = (
+      await supabase.from('profiles').insert({
+        id: userId,
+        user_id: shortUserId,
+        first_name: firstName,
+        last_name: lastName,
+        phone_number: order.guest_phone || null,
+        email,
+        user_type_id: 2,
+      })
+    ).error;
+    if (profileError && /unique|duplicate|already exists/i.test(profileError.message || '')) {
+      profileError = (
+        await supabase.from('profiles').insert({
+          id: userId,
+          user_id: shortUserId,
+          first_name: firstName,
+          last_name: lastName,
+          phone_number: null,
+          email,
+          user_type_id: 2,
+        })
+      ).error;
+    }
+    if (profileError) {
+      logError('[GuestRenewal] Auto-create profile failed (non-fatal)', { error: profileError.message, orderId: order.id });
+      await supabase.auth.admin.deleteUser(userId).catch(() => {});
+      return null;
+    }
+
+    await supabase
+      .from('guest_renewal_orders')
+      .update({ linked_user_id: userId, updated_at: new Date().toISOString() })
+      .eq('id', order.id);
+    logInfo('[GuestRenewal] Account auto-created and order linked', { orderId: order.id, userId });
+    return userId;
+  } catch (err) {
+    logError('[GuestRenewal] Auto-create failed (non-fatal)', { error: err.message, orderId: order?.id });
+    return null;
+  }
+}
+
+/**
  * Called from the webhook handler when payment for a guest reference succeeds.
  * Marks the guest_renewal_order as payment_success.
  */
@@ -448,7 +553,10 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
   logInfo('[GuestRenewal] Order marked as payment_success', { orderId: order.id, reference: paymentReference });
 
   // Auto-link to existing account if the guest email belongs to a registered user.
-  // Done silently — a failure here must never block payment confirmation.
+  // Otherwise auto-create a passwordless account the guest can claim with OTP
+  // login or by setting a password on the receipt page. Done silently — a
+  // failure here must never block payment confirmation.
+  let accountCreated = false;
   try {
     // profiles.id = auth.users.id; query by email is fast and avoids non-existent getUserByEmail
     const { data: existingProfile } = await supabase
@@ -463,6 +571,9 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
         .update({ linked_user_id: existingUser.id, updated_at: new Date().toISOString() })
         .eq('id', order.id);
       logInfo('[GuestRenewal] Auto-linked order to existing account', { orderId: order.id, userId: existingUser.id });
+    } else {
+      const newUserId = await autoCreateGuestAccount(supabase, order);
+      accountCreated = !!newUserId;
     }
   } catch (linkErr) {
     logError('[GuestRenewal] Auto-link check failed (non-fatal)', { error: linkErr.message, orderId: order.id });
@@ -486,7 +597,8 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
       amount: order.total_amount,
       plateNumber: order.plate_number,
       documentNames,
-      receiptUrl
+      receiptUrl,
+      accountCreated
     });
   } catch (emailErr) {
     logError('[GuestRenewal] Failed to send confirmation email', { error: emailErr.message, orderId: order.id });
