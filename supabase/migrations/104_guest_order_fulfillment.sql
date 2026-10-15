@@ -1,6 +1,6 @@
 -- Guest order fulfilment: mirror the signed-in orders flow so admins can
 -- check and process guest renewals (pending → processing → completed/cancelled).
--- Migration 103.
+-- Migration 104 (was 103; 103 is profiles.email_verified_at, already on prod).
 --
 -- guest_renewal_orders previously only tracked payment_status; there was no
 -- fulfilment state, so paid guest orders had no Check/Process path in admin.
