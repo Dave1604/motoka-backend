@@ -142,7 +142,9 @@ export const guestSignup = async (req, res) => {
           last_name: lastName,
           phone_number: order.guest_phone || null,
           email,
-          user_type_id: 2
+          user_type_id: 2,
+          // The receipt token arrived by email, so the address is proven.
+          email_verified_at: new Date().toISOString()
         });
 
       if (profileError) {
