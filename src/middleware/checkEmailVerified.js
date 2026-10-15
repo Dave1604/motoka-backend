@@ -5,7 +5,7 @@ export const checkEmailVerified = (req, res, next) => {
     return forbidden(res, 'Authentication required');
   }
   
-  if (!req.user.email_confirmed_at) {
+  if (!req.user.profile?.email_verified_at) {
     return forbidden(res, 'Please verify your email address');
   }
   
