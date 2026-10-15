@@ -142,6 +142,8 @@ router.post('/notifications/expiry-reminders', authenticateAdmin, admin.triggerE
 // guest-orders must be registered before /:orderId to avoid capture conflicts
 router.get('/guest-orders', authenticateAdmin, admin.listGuestOrders);
 router.get('/guest-orders/:orderId', authenticateAdmin, admin.getGuestOrderDetails);
+router.put('/guest-orders/:id/status', authenticateAdmin, admin.updateGuestOrderStatus);
+router.post('/guest-orders/:id/reopen', authenticateAdmin, admin.reopenGuestOrder);
 router.post('/guest-orders/:id/rollover', authenticateAdmin, rollGuestOrder);
 
 // ── Driver license applications ───────────────────────────────────────────────
