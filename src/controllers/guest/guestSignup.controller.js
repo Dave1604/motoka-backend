@@ -55,11 +55,59 @@ export const guestSignup = async (req, res) => {
       return response.error(res, 'Payment has not been confirmed for this order', 400);
     }
 
-    if (order.linked_user_id) {
-      return response.error(res, 'An account has already been created for this order', 409);
-    }
-
     const email = order.guest_email;
+
+    if (order.linked_user_id) {
+      // Auto-created accounts (passwordless, made at payment time) can still
+      // claim via this form: verify the link belongs to an auto-created user
+      // for this same email, then set their chosen password. Real accounts
+      // keep the old behaviour — log in instead.
+      const { data: linkedProfile } = await supabaseAdmin
+        .from('profiles')
+        .select('id, email')
+        .eq('id', order.linked_user_id)
+        .maybeSingle();
+      const { data: linkedAuth } = linkedProfile
+        ? await supabaseAdmin.auth.admin.getUserById(linkedProfile.id)
+        : { data: null };
+      const isAutoCreated =
+        linkedAuth?.user?.user_metadata?.auto_created === true &&
+        (linkedAuth.user.email || '').toLowerCase() === email.toLowerCase();
+
+      if (!isAutoCreated) {
+        return response.error(res, 'An account has already been created for this order', 409);
+      }
+
+      const { error: pwError } = await supabaseAdmin.auth.admin.updateUserById(linkedProfile.id, {
+        password,
+      });
+      if (pwError) {
+        logError('[GuestSignup] Set-password on auto-created account failed', pwError);
+        return response.serverError(res, 'Account claim failed. Please try again or log in with OTP.');
+      }
+
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInError || !signInData?.session) {
+        logError('[GuestSignup] Sign-in after claim failed', signInError);
+        return response.serverError(res, 'Password set. Please log in to continue.');
+      }
+
+      const nameParts = (order.guest_name || '').trim().split(/\s+/);
+      logInfo('[GuestSignup] Auto-created account claimed with password', { userId: linkedProfile.id, orderId });
+      return response.created(res, {
+        user: {
+          id: linkedProfile.id,
+          email,
+          email_verified: true,
+          first_name: nameParts[0] || '',
+          last_name: nameParts.slice(1).join(' ') || nameParts[0] || '',
+        },
+        session: signInData.session,
+      }, 'Account claimed. You are now logged in.');
+    }
 
     // ── Check if an account already exists for this email ────────────────────
     // profiles.id = auth.users.id, and email is indexed there — faster than auth.admin.listUsers
