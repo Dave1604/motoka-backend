@@ -13,7 +13,8 @@ const SAFE_PROFILE_FIELDS = [
   'id', 'user_id', 'first_name', 'last_name', 'phone_number', 'email',
   'image', 'nin', 'address', 'gender', 'user_type', 'user_type_id',
   'is_admin', 'is_suspended', 'two_factor_enabled', 'two_factor_type',
-  'two_factor_confirmed_at', 'email_verified_at', 'created_at', 'updated_at',
+  'two_factor_confirmed_at', 'email_verified_at', 'terms_accepted_at', 'auto_renew_enabled',
+  'created_at', 'updated_at',
 ];
 
 function sanitizeProfile(profile) {
@@ -23,7 +24,7 @@ function sanitizeProfile(profile) {
   );
 }
 
-const SAFE_PROFILE_SELECT = 'id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, email_verified_at, created_at, updated_at';
+const SAFE_PROFILE_SELECT = 'id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, email_verified_at, terms_accepted_at, auto_renew_enabled, created_at, updated_at';
 
 // Supabase auto-confirms signups, so auth.users.email_confirmed_at is always
 // set. profiles.email_verified_at is the flag that means the user proved
@@ -39,7 +40,7 @@ async function markEmailVerified(supabaseAdmin, userId) {
 
 export const register = async (req, res) => {
   try {
-    const { first_name, last_name, email, phone, password, referral_code } = req.body;
+    const { first_name, last_name, email, phone, password, referral_code, terms_accepted, auto_renew } = req.body;
     const supabase = getSupabase();
     const supabaseAdmin = getSupabaseAdmin();
 
@@ -105,7 +106,10 @@ export const register = async (req, res) => {
           last_name: last_name || '',
           phone_number: phone || null,
           email,
-          user_type_id: 2
+          user_type_id: 2,
+          // Terms box is mandatory on the form; auto-renew is an opt-in.
+          terms_accepted_at: terms_accepted ? new Date().toISOString() : null,
+          auto_renew_enabled: auto_renew === true,
         })
         .select(SAFE_PROFILE_SELECT)
         .single();
@@ -126,6 +130,20 @@ export const register = async (req, res) => {
       profile = inserted;
     } else {
       profile = existingProfile;
+      // Trigger-created row: still record the signup consents (non-fatal).
+      if (terms_accepted || auto_renew === true) {
+        const { data: stamped } = await supabaseAdmin
+          .from('profiles')
+          .update({
+            ...(terms_accepted ? { terms_accepted_at: new Date().toISOString() } : {}),
+            ...(auto_renew === true ? { auto_renew_enabled: true } : {}),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userId)
+          .select(SAFE_PROFILE_SELECT)
+          .maybeSingle();
+        if (stamped) profile = stamped;
+      }
     }
 
     // Send OTP for email verification. Non-fatal, but never silent: if this
