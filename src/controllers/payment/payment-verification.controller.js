@@ -285,7 +285,9 @@ export const verifyPayment = async (req, res) => {
         
         return paymentResponse.success(res, {
           status: statusForResponse,
-          message: 'Payment verified successfully',
+          message: processResult.orderStatus === 'scheduled'
+            ? `Payment received. Processing starts ${processResult.scheduledFor} — we'll notify you.`
+            : 'Payment verified successfully',
           reference: updatedTransaction.reference,
           transaction_id: updatedTransaction.id,
           amount: updatedTransaction.amount,
@@ -294,6 +296,8 @@ export const verifyPayment = async (req, res) => {
           car_slug: carSlug,
           order_id: createdOrder?.id || null,
           order_number: createdOrder?.order_number || null,
+          order_status: processResult.orderStatus || null,
+          scheduled_for: processResult.scheduledFor || null,
           gateway: paymentGateway
         }, SUCCESS_MESSAGES.PAYMENT_VERIFIED);
       } catch (processError) {

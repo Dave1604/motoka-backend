@@ -38,6 +38,7 @@ import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
 import { monicreditPoller } from './services/payment/monicredit/poller.service.js';
 import { monipayPoller } from './services/payment/monipay/poller.service.js';
 import { paystackPoller } from './services/payment/paystack/poller.service.js';
+import { renewalSweeper } from './services/payment/renewalSweeper.service.js';
 import { logInfo, logWarn } from './utils/logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -757,6 +758,7 @@ app.listen(PORT, '0.0.0.0', () => {
   monipayPoller.start();
   monicreditPoller.start();
   paystackPoller.start();
+  renewalSweeper.start();
 });
 
 export default app;

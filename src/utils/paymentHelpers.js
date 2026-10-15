@@ -157,7 +157,9 @@ export function buildPaymentMetadata({
   licenseType = null,
   licenseDuration = null,
   // State of renewal (which state processes the renewal)
-  renewalState = null
+  renewalState = null,
+  // Next-cycle chaining: order_number this duplicate payment follows
+  chainedAfter = null
 }) {
   const scheduleIds = paymentScheduleId.length > 0 ? paymentScheduleId : selectedItems;
   
@@ -175,6 +177,7 @@ export function buildPaymentMetadata({
     ...(plateType ? { plate_type: plateType, sub_type: subType } : {}),
     ...(licenseType ? { license_type: licenseType, duration: licenseDuration || null } : {}),
     ...(renewalState ? { renewal_state: renewalState } : {}),
+    ...(chainedAfter ? { chained_after_order: chainedAfter } : {}),
     initiated_at: new Date().toISOString()
   });
 }

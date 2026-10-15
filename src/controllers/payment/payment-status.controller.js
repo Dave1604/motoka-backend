@@ -69,7 +69,7 @@ export const checkExistingPayments = async (req, res) => {
     // a corresponding renewal order — guards against ghost transactions from payment bugs
     const { data: transactions, error: txError } = await supabaseAdmin
       .from('payment_transactions')
-      .select('*, renewal_orders!inner(id, status)')
+      .select('*, renewal_orders!inner(id, status, order_number, scheduled_for)')
       .eq('car_id', car.id)
       .eq('user_id', userId)
       .eq('status', PAYMENT_STATUS.SUCCESSFUL)
@@ -103,11 +103,17 @@ export const checkExistingPayments = async (req, res) => {
               for (const scheduleId of scheduleIds) {
                 if (compareIds.includes(String(scheduleId)) && !seenScheduleIds.has(String(scheduleId))) {
                   seenScheduleIds.add(String(scheduleId));
+                  const linkedOrder = Array.isArray(tx.renewal_orders)
+                    ? tx.renewal_orders[0]
+                    : tx.renewal_orders;
                   existingPayments.push({
                     payment_schedule_id: scheduleId,
                     payment_head_name: formatScheduleName(scheduleId),
                     transaction_id: tx.id,
-                    paid_at: tx.paid_at
+                    paid_at: tx.paid_at,
+                    order_status: linkedOrder?.status || null,
+                    order_number: linkedOrder?.order_number || null,
+                    scheduled_for: linkedOrder?.scheduled_for || null
                   });
                 }
               }

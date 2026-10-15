@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
 import { getTrafficReportHandler } from '../controllers/admin-analytics.controller.js';
+import { rollOrderToNextCycle, rollGuestOrder } from '../controllers/admin-order-ops.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
 import * as renewals from '../controllers/adminRenewals.controller.js';
 import { adminCreateShipmentHandler, adminTrackShipmentHandler } from '../controllers/delivery.controller.js';
@@ -98,6 +99,7 @@ router.get('/orders/:orderNumber', authenticateAdmin, admin.getOrderDetails);
 router.put('/orders/:orderNumber/status', authenticateAdmin, admin.updateOrderStatus);
 // Undo an accidental cancellation — returns the order to pending so it can be completed
 router.post('/orders/:orderNumber/reopen', authenticateAdmin, admin.reopenOrder);
+router.post('/orders/:orderNumber/rollover', authenticateAdmin, rollOrderToNextCycle);
 
 // ── Ladipo marketplace management (authenticateAdmin) ────────────────────────
 router.get('/ladipo/capabilities', authenticateAdmin, getLadipoAdminCapabilities);
@@ -140,6 +142,9 @@ router.post('/notifications/expiry-reminders', authenticateAdmin, admin.triggerE
 // guest-orders must be registered before /:orderId to avoid capture conflicts
 router.get('/guest-orders', authenticateAdmin, admin.listGuestOrders);
 router.get('/guest-orders/:orderId', authenticateAdmin, admin.getGuestOrderDetails);
+router.put('/guest-orders/:id/status', authenticateAdmin, admin.updateGuestOrderStatus);
+router.post('/guest-orders/:id/reopen', authenticateAdmin, admin.reopenGuestOrder);
+router.post('/guest-orders/:id/rollover', authenticateAdmin, rollGuestOrder);
 
 // ── Driver license applications ───────────────────────────────────────────────
 router.get('/driver-license-applications', authenticateAdmin, admin.listDriverLicenseApplications);

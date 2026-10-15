@@ -24,7 +24,7 @@ import { buildWhatsAppUrl, SUPPORT_PHONE_DISPLAY } from '../../constants/support
  * @param {string} options.orderNumber - Order number created
  * @param {Object} options.carDetails - Car information
  */
-export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType }) {
+export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType, scheduledFor = null }) {
   const subject = 'Payment Successful - Motoka';
   const whatsappUrl = buildWhatsAppUrl([
     "Hello Motoka, I've just made a payment.",
@@ -38,11 +38,13 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
     ? `${carDetails.vehicle_make || ''} ${carDetails.vehicle_model || ''} (${carDetails.registration_no || 'N/A'})`.trim()
     : (isDriverLicense ? 'Driver\'s license' : 'Your vehicle');
 
-  const bodyIntro = isDriverLicense
-    ? 'Your payment has been processed successfully. Your driver\'s license application has been received and is being processed by our team.'
-    : isPlateNumber
-      ? 'Your payment has been processed successfully. Your plate number application has been received and is being processed by our team.'
-      : 'Your payment has been processed successfully. A renewal order has been created and is being processed by our team.';
+  const bodyIntro = scheduledFor
+    ? `Your payment has been processed successfully. This renewal is scheduled — our team starts processing it on ${scheduledFor} and will notify you.`
+    : isDriverLicense
+      ? 'Your payment has been processed successfully. Your driver\'s license application has been received and is being processed by our team.'
+      : isPlateNumber
+        ? 'Your payment has been processed successfully. Your plate number application has been received and is being processed by our team.'
+        : 'Your payment has been processed successfully. A renewal order has been created and is being processed by our team.';
 
   const bodyOutro = isDriverLicense
     ? "Our team will process your driver's license application and you'll receive a confirmation once it's ready."
@@ -116,7 +118,7 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
             </div>` : ''}
             <div class="detail-row">
               <span class="detail-label">Status</span>
-              <span class="detail-value" style="color: #22c55e;">Processing</span>
+              <span class="detail-value" style="color: #22c55e;">${scheduledFor ? `Scheduled · starts ${scheduledFor}` : 'Processing'}</span>
             </div>
           </div>
           
@@ -375,7 +377,7 @@ Need help? Contact our support team.
  * @param {string} options.receiptUrl   - Direct link to the receipt page
  */
 export async function sendGuestPaymentConfirmationEmail({
-  to, guestName, reference, amount, plateNumber, documentNames = [], receiptUrl, accountCreated = false
+  to, guestName, reference, amount, plateNumber, documentNames = [], receiptUrl, accountCreated = false, scheduledFor = null
 }) {
   const subject = 'Payment Confirmed – Your Motoka Renewal';
   const firstName = guestName?.split(' ')[0] || 'there';
@@ -448,7 +450,7 @@ export async function sendGuestPaymentConfirmationEmail({
             </div>
             <div class="detail-row">
               <span class="detail-label">Status</span>
-              <span class="detail-value" style="color:#22c55e;">Payment Received ✓</span>
+              <span class="detail-value" style="color:#22c55e;">${scheduledFor ? `Scheduled · starts ${scheduledFor}` : 'Payment Received ✓'}</span>
             </div>
           </div>
 
@@ -484,7 +486,7 @@ Your payment of ${formatAmount(amount)} has been received.
 Reference   : ${reference}
 Plate Number: ${plateNumber}
 Documents   : ${documentNames.join(', ') || 'Vehicle Document Renewal'}
-Status      : Payment Received
+Status      : ${scheduledFor ? `Scheduled - processing starts ${scheduledFor}` : 'Payment Received'}
 
 ${receiptUrl ? `View your receipt: ${receiptUrl}` : ''}
 Text us on WhatsApp (${SUPPORT_PHONE_DISPLAY}) to let us know your payment went through: ${whatsappUrl}

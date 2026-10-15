@@ -16,6 +16,11 @@ import {
   validateRenewalItemsSelection
 } from '../../services/payment/renewalItems.service.js';
 import {
+  IN_FLIGHT_ORDER_STATUSES,
+  CHAIN_SILENT_AFTER_MINUTES,
+  itemsOverlap,
+} from '../../services/payment/scheduling.util.js';
+import {
   getAllStates,
   getLGAsByState
 } from '../../services/location.service.js';
@@ -234,7 +239,10 @@ export const initializePayment = async (req, res) => {
       license_type = null,
       duration = null,          // '3yr' | '5yr' | 'international'
       // State of renewal
-      renewal_state = null
+      renewal_state = null,
+      // Second payment for items an in-flight order already covers: when
+      // true the new payment chains to the next cycle instead of 409ing.
+      confirm_duplicate = false
     } = req.body;
 
     const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER;
@@ -495,6 +503,60 @@ export const initializePayment = async (req, res) => {
       }
     }
 
+    // In-flight same-item coverage → chain to the next cycle or ask first.
+    // Money is always accepted (pay-anytime policy); the only question is
+    // whether this payment extends the queue silently. Silent chaining is
+    // reserved for old scheduled orders (a deliberate next-cycle payment);
+    // anything sooner — or any pending/processing coverage — needs an
+    // explicit confirm_duplicate so double-clicks don't mint extra cycles.
+    let chainedAfter = null;
+    if (car && !isNonCarPayment && Array.isArray(payment_schedule_id) && payment_schedule_id.length > 0) {
+      let covering = [];
+      try {
+        const { data } = await supabaseAdmin
+          .from('renewal_orders')
+          .select('order_number, status, scheduled_for, previous_expiry_date, renewal_months, selected_items, created_at')
+          .eq('car_id', car.id)
+          .eq('user_id', userId)
+          .in('status', IN_FLIGHT_ORDER_STATUSES);
+        covering = data || [];
+      } catch (coverErr) {
+        // Coverage check must never sink an init — proceed unchained and let
+        // the success-time anchor resolution handle it.
+        logWarn('[Payment Init] Coverage check failed — proceeding', { carId: car.id, error: coverErr.message });
+      }
+      const hits = covering.filter((o) => itemsOverlap(payment_schedule_id, o.selected_items));
+      if (hits.length > 0) {
+        const ageMinutes = (iso) => (Date.now() - new Date(iso).getTime()) / 60000;
+        const silentOk = hits.every(
+          (o) => o.status === 'scheduled' && ageMinutes(o.created_at) > CHAIN_SILENT_AFTER_MINUTES
+        );
+        if (!silentOk && confirm_duplicate !== true) {
+          return paymentResponse.error(
+            res,
+            'These items are already covered by an order that is still being worked on. Confirm to pay for the following cycle.',
+            HTTP_STATUS.CONFLICT,
+            {
+              needs_confirm: true,
+              covering: hits.map((o) => ({
+                order_number: o.order_number,
+                status: o.status,
+                scheduled_for: o.scheduled_for || null,
+              })),
+            }
+          );
+        }
+        chainedAfter = hits
+          .reduce((a, b) => (new Date(b.created_at) > new Date(a.created_at) ? b : a))
+          .order_number;
+        logInfo('[Payment Init] Chaining duplicate payment to next cycle', {
+          carId: car.id,
+          userId,
+          chainedAfter,
+        });
+      }
+    }
+
     const transaction = await createTransaction({
       userId,
       carId: car?.id ?? null,
@@ -516,7 +578,8 @@ export const initializePayment = async (req, res) => {
         subType: isPlatePayment ? (sub_type || null) : null,
         licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
         licenseDuration: isDriverLicensePayment ? (duration || null) : null,
-        renewalState: (!isNonCarPayment && renewal_state) ? renewal_state : null
+        renewalState: (!isNonCarPayment && renewal_state) ? renewal_state : null,
+        chainedAfter
       })
     });
 
