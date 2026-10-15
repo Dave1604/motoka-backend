@@ -1073,10 +1073,25 @@ export const getRecentTransactions = async (req, res) => {
 export const listOrders = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all', search } = req.query;
+    const { page = 1, per_page = 15, status = 'all', payment = 'all', search } = req.query;
 
     const limit = Math.min(100, Math.max(1, parseInt(per_page)));
     const offset = (Math.max(1, parseInt(page)) - 1) * limit;
+
+    // Payment filter targets the joined transaction's status. Filtering a
+    // parent by an embedded resource needs an inner join — but only when
+    // the filter is active, so the default 'all' keeps today's left-join
+    // shape (orders without a transaction still list).
+    const VALID_PAYMENT_STATUSES = ['pending', 'successful', 'failed', 'abandoned', 'refunded'];
+    let paymentSelect = 'payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
+    let paymentFilter = null;
+    if (payment && payment !== 'all') {
+      if (!VALID_PAYMENT_STATUSES.includes(payment)) {
+        return res.status(400).json({ status: false, message: `Invalid payment filter: ${payment}` });
+      }
+      paymentSelect = 'payment_transactions!inner:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
+      paymentFilter = payment;
+    }
 
     let query = supabaseAdmin
       .from('renewal_orders')
@@ -1085,13 +1100,17 @@ export const listOrders = async (req, res) => {
         delivery_address, delivery_state, delivery_lga, delivery_contact,
         created_at, updated_at,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
-        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )
+        ${paymentSelect}
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (status && status !== 'all') {
       query = query.eq('status', frontendStatusToDB(status));
+    }
+
+    if (paymentFilter) {
+      query = query.eq('payment_transactions.status', paymentFilter);
     }
 
     // Order number search at DB level — avoids loading full pages to filter in JS
