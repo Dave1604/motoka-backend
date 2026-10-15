@@ -553,7 +553,22 @@ export const listCars = async (req, res) => {
       .order(sortColumn, { ascending: sortAscending })
       .range(offset, offset + limit - 1);
 
-    if (status !== 'all') {
+    // The admin dropdown mixes raw car_status values (unpaid / pending /
+    // approved / rejected) with expiry-derived ones (expired / active) that
+    // mirror the table badges. Those two have no enum value, so filtering
+    // the status column with them made Postgres throw and every such
+    // request 400'd with "Failed to retrieve cars".
+    const VALID_COLUMN_STATUSES = ['unpaid', 'pending', 'approved', 'rejected'];
+    if (status === 'expired') {
+      const today = new Date().toISOString().slice(0, 10);
+      query = query.lt('expiry_date', today);
+    } else if (status === 'active') {
+      const today = new Date().toISOString().slice(0, 10);
+      query = query.or(`expiry_date.gte.${today},expiry_date.is.null`);
+    } else if (status !== 'all') {
+      if (!VALID_COLUMN_STATUSES.includes(status)) {
+        return res.status(400).json({ status: false, message: `Invalid status filter: ${status}` });
+      }
       query = query.eq('status', status);
     }
 
