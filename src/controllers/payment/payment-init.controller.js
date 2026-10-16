@@ -28,6 +28,7 @@ import { quoteFromDeliveryFields, DeliveryQuoteError } from '../../services/cour
 import { TerminalError } from '../../services/courier/terminal.service.js';
 import {
   buildPaymentMetadata,
+  sanitizeAttribution,
   nairaToKobo
 } from '../../utils/paymentHelpers.js';
 import {
@@ -240,6 +241,8 @@ export const initializePayment = async (req, res) => {
       duration = null,          // '3yr' | '5yr' | 'international'
       // State of renewal
       renewal_state = null,
+      // Marketing attribution ({ source, campaign }) — sanitized, optional
+      attribution = null,
       // Second payment for items an in-flight order already covers: when
       // true the new payment chains to the next cycle instead of 409ing.
       confirm_duplicate = false
@@ -579,6 +582,7 @@ export const initializePayment = async (req, res) => {
         licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
         licenseDuration: isDriverLicensePayment ? (duration || null) : null,
         renewalState: (!isNonCarPayment && renewal_state) ? renewal_state : null,
+        attribution: sanitizeAttribution(attribution),
         chainedAfter
       })
     });

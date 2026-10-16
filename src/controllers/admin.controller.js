@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
+import { checkFulfillmentLag } from '../services/payment/fulfillment-lag.service.js';
 import * as response from '../utils/responses.js';
 import { parse as csvParse } from 'csv-parse/sync';
 import { sanitizeCarInput } from '../utils/carSanitization.js';
@@ -870,6 +871,7 @@ export const getDashboardStats = async (req, res) => {
 
     const now = new Date();
     const monthStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString();
 
     const settled = await Promise.allSettled([
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }),
@@ -879,6 +881,8 @@ export const getDashboardStats = async (req, res) => {
       loadRenewalsSummary(supabaseAdmin),
       supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success'),
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }).eq('status', 'scheduled'),
+      supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false).gte('created_at', sevenDaysAgo),
+      supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null).gte('created_at', sevenDaysAgo),
     ]);
 
     const pick = (index) => {
@@ -893,6 +897,8 @@ export const getDashboardStats = async (req, res) => {
     const totalOrders = pick(0).count;
     const totalCars = pick(1).count;
     const totalUsers = pick(2).count;
+    const usersLast7Days = pick(5).count || 0;
+    const carsLast7Days = pick(6).count || 0;
     const amountData = pick(3).data;
     const renewalsSummary = settled[4].status === 'fulfilled' ? settled[4].value : null;
     const expiredThisMonth = renewalsSummary?.expired_this_month || 0;
@@ -915,6 +921,8 @@ export const getDashboardStats = async (req, res) => {
         total_agents: 0,
         total_cars: totalCars || 0,
         total_users: totalUsers || 0,
+        users_last_7_days: usersLast7Days,
+        cars_last_7_days: carsLast7Days,
         expired_cars_this_month: expiredThisMonth || 0,
         expired_cars_total: expiredTotal || 0,
         expired_month: renewalsSummary?.expired_month || monthStart.slice(0, 7),
@@ -2620,7 +2628,7 @@ export const listGuestOrders = async (req, res) => {
 
     let query = supabase
       .from('guest_renewal_orders')
-      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, fulfillment_status, processing_started_at, completed_at, payment_gateway, total_amount, created_at, linked_user_id, car_id, payment_reference, delivery_fee, delivery_details, selected_items, scheduled_for, expiry_date', { count: 'exact' })
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, fulfillment_status, processing_started_at, completed_at, payment_gateway, total_amount, created_at, linked_user_id, car_id, payment_reference, delivery_fee, delivery_details, selected_items, scheduled_for, expiry_date, attribution_source, attribution_campaign', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
 
@@ -2650,6 +2658,86 @@ export const listGuestOrders = async (req, res) => {
   } catch (err) {
     logError('[Admin] listGuestOrders error', err);
     return response.serverError(res, 'Failed to retrieve guest orders');
+  }
+};
+
+/**
+ * GET /api/admin/mo-conversations
+ *
+ * Marketing-intelligence read over the Mo conversation log: what visitors
+ * and users ask Mo, newest first. Filters: source (chat|public), search
+ * (matches question text), unanswered (answer IS NULL — demand Mo failed on).
+ */
+export const listMoConversations = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const { source, search, unanswered } = req.query;
+
+    let query = supabase
+      .from('mo_conversations')
+      .select('id, user_id, source, question, answer, action_type, has_ladipo_search, model, created_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (source === 'chat' || source === 'public') query = query.eq('source', source);
+    if (search) query = query.ilike('question', `%${search}%`);
+    if (unanswered === 'true' || unanswered === '1') query = query.is('answer', null);
+
+    const { data: conversations, count, error } = await query;
+    if (error) {
+      logError('[Admin] listMoConversations query error', error);
+      return response.serverError(res, 'Failed to retrieve Mo conversations');
+    }
+
+    return response.success(res, {
+      conversations: conversations || [],
+      pagination: {
+        current_page: page,
+        limit,
+        total: count || 0,
+        total_pages: Math.ceil((count || 0) / limit),
+        has_next: page < Math.ceil((count || 0) / limit),
+        has_prev: page > 1
+      }
+    }, 'Mo conversations retrieved');
+  } catch (err) {
+    logError('[Admin] listMoConversations error', err);
+    return response.serverError(res, 'Failed to retrieve Mo conversations');
+  }
+};
+
+/**
+ * GET /api/admin/fulfillment-lag
+ *
+ * Fulfillment-lag watch: paid money and orders stuck between payment and
+ * processing. Query params (all optional): orphan_grace_minutes (default
+ * 30), pending_order_hours (24), processing_order_hours (48),
+ * guest_stale_hours (24), reconcile=true to also sweep Paystack for ghost
+ * money (our-prefix successes with no local row), recon_days (7).
+ */
+export const listFulfillmentLag = async (req, res) => {
+  try {
+    const num = (v, fallback, min, max) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.min(max, Math.max(min, n));
+    };
+    const result = await checkFulfillmentLag({
+      orphanGraceMinutes: num(req.query.orphan_grace_minutes, 30, 0, 1440),
+      pendingOrderHours: num(req.query.pending_order_hours, 24, 1, 720),
+      processingOrderHours: num(req.query.processing_order_hours, 48, 1, 1440),
+      guestStaleHours: num(req.query.guest_stale_hours, 24, 1, 720),
+      reconcile: req.query.reconcile === 'true' || req.query.reconcile === '1',
+      reconDays: num(req.query.recon_days, 7, 1, 90),
+    });
+    return response.success(res, result, 'Fulfillment lag checked');
+  } catch (err) {
+    logError('[Admin] listFulfillmentLag error', err);
+    return response.serverError(res, 'Failed to check fulfillment lag');
   }
 };
 

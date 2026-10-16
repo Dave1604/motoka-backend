@@ -26,6 +26,7 @@ import moRoutes from './routes/mo.routes.js';
 import deferredRemindersRoutes from './routes/deferredReminders.routes.js';
 import ladipoRoutes from './routes/ladipo.routes.js';
 import referralRoutes from './routes/referral.routes.js';
+import insuranceRoutes from './routes/insurance.routes.js';
 // WhatsApp inbound webhook (Twilio). Mounted in every environment; signature
 // validation is skippable only via WHATSAPP_SKIP_WEBHOOK_VALIDATION, which is
 // refused in production at boot below.
@@ -225,6 +226,7 @@ app.use('/api', moRoutes);
 app.use('/api', deferredRemindersRoutes);
 app.use('/api', ladipoRoutes);
 app.use('/api', referralRoutes);
+app.use('/api', insuranceRoutes);
 
 // WhatsApp inbound webhook — receives replies from users via Twilio
 // Sandbox mode: no signature validation (dev/testing)

@@ -138,6 +138,12 @@ router.post('/notifications/add-car-reminder', authenticateAdmin, admin.broadcas
 // ?dry_run=true previews counts | ?days=7 targets a single window
 router.post('/notifications/expiry-reminders', authenticateAdmin, admin.triggerExpiryReminders);
 
+// ── Fulfillment-lag watch (paid-but-unprocessed, ghost money) ──────────────
+router.get('/fulfillment-lag', authenticateAdmin, admin.listFulfillmentLag);
+
+// ── Mo conversation log (marketing intelligence) ───────────────────────────
+router.get('/mo-conversations', authenticateAdmin, admin.listMoConversations);
+
 // ── Guest orders ─────────────────────────────────────────────────────────────
 // guest-orders must be registered before /:orderId to avoid capture conflicts
 router.get('/guest-orders', authenticateAdmin, admin.listGuestOrders);

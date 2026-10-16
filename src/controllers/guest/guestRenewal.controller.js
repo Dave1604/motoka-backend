@@ -34,7 +34,8 @@ export const initGuestRenewal = async (req, res) => {
       wants_delivery = false,
       delivery_details,
       payment_gateway,
-      renewal_state = null
+      renewal_state = null,
+      attribution = null
     } = req.body;
 
     // ── Basic field validation ───────────────────────────────────────────────
@@ -77,7 +78,8 @@ export const initGuestRenewal = async (req, res) => {
       deliveryDetails: wants_delivery ? delivery_details : null,
       paymentGateway: gateway,
       frontendBaseUrl,
-      renewalState: renewal_state || null
+      renewalState: renewal_state || null,
+      attribution: attribution || null
     });
 
     return response.success(res, result, 'Payment initialized successfully');
