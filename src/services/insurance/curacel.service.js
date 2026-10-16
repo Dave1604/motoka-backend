@@ -86,98 +86,134 @@ async function curacelRequest(endpoint, options = {}) {
 }
 
 /**
- * List available insurance products. Used to discover the motor product IDs
- * this account is entitled to sell — those IDs differ per partner, so they are
- * fetched rather than hardcoded.
+ * List the products this partner account can sell. Motor product codes differ
+ * per partner and per environment, so the caller matches on product_type.slug.
+ * Paginated (15 per page); one page covers every partner we have seen.
  */
 export async function listProducts() {
-  return curacelRequest(CURACEL_ENDPOINTS.PRODUCTS, { method: 'GET' });
+  const body = await curacelRequest(CURACEL_ENDPOINTS.PRODUCTS, { method: 'GET' });
+  return body?.data ?? [];
 }
 
 /**
- * Create (or upsert) the customer the policy will belong to.
- *
- * @param {Object} customer
- * @param {string} customer.email
- * @param {string} customer.firstName
- * @param {string} customer.lastName
- * @param {string} [customer.phone]
+ * Find a customer by our own reference, or create them. Curacel keys customers
+ * on the partner-supplied `ref` and refuses a duplicate with a 422, so this
+ * reads first. Beyond name and contact, birth_date and residential_address are
+ * mandatory on create.
  */
-export async function createCustomer({ email, firstName, lastName, phone }) {
-  return curacelRequest(CURACEL_ENDPOINTS.CUSTOMERS, {
+export async function ensureCustomer({ ref, email, firstName, lastName, phone, birthDate, address }) {
+  try {
+    const existing = await curacelRequest(`${CURACEL_ENDPOINTS.CUSTOMERS}/${encodeURIComponent(ref)}`, {
+      method: 'GET'
+    });
+    if (existing?.data?.ref) return existing.data;
+  } catch (err) {
+    if (!(err instanceof CuracelError) || err.statusCode !== 404) throw err;
+  }
+
+  const created = await curacelRequest(CURACEL_ENDPOINTS.CUSTOMERS, {
     method: 'POST',
     body: JSON.stringify({
+      ref,
       email,
       first_name: firstName,
       last_name: lastName,
-      phone
+      phone,
+      birth_date: birthDate,
+      residential_address: address
     })
   });
+  return created?.data ?? created;
 }
 
 /**
- * Request a premium quotation for a vehicle. Read-only and free — safe to call
- * on page load so the customer sees a real price rather than an estimate.
- *
- * @param {Object} params
- * @param {string} params.productId - Curacel product to quote against
- * @param {Object} params.vehicle - registration, make, model, year, value
- * @param {string} [params.customerId]
+ * Register a document (driver's licence) with Curacel from a URL we already
+ * host. Returns the attachment id a quote must carry.
  */
-export async function createQuotation({ productId, vehicle, customerId }) {
-  logInfo('Requesting Curacel quotation', {
-    productId,
-    registration: vehicle?.registrationNumber
-  });
-
-  return curacelRequest(CURACEL_ENDPOINTS.QUOTATIONS, {
+export async function createAttachmentFromUrl({ fileUrl, description }) {
+  const body = await curacelRequest(CURACEL_ENDPOINTS.ATTACHMENTS, {
     method: 'POST',
-    body: JSON.stringify({
-      product_id: productId,
-      customer_id: customerId,
-      vehicle: {
-        registration_number: vehicle.registrationNumber,
-        make: vehicle.make,
-        model: vehicle.model,
-        year: vehicle.year,
-        // Only meaningful for comprehensive; third-party premium is fixed by
-        // NAICOM and does not vary with vehicle value.
-        value: vehicle.value
-      }
-    })
+    body: JSON.stringify({ file_url: fileUrl, description })
   });
+  return body?.attachment?.id ?? null;
 }
 
 /**
- * Convert an accepted quotation into a paid order, which is what actually
- * issues the policy.
+ * Price a motor policy. Curacel needs the full vehicle identity and the
+ * driver's licence even to quote, so this is not a free "estimate" call —
+ * the customer must already be registered and their licence attached.
  *
- * Money has already moved on our side before this is called — see
- * insurance.service.js. If this throws after payment, the caller is
- * responsible for leaving the policy in a retryable state rather than
- * silently swallowing it.
+ * Returns Curacel's quote object: { id, ref, product_price, amount_due,
+ * partner_commission, currency, policy_start_date }. product_price is what
+ * the customer pays; amount_due is what Curacel deducts from our wallet.
  */
-export async function createOrder({ quotationId, customerId, metadata = {} }) {
-  logInfo('Creating Curacel order', { quotationId, customerId });
+export async function createQuote({
+  productCode,
+  customerRef,
+  policyStartDate,
+  vehicle,
+  driversLicenceNumber,
+  driversLicenceAttachmentId,
+  assetValue,
+  assetRef
+}) {
+  logInfo('Requesting Curacel quote', { productCode, registration: vehicle?.registrationNumber });
 
-  return curacelRequest(CURACEL_ENDPOINTS.ORDERS, {
+  const payload = {
+    product_code: productCode,
+    customer_ref: customerRef,
+    policy_start_date: policyStartDate,
+    registration_number: vehicle.registrationNumber,
+    vehicle_class: vehicle.vehicleClass,
+    vehicle_make: vehicle.make,
+    vehicle_model: vehicle.model,
+    vehicle_year: vehicle.year,
+    vehicle_color: vehicle.color,
+    chassis_number: vehicle.chassisNumber,
+    engine_number: vehicle.engineNumber,
+    drivers_licence_number: driversLicenceNumber,
+    drivers_licence_attachment_id: driversLicenceAttachmentId,
+    asset_ref: assetRef
+  };
+  // Comprehensive premiums are a percentage of the vehicle's value; third-party
+  // is a fixed NAICOM rate and Curacel ignores the field.
+  if (assetValue != null) payload.asset_value = assetValue;
+
+  const body = await curacelRequest(CURACEL_ENDPOINTS.QUOTES, {
     method: 'POST',
-    body: JSON.stringify({
-      quotation_id: quotationId,
-      customer_id: customerId,
-      metadata
-    })
+    body: JSON.stringify(payload)
   });
+  return body?.quote ?? null;
 }
 
 /**
- * Fetch a policy by provider reference. Used to reconcile state when a webhook
- * is missed — never rely solely on the webhook arriving.
+ * Turn an accepted quote into an order, paid from our Curacel wallet. The
+ * policy is issued synchronously when the wallet covers amount_due: the
+ * response carries status "paid"/"policy_created" and the full policy is on
+ * the order record.
  */
-export async function getPolicy(policyReference) {
-  return curacelRequest(`${CURACEL_ENDPOINTS.POLICIES}/${policyReference}`, {
-    method: 'GET'
+export async function acceptQuote({ quoteRef }) {
+  logInfo('Accepting Curacel quote', { quoteRef });
+  const body = await curacelRequest(CURACEL_ENDPOINTS.ACCEPT_QUOTE, {
+    method: 'POST',
+    body: JSON.stringify({ ref: quoteRef, payment_type: 'wallet' })
   });
+  return body?.order ?? null;
+}
+
+/**
+ * Fetch an order with its policy. Used right after acceptance (the accept
+ * response omits the policy) and to reconcile a pending row later. There is no
+ * webhook, so this is the only way a missed issuance is ever noticed.
+ */
+export async function getOrder(orderId) {
+  const body = await curacelRequest(`${CURACEL_ENDPOINTS.ORDERS}/${orderId}`, { method: 'GET' });
+  return body?.data ?? null;
+}
+
+export async function getPolicy(policyId) {
+  const body = await curacelRequest(`${CURACEL_ENDPOINTS.POLICIES}/${policyId}`, { method: 'GET' });
+  return body?.data ?? null;
 }
 
 /**
