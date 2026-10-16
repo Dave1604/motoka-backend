@@ -9,26 +9,30 @@ export const CURACEL_BASE_URL = {
   production: 'https://api.grow.curacel.co/api'
 };
 
-// ---------------------------------------------------------------------------
-// ⚠️ CONFIRM BEFORE FIRST LIVE CALL
-//
-// Curacel's per-resource endpoint paths are only published inside their
-// authenticated developer portal, so these are the documented resource names
-// (Products, Customers, Quotations, Orders, Policies) mapped to conventional
-// REST paths. They are deliberately isolated here so that correcting them is a
-// one-file change — no service, controller or route code references a path
-// string directly.
-//
-// On receiving a sandbox key: check each against docs.curacel.co and adjust.
-// Everything else in this module is provider-shape agnostic.
-// ---------------------------------------------------------------------------
+// Paths verified against the sandbox on 2026-10-16 (products, customers,
+// attachments, quotes, quotes/accept, orders, policies all exercised end to
+// end). The published OpenAPI spec is at docs.curacel.co/openapi/curacel-grow.yaml.
 export const CURACEL_ENDPOINTS = {
-  PRODUCTS: '/products',
-  CUSTOMERS: '/customers',
-  QUOTATIONS: '/quotations',
-  ORDERS: '/orders',
-  POLICIES: '/policies'
+  PRODUCTS: '/v1/products',
+  CUSTOMERS: '/v1/customers',
+  ATTACHMENTS: '/v1/attachments',
+  QUOTES: '/v1/quotes',
+  ACCEPT_QUOTE: '/v1/quotes/accept',
+  ORDERS: '/v1/orders',
+  POLICIES: '/v1/policies'
 };
+
+// Curacel's product_type.slug for the two motor covers. Product codes differ
+// per partner and per environment, so products are matched on type, not code.
+export const CURACEL_MOTOR_TYPE_SLUG = {
+  third_party: '3rd_party_auto',
+  comprehensive: 'comprehensive_auto'
+};
+
+// Curacel's vehicle_class enum is car | sedan | suv. Our cars table only
+// records private/commercial, so everything goes up as "car" until we capture
+// body type.
+export const CURACEL_DEFAULT_VEHICLE_CLASS = 'car';
 
 // Motor cover types we surface to the customer. Third-party is the legal
 // minimum and the one bundled into a standard renewal; comprehensive is the
@@ -62,5 +66,9 @@ export const INSURANCE_ERROR_MESSAGES = {
   PURCHASE_FAILED: 'Could not complete the insurance purchase',
   POLICY_NOT_FOUND: 'No insurance policy found for this vehicle',
   INVALID_COVER_TYPE: 'Invalid cover type',
-  PROVIDER_UNAVAILABLE: 'Insurance provider is temporarily unavailable'
+  PROVIDER_UNAVAILABLE: 'Insurance provider is temporarily unavailable',
+  LICENCE_REQUIRED: "Add your driver's licence before requesting insurance",
+  VEHICLE_INCOMPLETE: 'Vehicle details are incomplete',
+  VEHICLE_VALUE_REQUIRED: 'Vehicle value is required for comprehensive cover',
+  PROFILE_INCOMPLETE: 'Add your residential address to your profile first'
 };
