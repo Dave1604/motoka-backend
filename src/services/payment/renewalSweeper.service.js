@@ -136,7 +136,7 @@ class RenewalSweeper {
       orderNumber: order.order_number,
       customerName,
       customerEmail: profile?.email || 'unknown',
-      amountNaira: Number(order.amount_paid) || 0,
+      amountNaira: (Number(order.amount_paid) || 0) / 100,
       reference: `scheduled-release:${order.order_number}`,
       paymentType: 'Scheduled renewal window opened',
       plateNumber: car?.plate_number || car?.registration_no,

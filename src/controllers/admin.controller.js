@@ -877,9 +877,12 @@ export const getDashboardStats = async (req, res) => {
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }),
       supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null),
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false),
-      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
+      // Revenue excludes flagged test rows and duplicate charges (money we owe
+      // back, not money we earned).
+      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful').eq('is_test', false)
+        .or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_charge'),
       loadRenewalsSummary(supabaseAdmin),
-      supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success'),
+      supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success').eq('is_test', false),
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }).eq('status', 'scheduled'),
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false).gte('created_at', sevenDaysAgo),
       supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null).gte('created_at', sevenDaysAgo),
@@ -897,8 +900,10 @@ export const getDashboardStats = async (req, res) => {
     const totalOrders = pick(0).count;
     const totalCars = pick(1).count;
     const totalUsers = pick(2).count;
-    const usersLast7Days = pick(5).count || 0;
-    const carsLast7Days = pick(6).count || 0;
+    // Indexes 5 and 6 are guest revenue and scheduled orders; the 7-day
+    // counts were appended after them.
+    const usersLast7Days = pick(7).count || 0;
+    const carsLast7Days = pick(8).count || 0;
     const amountData = pick(3).data;
     const renewalsSummary = settled[4].status === 'fulfilled' ? settled[4].value : null;
     const expiredThisMonth = renewalsSummary?.expired_this_month || 0;
@@ -1523,7 +1528,11 @@ export const listTransactions = async (req, res) => {
     if (dbStatus) query = query.eq('status', dbStatus);
     if (dbGateway) query = query.eq('payment_gateway', dbGateway);
     if (search) query = query.ilike('reference', `%${search}%`);
-    if (hideDuplicates) query = query.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init');
+    if (hideDuplicates) {
+      query = query
+        .or('cancellation_reason.is.null,cancellation_reason.not.in.(duplicate_init,duplicate_charge)')
+        .eq('is_test', false);
+    }
 
     // Summary: HEAD-only count queries (no row transfer) + targeted sums on the
     // smaller `successful` / `pending` subsets. The previous implementation
@@ -1540,7 +1549,9 @@ export const listTransactions = async (req, res) => {
     // request used to make three sequential round trips to Supabase (rows →
     // user details → summary); overlapping these two removes one of them.
     const applyDupFilter = (q) =>
-      hideDuplicates ? q.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init') : q;
+      hideDuplicates
+        ? q.or('cancellation_reason.is.null,cancellation_reason.not.in.(duplicate_init,duplicate_charge)').eq('is_test', false)
+        : q;
     const headCount = (filterFn) => {
       let q = supabaseAdmin.from('payment_transactions').select('id', { count: 'exact', head: true });
       q = applyDupFilter(q);
