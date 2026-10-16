@@ -73,7 +73,7 @@ export const authenticate = async (req, res, next) => {
       // Cache miss - fetch from DB (never select 2FA secrets — they must not reach API responses)
       const { data: fetchedProfile } = await supabaseAdmin
         .from('profiles')
-        .select('id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, created_at, updated_at')
+        .select('id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, terms_accepted_at, auto_renew_enabled, created_at, updated_at')
         .eq('id', user.id)
         .single();
       
