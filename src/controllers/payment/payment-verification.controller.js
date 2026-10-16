@@ -1,18 +1,16 @@
-import { logError, logDebug, logWarn, logger } from '../../utils/logger.js';
+import { logError, logWarn, logger } from '../../utils/logger.js';
 import { getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
 import { paymentResponse } from './payment-response.util.js';
 import { handleWalletFundingSuccess } from '../../services/wallet/wallet.service.js';
 import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
-import { GatewayError } from '../../services/payment/gateway/gateway.interface.js';
 import {
   getTransactionByReference,
   getTransactionByPaystackReference,
   getTransactionByMonicreditOrderId,
-  getTransactionById,
-  updateTransactionStatus,
   markTransactionAbandoned,
   processPaymentSuccess,
+  updateTransactionStatus,
   TransactionError,
   createTransaction,
   updateTransactionWithPaystackInit,
@@ -21,8 +19,7 @@ import {
 } from '../../services/payment/transaction.service.js';
 import {
   getOrderById,
-  getOrderByTransactionId,
-  OrderError
+  getOrderByTransactionId
 } from '../../services/payment/order.service.js';
 import {
   validatePaymentAmount,
@@ -187,7 +184,22 @@ export const verifyPayment = async (req, res) => {
       }
       throw error;
     }
-    
+
+    // An abandoned row whose gateway verify says success means the money
+    // landed after we gave up on it (unmount-cancel raced the payment, or a
+    // re-init superseded it). Recover instead of reporting "already verified"
+    // without ever creating the order — that's how paid customers ended up
+    // with no order and a row stuck as abandoned.
+    const priorStatus = transaction.status;
+    if (transaction.status === PAYMENT_STATUS.ABANDONED) {
+      logWarn('[Verify Payment] Recovering abandoned transaction — gateway confirms success', {
+        reference,
+        userId
+      });
+      await updateTransactionStatus(reference, { status: PAYMENT_STATUS.PENDING });
+      transaction = { ...transaction, status: PAYMENT_STATUS.PENDING };
+    }
+
     if (transaction.status === PAYMENT_STATUS.PENDING) {
       // Wallet funding credits the ledger instead of creating an order.
       if (metaData?.payment_type === PAYMENT_TYPE.WALLET_FUNDING) {
@@ -265,7 +277,7 @@ export const verifyPayment = async (req, res) => {
           userId: updatedTransaction.user_id,
           paymentGateway,
           amountKobo: updatedTransaction.amount,
-          statusBefore: PAYMENT_STATUS.PENDING,
+          statusBefore: priorStatus,
           statusAfter: PAYMENT_STATUS.SUCCESSFUL,
           metadata: { orderId: processResult.orderId },
           ipAddress: req.ip || req.connection?.remoteAddress,
@@ -273,7 +285,9 @@ export const verifyPayment = async (req, res) => {
         
         return paymentResponse.success(res, {
           status: statusForResponse,
-          message: 'Payment verified successfully',
+          message: processResult.orderStatus === 'scheduled'
+            ? `Payment received. Processing starts ${processResult.scheduledFor} — we'll notify you.`
+            : 'Payment verified successfully',
           reference: updatedTransaction.reference,
           transaction_id: updatedTransaction.id,
           amount: updatedTransaction.amount,
@@ -282,6 +296,8 @@ export const verifyPayment = async (req, res) => {
           car_slug: carSlug,
           order_id: createdOrder?.id || null,
           order_number: createdOrder?.order_number || null,
+          order_status: processResult.orderStatus || null,
+          scheduled_for: processResult.scheduledFor || null,
           gateway: paymentGateway
         }, SUCCESS_MESSAGES.PAYMENT_VERIFIED);
       } catch (processError) {
@@ -482,6 +498,54 @@ export const cancelPayment = async (req, res) => {
         `Cannot cancel payment with status: ${transaction.status}. Only pending payments can be cancelled.`,
         HTTP_STATUS.CONFLICT
       );
+    }
+
+    // Ask the gateway before abandoning. The frontend fires this cancel on
+    // page unmount, which races the payment itself: if the charge already
+    // landed, abandoning here strands a paid customer with no order (webhook
+    // recovery is the only safety net, and it can be missed). On transport
+    // errors we still abandon — verify recovery / the poller backstop it.
+    let cancelGateway = null;
+    try {
+      cancelGateway = GatewayFactory.getGateway(
+        transaction.payment_gateway === PAYMENT_GATEWAY.MONICREDIT
+          ? PAYMENT_GATEWAY.MONICREDIT
+          : (transaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY)
+      );
+    } catch (gatewayErr) {
+      logWarn('[Cancel Payment] Unsupported gateway — proceeding with cancel', {
+        reference,
+        gateway: transaction.payment_gateway,
+        error: gatewayErr.message
+      });
+    }
+    if (cancelGateway) {
+      try {
+        const cancelVerifyId =
+          transaction.payment_gateway === PAYMENT_GATEWAY.PAYSTACK
+            ? (transaction.paystack_reference || reference)
+            : (transaction.payment_gateway === PAYMENT_GATEWAY.MONICREDIT
+                ? (transaction.monicredit_order_id || transaction.monicredit_transaction_id || reference)
+                : reference);
+        const cancelVerifyResult = await cancelGateway.verifyPayment(cancelVerifyId);
+        const cancelGatewayPaid =
+          cancelVerifyResult?.success === true ||
+          cancelVerifyResult?.status === 'success' ||
+          cancelVerifyResult?.status === 'approved';
+        if (cancelGatewayPaid) {
+          logWarn('[Cancel Payment] Gateway says paid — refusing to abandon', { reference, userId });
+          return paymentResponse.error(
+            res,
+            'Payment already completed for this reference. It will be processed automatically.',
+            HTTP_STATUS.CONFLICT
+          );
+        }
+      } catch (verifyErr) {
+        logWarn('[Cancel Payment] Gateway verify unavailable — proceeding with cancel', {
+          reference,
+          error: verifyErr.message
+        });
+      }
     }
 
     // Map the free-text reason from the client into one of the canonical

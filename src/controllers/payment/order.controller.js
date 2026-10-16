@@ -2,8 +2,7 @@ import { logError } from '../../utils/logger.js';
 import { paymentResponse } from './payment-response.util.js';
 import {
   getUserOrders,
-  getOrderByNumber,
-  OrderError
+  getOrderByNumber
 } from '../../services/payment/order.service.js';
 import { getDeliveryProgressForOrder } from '../../services/courier/deliveryProgress.service.js';
 import { ERROR_MESSAGES } from '../../constants/payment.constants.js';

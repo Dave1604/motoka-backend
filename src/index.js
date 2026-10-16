@@ -27,14 +27,19 @@ import deferredRemindersRoutes from './routes/deferredReminders.routes.js';
 import ladipoRoutes from './routes/ladipo.routes.js';
 import referralRoutes from './routes/referral.routes.js';
 import insuranceRoutes from './routes/insurance.routes.js';
-// DEV-ONLY: WhatsApp sandbox webhook route — not loaded in production
+// WhatsApp inbound webhook (Twilio). Mounted in every environment; signature
+// validation is skippable only via WHATSAPP_SKIP_WEBHOOK_VALIDATION, which is
+// refused in production at boot below.
 import whatsappRoutes from './routes/whatsapp.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { getCorsConfig } from './config/cors.config.js';
+import { getSupabaseAdmin } from './config/supabase.js';
 import paymentMetrics from './services/payment/metrics.service.js';
 import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
 import { monicreditPoller } from './services/payment/monicredit/poller.service.js';
 import { monipayPoller } from './services/payment/monipay/poller.service.js';
+import { paystackPoller } from './services/payment/paystack/poller.service.js';
+import { renewalSweeper } from './services/payment/renewalSweeper.service.js';
 import { logInfo, logWarn } from './utils/logger.js';
 
 const isProduction = process.env.NODE_ENV === 'production';
@@ -47,7 +52,10 @@ if (!process.env.OPENAI_API_KEY) {
 
 const productionRequiredEnvVars = [
   'MONIPAY_SECRET_KEY',
+  'MONIPAY_PUBLIC_KEY',
   'ALLOWED_ORIGINS',
+  'FRONTEND_URL',
+  'RESEND_API_KEY',
 ];
 
 
@@ -62,6 +70,16 @@ if (missingEnvVars.length > 0) {
 // SKIP_WEBHOOK_VERIFY exists so webhooks can be POSTed by hand in local dev.
 // In production it turns every webhook endpoint into an unauthenticated
 // "mark this order paid" API, so refuse to start rather than run exposed.
+// Same class of flag as SKIP_WEBHOOK_VERIFY: read at module load in
+// whatsapp.routes.js, so if it slipped into prod the route would accept
+// unauthenticated POSTs until the next redeploy. Refuse to boot instead.
+if (isProduction && process.env.WHATSAPP_SKIP_WEBHOOK_VALIDATION === 'true') {
+  console.error('❌ WHATSAPP_SKIP_WEBHOOK_VALIDATION=true with NODE_ENV=production');
+  console.error('This disables Twilio signature validation on /api/v1/whatsapp.');
+  console.error('It is a local-development flag only. Remove it, then restart.');
+  process.exit(1);
+}
+
 if (isProduction && process.env.SKIP_WEBHOOK_VERIFY === 'true') {
   console.error('╔══════════════════════════════════════════════════════════════╗');
   console.error('║  PRODUCTION CONFIGURATION ERROR                             ║');
@@ -92,7 +110,10 @@ if (isProduction) {
     console.error('');
     console.error('These variables are mandatory for production security:');
     console.error('  • MONIPAY_SECRET_KEY: Required for verify + webhook HMAC (pri_live_… / pri_test_…)');
+    console.error('  • MONIPAY_PUBLIC_KEY: Required for checkout initialize (pub_live_… / pub_test_…)');
     console.error('  • ALLOWED_ORIGINS: Required for CORS origin restrictions');
+    console.error('  • FRONTEND_URL: Payment callbacks and email links redirect here — an unset value silently falls back to localhost');
+    console.error('  • RESEND_API_KEY: Required for all transactional email (receipts, OTP, order updates)');
     console.error('  • CLOUDINARY_*: Required for Ladipo product image uploads');
     console.error('');
     console.error('Set these variables in your production environment before starting.');
@@ -144,12 +165,17 @@ app.use(cors(getCorsConfig()));
 
 app.use('/api/webhooks/paystack', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monipay', express.raw({ type: 'application/json', limit: '2mb' }));
-app.use('/api/webhooks/shipbubble', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monicredit', express.raw({ type: 'application/json', limit: '2mb' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(apiLimiter);
+// Gateway webhooks arrive from a handful of fixed IPs — the per-IP apiLimiter
+// would 429 a retry storm and payments would be captured but never fulfilled.
+// They get their own webhookLimiter at the route level instead.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/webhooks/')) return next();
+  return apiLimiter(req, res, next);
+});
 
 app.get('/', (req, res) => {
   res.json({
@@ -162,11 +188,22 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/health', (req, res) => {
-  const healthy = !missingEnvVars.length;
-  res.status(healthy ? 200 : 503).json({
-    success: healthy,
-    status: healthy ? 'healthy' : 'degraded',
+// The old check (missingEnvVars) was provably always healthy: boot exits when
+// vars are missing, so by the time this handler runs the list is empty. Probe
+// the database instead, cached so Render's frequent checks don't hammer it.
+let dbHealth = { ok: true, checkedAt: 0 };
+app.get('/health', async (req, res) => {
+  if (Date.now() - dbHealth.checkedAt > 60_000) {
+    try {
+      const { error } = await getSupabaseAdmin().from('profiles').select('id').limit(1);
+      dbHealth = { ok: !error, checkedAt: Date.now() };
+    } catch {
+      dbHealth = { ok: false, checkedAt: Date.now() };
+    }
+  }
+  res.status(dbHealth.ok ? 200 : 503).json({
+    success: dbHealth.ok,
+    status: dbHealth.ok ? 'healthy' : 'degraded',
     timestamp: new Date().toISOString()
   });
 });
@@ -722,6 +759,8 @@ app.listen(PORT, '0.0.0.0', () => {
   // Pending-txn pollers — fill in if webhooks are delayed or missed.
   monipayPoller.start();
   monicreditPoller.start();
+  paystackPoller.start();
+  renewalSweeper.start();
 });
 
 export default app;

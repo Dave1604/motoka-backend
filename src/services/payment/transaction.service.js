@@ -1,5 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { logError, logInfo, logWarn } from '../../utils/logger.js';
+import { resolveOrderSchedule } from './scheduling.util.js';
 import {
   PAYMENT_STATUS,
   PAYMENT_TYPE,
@@ -13,7 +14,6 @@ import {
   validatePaymentAmount,
   formatAmount
 } from '../../utils/paymentHelpers.js';
-import { logPaymentAudit } from './audit.service.js';
 
 export class TransactionError extends Error {
   constructor(message, statusCode = 500, code = null) {
@@ -552,6 +552,49 @@ export async function processPaymentSuccess({
     }
   }
 
+  // ── Scheduled-renewal window ──────────────────────────────────────────────
+  // Cyclical renewals paid more than RENEWAL_WINDOW_DAYS before expiry are
+  // held as 'scheduled' (ops works them when the window opens); payments
+  // covering items an in-flight order already holds chain to the next cycle.
+  // One-shot fulfilments (plate, driver licence) always process immediately.
+  let schedule = { scheduledFor: null, previousExpiryOverride: null, chainedAfterOrderNumber: null };
+  // Scheduling only matters on the success path (the only path that creates
+  // orders). Non-success statuses skip the extra lookups entirely.
+  if (status === PAYMENT_STATUS.SUCCESSFUL) {
+  try {
+    const { data: schedTx } = await supabaseAdmin
+      .from('payment_transactions')
+      .select('id, car_id')
+      .eq('reference', reference)
+      .maybeSingle();
+    if (schedTx?.car_id) {
+      let schedMeta = {};
+      try {
+        schedMeta = typeof metadata === 'string' ? JSON.parse(metadata) : (metadata || {});
+      } catch { schedMeta = {}; }
+      schedule = await resolveOrderSchedule(supabaseAdmin, {
+        carId: schedTx.car_id,
+        orderType,
+        renewalMonths,
+        requestedItems:
+          selectedItems || schedMeta.paymentScheduleId || schedMeta.payment_schedule_id || schedMeta.selected_items || [],
+      });
+    }
+  } catch (schedErr) {
+    // Scheduling must never sink a paid renewal — fall through to
+    // immediate processing and let ops triage from the logs.
+    logWarn('[Payment] Schedule resolution failed — processing immediately', {
+      reference,
+      error: schedErr.message,
+    });
+  }
+  }
+
+  const rpcMetadata =
+    schedule.chainedAfterOrderNumber && metadata && typeof metadata === 'object'
+      ? { ...metadata, scheduled_chain_after: schedule.chainedAfterOrderNumber }
+      : metadata;
+
   const { data, error } = await supabaseAdmin.rpc('process_payment_success', {
     p_reference: reference,
     p_status: status,
@@ -567,8 +610,10 @@ export async function processPaymentSuccess({
     p_delivery_state: deliveryState || null,
     p_delivery_lga: deliveryLGA || null,
     p_delivery_contact: deliveryContact || null,
-    p_metadata: metadata || null,
-    p_renewal_state: renewalState || null
+    p_metadata: rpcMetadata || null,
+    p_renewal_state: renewalState || null,
+    p_scheduled_for: schedule.scheduledFor,
+    p_previous_expiry_override: schedule.previousExpiryOverride
   });
 
   if (error) {
@@ -583,10 +628,28 @@ export async function processPaymentSuccess({
   }
 
   const result = Array.isArray(data) ? data[0] : data;
+  // Surface the hold state so verify/webhook responses can tell the customer
+  // "scheduled, processing starts <date>" instead of a bare order number.
+  let orderStatus = null;
+  let orderScheduledFor = schedule.scheduledFor;
+  if (result?.order_id) {
+    const { data: createdOrder } = await supabaseAdmin
+      .from('renewal_orders')
+      .select('order_number, status, scheduled_for')
+      .eq('id', result.order_id)
+      .maybeSingle();
+    if (createdOrder) {
+      orderStatus = createdOrder.status;
+      orderScheduledFor = createdOrder.scheduled_for || schedule.scheduledFor;
+    }
+  }
   return {
     transactionId: result?.transaction_id || null,
     orderId: result?.order_id || null,
-    alreadyProcessed: !!result?.already_processed
+    alreadyProcessed: !!result?.already_processed,
+    orderStatus,
+    scheduledFor: orderScheduledFor,
+    chainedAfterOrderNumber: schedule.chainedAfterOrderNumber,
   };
 }
 
@@ -762,97 +825,9 @@ export async function getCarTransactions(carId, options = {}) {
   return transactions || [];
 }
 
-export async function hasSuccessfulPayment(carId) {
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const { data, error } = await supabaseAdmin
-    .from('payment_transactions')
-    .select('id')
-    .eq('car_id', carId)
-    .eq('status', PAYMENT_STATUS.SUCCESSFUL)
-    .limit(1);
-  
-  if (error) {
-    logError('Check successful payment error', { error, carId });
-    return false;
-  }
-  
-  return data && data.length > 0;
-}
-
-export async function getLatestSuccessfulTransaction(carId) {
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const { data: transaction, error } = await supabaseAdmin
-    .from('payment_transactions')
-    .select('*')
-    .eq('car_id', carId)
-    .eq('status', PAYMENT_STATUS.SUCCESSFUL)
-    .order('paid_at', { ascending: false })
-    .limit(1)
-    .single();
-  
-  if (error && error.code !== 'PGRST116') {
-    logError('Get latest successful transaction error', { error, carId });
-    return null;
-  }
-  
-  return transaction || null;
-}
-
 export async function markTransactionAbandoned(reference, cancellation_reason = null) {
   return updateTransactionStatus(reference, {
     status: PAYMENT_STATUS.ABANDONED,
     cancellation_reason
   });
 }
-
-export async function markTransactionRefunded(reference, refundData = {}) {
-  const supabaseAdmin = getSupabaseAdmin();
-
-  const existing = await getTransactionByReference(reference);
-  if (!existing) {
-    throw new TransactionError(ERROR_MESSAGES.PAYMENT_NOT_FOUND, HTTP_STATUS.NOT_FOUND);
-  }
-
-  let mergedMetadata = {};
-  try {
-    mergedMetadata = typeof existing.metadata === 'string'
-      ? JSON.parse(existing.metadata)
-      : (existing.metadata || {});
-  } catch (e) {
-    logWarn('Could not parse existing metadata for refund', { reference });
-  }
-  mergedMetadata.refund = { ...(mergedMetadata.refund || {}), ...refundData };
-
-  const { data: transaction, error } = await supabaseAdmin
-    .from('payment_transactions')
-    .update({
-      status: PAYMENT_STATUS.REFUNDED,
-      metadata: mergedMetadata,
-      updated_at: new Date().toISOString()
-    })
-    .eq('reference', reference)
-    .select('*')
-    .single();
-
-  if (error) {
-    logError('Mark transaction refunded error', { error, reference });
-    throw new TransactionError('Failed to update transaction', HTTP_STATUS.SERVER_ERROR);
-  }
-
-  await logPaymentAudit({
-    eventType: 'refund',
-    transactionId: transaction.id,
-    reference,
-    userId: transaction.user_id,
-    paymentGateway: transaction.payment_gateway,
-    amountKobo: transaction.amount,
-    statusBefore: existing.status,
-    statusAfter: PAYMENT_STATUS.REFUNDED,
-    metadata: { refund: refundData },
-  });
-
-  return transaction;
-}
-

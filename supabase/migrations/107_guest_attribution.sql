@@ -1,3 +1,4 @@
+-- Migration 107 (was 097 on the feature branch; renumbered past 104).
 -- Marketing attribution for guest checkouts: where the payer came from
 -- (UTMs captured by the frontend), so guest revenue becomes attributable
 -- without joining Paystack dashboards by hand.

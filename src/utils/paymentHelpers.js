@@ -137,17 +137,6 @@ export function getTodayDateString() {
   return new Date().toISOString().split('T')[0];
 }
 
-export function isValidPaymentReference(reference) {
-  if (!reference || typeof reference !== 'string') {
-    return false;
-  }
-  
-  const internalPattern = /^PAY-[A-Z0-9]+-[A-F0-9]+$/;
-  const paystackPattern = /^[a-zA-Z0-9_-]+$/;
-  
-  return internalPattern.test(reference) || paystackPattern.test(reference);
-}
-
 export function sanitizeMetadata(metadata) {
   if (!metadata || typeof metadata !== 'object') {
     return {};
@@ -186,7 +175,9 @@ export function buildPaymentMetadata({
   renewalState = null,
   // Marketing attribution ({ source, campaign } | null) — rides along so
   // orders and gateway dashboards can answer "where did this payer come from"
-  attribution = null
+  attribution = null,
+  // Next-cycle chaining: order_number this duplicate payment follows
+  chainedAfter = null
 }) {
   const scheduleIds = paymentScheduleId.length > 0 ? paymentScheduleId : selectedItems;
   
@@ -205,6 +196,7 @@ export function buildPaymentMetadata({
     ...(licenseType ? { license_type: licenseType, duration: licenseDuration || null } : {}),
     ...(renewalState ? { renewal_state: renewalState } : {}),
     ...(attribution ? { attribution } : {}),
+    ...(chainedAfter ? { chained_after_order: chainedAfter } : {}),
     initiated_at: new Date().toISOString()
   });
 }

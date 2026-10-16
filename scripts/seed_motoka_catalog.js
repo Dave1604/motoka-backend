@@ -1,56 +1,47 @@
 /**
- * Multi-source Motoka Ladipo catalog orchestrator.
+ * Motoka Ladipo catalog orchestrator.
  *
- * Primary (images + NGN + all Motoka categories):
- *   1. Autofactor NG  — scripts/import-ladipo-autofactor.js
- *   2. Ladipo Market  — scripts/import-ladipo-market.js
+ * Pipeline:
+ *   1. Crawl autofactorng.com (NGN prices, real OEM numbers, hosted images)
+ *   2. Gemini extracts fitment; the vehicle catalog + OEM decoder verify it
+ *   3. Upsert: verified/universal go live, the rest are staged is_active=false
+ *   4. Optional RockAuto --full enrichment onto matching SKUs
+ *   5. Merchandising flags + category images
+ *   6. Coverage report for the Nigerian fleet
  *
- * Secondary (Camry / C300 fitment enrichment only):
- *   3. RockAuto       — scripts/seed_motoka_inventory.py --enrich-fitment
- *
- * Title-inferred fitment for scraped rows that still lack compatibility:
- *   4. scripts/backfill-ladipo-compatibility.js
- *
- * Prerequisites:
- *   - Apply Supabase migrations through 072_ladipo_fitment_matching.sql
- *   - .env with SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY
- *   - For RockAuto: .venv-seed with scripts/requirements-motoka-inventory.txt
- *
- * Examples:
  *   node scripts/seed_motoka_catalog.js --dry-run --limit 30
- *   node scripts/seed_motoka_catalog.js --source all --limit 200 --per-category 40
- *   node scripts/seed_motoka_catalog.js --source autofactor --limit 100
- *   node scripts/seed_motoka_catalog.js --source ladipo-market --limit 100
- *   node scripts/seed_motoka_catalog.js --source rockauto --limit 50
- *   node scripts/seed_motoka_catalog.js --source all --with-rockauto --limit 100
- *   node scripts/seed_motoka_catalog.js --source all --with-backfill --limit 100
- *
- * Partner runbook:
- *   1. Autofactor + Ladipo Market build the Motoka catalog (seller Motoka, stock 50).
- *   2. RockAuto is optional — merge Camry/C300 compatibility onto matching SKUs/part numbers;
- *      never prefer RockAuto USD-converted prices or Heart.png over NG HTTPS images/NGN.
- *   3. Run backfill-ladipo-compatibility.js after NG imports for title-inferred make/model/year.
+ *   node scripts/seed_motoka_catalog.js --limit 400 --per-category 40
+ *   node scripts/seed_motoka_catalog.js --source rockauto --limit 80
  */
-
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { config } from 'dotenv';
+import { crawlAutofactorProducts } from './import-ladipo-autofactor.js';
+import { runCatalogPipeline } from './lib/ladipoCatalogPipeline.js';
+import { merchandizeLadipo } from './merchandize-ladipo.js';
+import { verifyLadipoCatalog } from './verify-ladipo-catalog.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const ROOT = join(__dirname, '..');
+config({ path: join(ROOT, '.env') });
 
-const SOURCES = new Set(['autofactor', 'ladipo-market', 'rockauto', 'all']);
+const SOURCES = new Set(['autofactor', 'rockauto', 'all']);
 
 function parseArgs(argv) {
   const options = {
     source: 'all',
-    limit: 200,
-    perCategory: 50,
+    limit: 400,
+    perCategory: 40,
+    maxPages: 60,
     dryRun: false,
     withRockauto: false,
-    withBackfill: false,
+    skipMerch: false,
+    skipVerify: false,
+    resume: true,
+    skipImages: false,
     delayMs: 1500,
   };
 
@@ -66,6 +57,9 @@ function parseArgs(argv) {
     } else if ((arg === '--per-category' || arg === '--perCategory') && next) {
       options.perCategory = Number.parseInt(next, 10);
       i += 1;
+    } else if (arg === '--max-pages' && next) {
+      options.maxPages = Number.parseInt(next, 10);
+      i += 1;
     } else if (arg === '--delay-ms' && next) {
       options.delayMs = Number.parseInt(next, 10);
       i += 1;
@@ -73,8 +67,14 @@ function parseArgs(argv) {
       options.dryRun = true;
     } else if (arg === '--with-rockauto') {
       options.withRockauto = true;
-    } else if (arg === '--with-backfill') {
-      options.withBackfill = true;
+    } else if (arg === '--skip-merch') {
+      options.skipMerch = true;
+    } else if (arg === '--skip-verify') {
+      options.skipVerify = true;
+    } else if (arg === '--fresh') {
+      options.resume = false;
+    } else if (arg === '--skip-images') {
+      options.skipImages = true;
     } else if (arg === '--help' || arg === '-h') {
       options.help = true;
     }
@@ -100,13 +100,11 @@ function runCommand(command, args, label) {
   return new Promise((resolve, reject) => {
     console.log(`\n[seed_motoka_catalog] ▶ ${label}`);
     console.log(`[seed_motoka_catalog]   $ ${command} ${args.join(' ')}`);
-
     const child = spawn(command, args, {
       cwd: ROOT,
       stdio: 'inherit',
       env: process.env,
     });
-
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) resolve();
@@ -121,68 +119,33 @@ function resolvePython() {
   return process.platform === 'win32' ? 'python' : 'python3';
 }
 
-async function runAutofactor(options) {
-  const args = [
-    'scripts/import-ladipo-autofactor.js',
-    '--limit', String(options.limit),
-    '--per-category', String(options.perCategory),
-    '--seller', 'Motoka',
-  ];
-  if (options.dryRun) args.push('--dry-run');
-  await runCommand(process.execPath, args, 'Autofactor NG import');
-}
-
-async function runLadipoMarket(options) {
-  const args = [
-    'scripts/import-ladipo-market.js',
-    '--limit', String(options.limit),
-    '--per-category', String(options.perCategory),
-    '--seller', 'Motoka',
-  ];
-  if (options.dryRun) args.push('--dry-run');
-  await runCommand(process.execPath, args, 'Ladipo Market import');
-}
-
 async function runRockauto(options) {
   const python = resolvePython();
   const args = [
     'scripts/seed_motoka_inventory.py',
     '--enrich-fitment',
+    '--full',
     '--limit', String(options.limit),
     '--seller-label', 'Motoka',
     '--stock-qty', '50',
   ];
   if (options.dryRun) args.push('--dry-run');
-  await runCommand(python, args, 'RockAuto fitment enrichment (Camry + C300)');
-}
-
-async function runBackfill(options) {
-  const args = [
-    'scripts/backfill-ladipo-compatibility.js',
-    '--limit', String(Math.max(options.limit, 500)),
-  ];
-  if (options.dryRun) args.push('--dry-run');
-  await runCommand(process.execPath, args, 'Title-inferred compatibility backfill');
+  await runCommand(python, args, 'RockAuto fitment enrichment (PRODUCTION_VEHICLES)');
 }
 
 function printHelp() {
   console.log(`Usage: node scripts/seed_motoka_catalog.js [options]
 
 Options:
-  --source <name>     autofactor | ladipo-market | rockauto | all (default: all)
-                      "all" runs Autofactor then Ladipo Market
-  --limit <n>         Overall product limit passed to each source (default: 200)
-  --per-category <n>  Per-category cap for NG scrapers (default: 50)
-  --dry-run           Crawl/preview only; no DB writes
-  --with-rockauto     After NG sources, run RockAuto --enrich-fitment
-  --with-backfill     After imports, run backfill-ladipo-compatibility.js
-  --delay-ms <n>      Pause between sources (default: 1500)
-
-Dedup rules (enforced in importers):
-  - Prefer HTTPS product images over empty / Heart.png
-  - Prefer Autofactor / Ladipo Market NGN prices over RockAuto USD→NGN
-  - Merge compatibility (union of make/model/year ranges)
-  - Store specifications.source + source_url for audit
+  --source <name>     autofactor | rockauto | all (default: all)
+  --limit <n>         Overall product cap (default: 400)
+  --per-category <n>  Per-category cap for Autofactor (default: 40)
+  --dry-run           Extract + verify only; print accuracy report; no DB writes
+  --with-rockauto     After Autofactor, merge RockAuto fitment onto matching SKUs
+  --fresh             Ignore the pipeline checkpoint and re-process every slug
+  --skip-images       Store source image URLs instead of rehosting to Cloudinary
+  --skip-merch        Do not set landing-rail flags
+  --skip-verify       Do not run the coverage gate at the end
 `);
 }
 
@@ -195,34 +158,46 @@ async function main() {
 
   console.log(
     `[seed_motoka_catalog] source=${options.source} limit=${options.limit} `
-    + `perCategory=${options.perCategory} dryRun=${options.dryRun} `
-    + `withRockauto=${options.withRockauto} withBackfill=${options.withBackfill}`
+    + `perCategory=${options.perCategory} dryRun=${options.dryRun}`
   );
 
-  const runNg = options.source === 'all' || options.source === 'autofactor' || options.source === 'ladipo-market';
   const runAf = options.source === 'all' || options.source === 'autofactor';
-  const runLm = options.source === 'all' || options.source === 'ladipo-market';
   const runRa = options.source === 'rockauto' || options.withRockauto;
 
   if (runAf) {
-    await runAutofactor(options);
-    if (runLm || runRa || options.withBackfill) await sleep(options.delayMs);
-  }
-
-  if (runLm) {
-    await runLadipoMarket(options);
-    if (runRa || options.withBackfill) await sleep(options.delayMs);
+    const products = await crawlAutofactorProducts(
+      options.limit,
+      options.maxPages,
+      options.perCategory
+    );
+    if (products.length === 0) {
+      throw new Error('Autofactor crawl returned no products');
+    }
+    await runCatalogPipeline(products, {
+      dryRun: options.dryRun,
+      rehostImages: !options.dryRun && !options.skipImages,
+      resume: options.resume && !options.dryRun,
+      sellerLabel: 'Motoka',
+    });
+    if (runRa) await sleep(options.delayMs);
   }
 
   if (runRa) {
     await runRockauto(options);
-    if (options.withBackfill) await sleep(options.delayMs);
   }
 
-  // Default backfill after NG-only "all" when explicitly requested; also allow
-  // after any source when --with-backfill is set.
-  if (options.withBackfill || (runNg && options.source === 'all' && !options.dryRun && process.env.MOTOKA_CATALOG_AUTO_BACKFILL === '1')) {
-    await runBackfill(options);
+  if (!options.dryRun && !options.skipMerch && runAf) {
+    await merchandizeLadipo({ dryRun: false });
+  }
+
+  if (!options.dryRun && !options.skipVerify) {
+    try {
+      await verifyLadipoCatalog({ reportOnly: options.dryRun });
+    } catch (err) {
+      // Coverage starts empty on a fresh project; the report still printed.
+      // Don't fail the seed itself — `npm run verify:ladipo:catalog` is the gate.
+      console.warn(`[seed_motoka_catalog] coverage gate: ${err.message}`);
+    }
   }
 
   console.log('\n[seed_motoka_catalog] done');

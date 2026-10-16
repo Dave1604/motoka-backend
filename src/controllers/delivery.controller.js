@@ -3,7 +3,6 @@ import { paymentResponse } from './payment/payment-response.util.js';
 import { logError } from '../utils/logger.js';
 import { quoteDelivery, DeliveryQuoteError } from '../services/courier/deliveryQuote.service.js';
 import { TerminalError } from '../services/courier/terminal.service.js';
-import { ShipbubbleError } from '../services/courier/shipbubble.service.js';
 import {
   createWaybill,
   getShipmentForOrder,
@@ -21,7 +20,6 @@ function mapError(res, error, usePaymentShape = false) {
   if (
     error instanceof DeliveryQuoteError ||
     error instanceof TerminalError ||
-    error instanceof ShipbubbleError ||
     error instanceof ShipmentError
   ) {
     const status = error.statusCode || 400;

@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 
 /**
- * Covers the four hardening fixes applied to the Monipay integration:
+ * Covers the hardening fixes applied to the Monipay integration:
  *   1. callback URL host matching (was a string prefix match)
  *   2. verify() reporting a missing amount as null rather than 0
  *   3. guest webhook fulfilment refusing to act without gateway confirmation
  *   4. SKIP_WEBHOOK_VERIFY being rejected in production
+ *   5. initializeTransaction refusing to fall back to the secret key
  */
 
 const ORIGINAL_ENV = { ...process.env };
@@ -125,5 +126,93 @@ describe('markGuestOrderPaid gateway confirmation', () => {
     });
     expect(result).toBeNull();
     expect(updateSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('initializeTransaction public key requirement', () => {
+  const ORIGINAL_FETCH = global.fetch;
+
+  afterEach(() => {
+    global.fetch = ORIGINAL_FETCH;
+  });
+
+  it('fails loudly when MONIPAY_PUBLIC_KEY is unset instead of sending the secret key', async () => {
+    delete process.env.MONIPAY_PUBLIC_KEY;
+    process.env.MONIPAY_SECRET_KEY = 'pri_test_secret';
+    const fetchSpy = jest.fn();
+    global.fetch = fetchSpy;
+
+    const { initializeTransaction } = await import('../services/payment/monipay/monipay.service.js');
+
+    await expect(
+      initializeTransaction({ email: 'guest@example.com', amount: 50000 })
+    ).rejects.toThrow('MONIPAY_PUBLIC_KEY not configured');
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it('sends the public key when it is configured', async () => {
+    process.env.MONIPAY_PUBLIC_KEY = 'pub_test_public';
+    process.env.MONIPAY_SECRET_KEY = 'pri_test_secret';
+    const fetchSpy = jest.fn(async () => ({
+      ok: true,
+      json: async () => ({ data: { authorization_url: 'https://checkout.monipay.ng/x', reference: 'ref_1' } }),
+    }));
+    global.fetch = fetchSpy;
+
+    const { initializeTransaction } = await import('../services/payment/monipay/monipay.service.js');
+
+    await initializeTransaction({ email: 'guest@example.com', amount: 50000 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [, options] = fetchSpy.mock.calls[0];
+    expect(options.headers.Authorization).toBe('Bearer pub_test_public');
+  });
+});
+
+describe('verifyGuestPayment failed-order recovery', () => {
+  // A declined first attempt marks the order failed, the customer retries in
+  // the same popup under the same reference and succeeds. The cached failure
+  // must not block the recovery (guest order 45bbc471, 2026-09-20).
+  it('re-verifies a payment_failed order and flips it to success when the gateway confirms', async () => {
+    const failedOrder = {
+      id: 77,
+      payment_status: 'payment_failed',
+      payment_reference: 'PAY-RETRY-1',
+      payment_gateway: 'paystack',
+      total_amount: 1550000,
+      receipt_token: 'tok77',
+      expires_at: null,
+      guest_email: 'guest@example.com',
+      guest_name: 'Guest',
+      selected_items: [],
+    };
+    const updateSpy = jest.fn(() => ({ eq: () => ({ eq: () => ({ error: null }), error: null }) }));
+    jest.unstable_mockModule('../config/supabase.js', () => ({
+      getSupabaseAdmin: () => ({
+        from: () => ({
+          select: () => ({
+            eq: () => ({ maybeSingle: async () => ({ data: failedOrder, error: null }) }),
+          }),
+          update: updateSpy,
+        }),
+      }),
+    }));
+    jest.unstable_mockModule('../services/payment/paystack.service.js', () => ({
+      initializeTransaction: jest.fn(),
+      verifyTransaction: jest.fn(async () => ({ status: 'success', success: true, amount: 1550000 })),
+      verifyWebhookSignature: jest.fn(),
+      parseWebhookEvent: jest.fn(),
+      chargeAuthorization: jest.fn(),
+      listTransactions: jest.fn(),
+      createRefund: jest.fn(),
+      isConfigured: jest.fn(() => true),
+      getPublicKey: jest.fn(),
+      PaystackError: class PaystackError extends Error {},
+    }));
+    const mod = await import('../services/guest/guestRenewal.service.js');
+
+    const result = await mod.verifyGuestPayment(77, 'PAY-RETRY-1');
+
+    expect(result.status).toBe('payment_success');
+    expect(updateSpy).toHaveBeenCalled();
   });
 });

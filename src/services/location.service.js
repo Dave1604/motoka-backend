@@ -12,13 +12,11 @@
  */
 
 import { getSupabaseAdmin } from '../config/supabase.js';
-import { 
+import {
   getAllStates as getAllStatesFromConstants,
   getLGAsByState as getLGAsByStateFromConstants,
   getDeliveryFee as getDeliveryFeeFromConstants,
-  getStateCodeFromInput,
-  getLGANameFromInput,
-  resolveStateAndLGA as resolveStateAndLGAFromConstants
+  getStateCodeFromInput
 } from '../constants/states.constants.js';
 
 // In-memory cache (can be replaced with Redis in production)
@@ -29,16 +27,6 @@ const cache = {
   lastUpdated: null,
   TTL: 5 * 60 * 1000 // 5 minutes
 };
-
-/**
- * Clear the cache (useful for testing or after updates)
- */
-export function clearLocationCache() {
-  cache.states = null;
-  cache.lgas = {};
-  cache.deliveryFees = {};
-  cache.lastUpdated = null;
-}
 
 /**
  * Check if cache is valid

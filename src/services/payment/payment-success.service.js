@@ -5,6 +5,7 @@ import { activateSubscription } from './subscription.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
 import { sendPaymentSuccessEmail } from '../../services/email/paymentEmail.service.js';
 import { qualifyAndRewardOnFirstPurchase } from '../referral/referral.service.js';
+import { sendAdminOrderAlert } from '../../services/email/adminOrderAlert.service.js';
 
 export class PaymentSuccessService {
   static async processPaymentSuccessSideEffects({ transaction, gatewayData, order }) {
@@ -38,6 +39,7 @@ export class PaymentSuccessService {
 
       if (order?.order_number) {
         logInfo('[Payment Success] Order created', { orderNumber: order.order_number });
+        await this._startProcessing(order, transaction.reference);
       } else {
         logError('No order found for transaction', { reference: transaction.reference });
       }
@@ -63,10 +65,32 @@ export class PaymentSuccessService {
       
       const { data: profile, error: profileError } = await supabaseAdmin
         .from('profiles')
-        .select('email, first_name, user_id')
+        .select('email, first_name, last_name, user_id')
         .eq('id', transaction.user_id)
         .single();
-      
+
+      // Alert ops before the profile early-return below: a paid order with a
+      // broken profile is exactly the one someone needs to look at by hand.
+      // Scheduled orders are deliberately NOT alerted here — ops gets its
+      // alert when the renewal window opens (renewal sweeper), so early
+      // payments never rot in the inbox for months.
+      if (order?.status === 'scheduled') {
+        logInfo('[Payment Success] Scheduled order held — ops alert deferred to window', {
+          orderNumber: order?.order_number,
+          scheduledFor: order?.scheduled_for,
+        });
+      } else {
+        await sendAdminOrderAlert({
+          orderNumber: order?.order_number,
+          customerName: [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || 'Unknown customer',
+          customerEmail: profile?.email || 'unknown',
+          amountNaira: transaction.amount,
+          reference: transaction.reference,
+          paymentType,
+          plateNumber: car?.plate_number,
+        });
+      }
+
       if (profileError || !profile?.email) {
         logError('Failed to fetch profile for notifications', {
           error: profileError,
@@ -75,7 +99,7 @@ export class PaymentSuccessService {
         });
         return;
       }
-      
+
       const scheduleIds = Array.isArray(metadata?.paymentScheduleId)
         ? metadata.paymentScheduleId
         : metadata?.paymentScheduleId ? [metadata.paymentScheduleId] : [];
@@ -96,14 +120,16 @@ export class PaymentSuccessService {
           orderNumber: order?.order_number,
           carDetails: car,
           documentNames,
-          paymentType
+          paymentType,
+          scheduledFor: order?.status === 'scheduled' ? order?.scheduled_for : null
         }),
         this._sendInAppNotification({
           userId: transaction.user_id,
           amount: transaction.amount,
           orderNumber: order?.order_number,
           documentNames,
-          paymentType
+          paymentType,
+          scheduledFor: order?.status === 'scheduled' ? order?.scheduled_for : null
         })
       ]);
       
@@ -115,6 +141,34 @@ export class PaymentSuccessService {
         stack: error.stack
       });
       throw error;
+    }
+  }
+
+  // A paid order is work the ops team has to do, so it goes straight to
+  // processing. Leaving it pending until an admin clicked "Mark In Progress"
+  // made the user's tracker sit on "Payment received" for no reason.
+  // assigned_to stays null: nobody has picked it up yet.
+  static async _startProcessing(order, reference) {
+    if (order.status !== 'pending') return;
+    try {
+      const { error } = await getSupabaseAdmin()
+        .from('renewal_orders')
+        .update({
+          status: 'processing',
+          processing_started_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', order.id)
+        .eq('status', 'pending');
+      if (error) throw error;
+      order.status = 'processing';
+      logInfo('[Payment Success] Order moved to processing', { orderNumber: order.order_number });
+    } catch (error) {
+      logError('Failed to move order to processing (non-fatal)', {
+        error: error.message,
+        orderNumber: order.order_number,
+        reference,
+      });
     }
   }
 
@@ -141,7 +195,7 @@ export class PaymentSuccessService {
     }
   }
 
-  static async _sendEmailNotification({ email, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType }) {
+  static async _sendEmailNotification({ email, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType, scheduledFor = null }) {
     try {
       logInfo('[Payment Success] Attempting to send email', { email, reference, orderNumber });
       const result = await sendPaymentSuccessEmail({
@@ -152,7 +206,8 @@ export class PaymentSuccessService {
         orderNumber: orderNumber || null,
         carDetails,
         documentNames,
-        paymentType
+        paymentType,
+        scheduledFor
       });
       logInfo('[Payment Success] Email sent successfully', { email, reference, emailId: result?.id });
     } catch (emailError) {
@@ -164,15 +219,17 @@ export class PaymentSuccessService {
     }
   }
 
-  static async _sendInAppNotification({ userId, amount, orderNumber, documentNames, paymentType }) {
+  static async _sendInAppNotification({ userId, amount, orderNumber, documentNames, paymentType, scheduledFor = null }) {
     try {
       const docPart = documentNames?.length > 0 ? ` for ${documentNames.join(', ')}` : '';
       const isPlateNumber = paymentType === 'plate_number';
       const isDriverLicense = paymentType === 'driver_license';
       const productLabel = isDriverLicense ? 'driver\'s license' : isPlateNumber ? 'plate number application' : 'renewal';
-      const message = orderNumber
-        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} created for your ${productLabel}.`
-        : `Payment of ${formatAmount(amount)} successful${docPart}! Your ${productLabel} is being processed.`;
+      const message = scheduledFor
+        ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} is scheduled — processing starts ${scheduledFor}.`
+        : orderNumber
+          ? `Payment of ${formatAmount(amount)} successful${docPart}! Order ${orderNumber} is now being processed for your ${productLabel}.`
+          : `Payment of ${formatAmount(amount)} successful${docPart}! Your ${productLabel} is being processed.`;
       
       await createInAppNotification(
         userId,

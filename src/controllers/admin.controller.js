@@ -38,6 +38,7 @@ import { PaymentSuccessService } from '../services/payment/payment-success.servi
 import { PAYMENT_STATUS, ORDER_TYPE } from '../constants/payment.constants.js';
 import { generateOrderNumber } from '../utils/paymentHelpers.js';
 import { loadRenewalsSummary } from '../services/renewalsSummary.service.js';
+import { getRenewalItems } from '../services/payment/renewalItems.service.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -62,6 +63,12 @@ function frontendStatusToDB(status) {
   if (status === 'declined') return 'cancelled';
   if (status === 'new') return 'pending';
   return status;
+}
+
+// Guest fulfilment mirrors the signed-in flow: pending (New) | processing
+// (In Progress) | completed | cancelled. Same legacy tolerance as above.
+function fulfillmentStatusToDB(status) {
+  return frontendStatusToDB(status);
 }
 
 // Format an order row into the shape the frontend expects
@@ -547,7 +554,22 @@ export const listCars = async (req, res) => {
       .order(sortColumn, { ascending: sortAscending })
       .range(offset, offset + limit - 1);
 
-    if (status !== 'all') {
+    // The admin dropdown mixes raw car_status values (unpaid / pending /
+    // approved / rejected) with expiry-derived ones (expired / active) that
+    // mirror the table badges. Those two have no enum value, so filtering
+    // the status column with them made Postgres throw and every such
+    // request 400'd with "Failed to retrieve cars".
+    const VALID_COLUMN_STATUSES = ['unpaid', 'pending', 'approved', 'rejected'];
+    if (status === 'expired') {
+      const today = new Date().toISOString().slice(0, 10);
+      query = query.lt('expiry_date', today);
+    } else if (status === 'active') {
+      const today = new Date().toISOString().slice(0, 10);
+      query = query.or(`expiry_date.gte.${today},expiry_date.is.null`);
+    } else if (status !== 'all') {
+      if (!VALID_COLUMN_STATUSES.includes(status)) {
+        return res.status(400).json({ status: false, message: `Invalid status filter: ${status}` });
+      }
       query = query.eq('status', status);
     }
 
@@ -857,6 +879,8 @@ export const getDashboardStats = async (req, res) => {
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false),
       supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
       loadRenewalsSummary(supabaseAdmin),
+      supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success'),
+      supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }).eq('status', 'scheduled'),
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false).gte('created_at', sevenDaysAgo),
       supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null).gte('created_at', sevenDaysAgo),
     ]);
@@ -879,15 +903,21 @@ export const getDashboardStats = async (req, res) => {
     const renewalsSummary = settled[4].status === 'fulfilled' ? settled[4].value : null;
     const expiredThisMonth = renewalsSummary?.expired_this_month || 0;
     const expiredTotal = renewalsSummary?.expired_total || 0;
+    const guestPaidData = pick(5).data;
 
     const totalAmountKobo = (amountData || []).reduce((sum, t) => sum + parseFloat(t.amount || 0), 0);
+    const guestAmountKobo = (guestPaidData || []).reduce((sum, o) => sum + parseFloat(o.total_amount || 0), 0);
+    const guestPaidOrders = (guestPaidData || []).length;
 
     return res.status(200).json({
       status: true,
       message: 'Dashboard stats retrieved',
       data: {
-        total_amount: koboToNaira(totalAmountKobo),
-        total_orders: totalOrders || 0,
+        total_amount: koboToNaira(totalAmountKobo + guestAmountKobo),
+        user_revenue: koboToNaira(totalAmountKobo),
+        guest_revenue: koboToNaira(guestAmountKobo),
+        guest_paid_orders: guestPaidOrders,
+        total_orders: (totalOrders || 0) + guestPaidOrders,
         total_agents: 0,
         total_cars: totalCars || 0,
         total_users: totalUsers || 0,
@@ -896,6 +926,7 @@ export const getDashboardStats = async (req, res) => {
         expired_cars_this_month: expiredThisMonth || 0,
         expired_cars_total: expiredTotal || 0,
         expired_month: renewalsSummary?.expired_month || monthStart.slice(0, 7),
+        scheduled_orders: pick(6).count || 0,
       },
     });
   } catch (error) {
@@ -1050,25 +1081,44 @@ export const getRecentTransactions = async (req, res) => {
 export const listOrders = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, per_page = 15, status = 'all', search } = req.query;
+    const { page = 1, per_page = 15, status = 'all', payment = 'all', search } = req.query;
 
     const limit = Math.min(100, Math.max(1, parseInt(per_page)));
     const offset = (Math.max(1, parseInt(page)) - 1) * limit;
 
+    // Payment filter targets the joined transaction's status. Filtering a
+    // parent by an embedded resource needs an inner join — but only when
+    // the filter is active, so the default 'all' keeps today's left-join
+    // shape (orders without a transaction still list).
+    const VALID_PAYMENT_STATUSES = ['pending', 'successful', 'failed', 'abandoned', 'refunded'];
+    let paymentSelect = 'payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
+    let paymentFilter = null;
+    if (payment && payment !== 'all') {
+      if (!VALID_PAYMENT_STATUSES.includes(payment)) {
+        return res.status(400).json({ status: false, message: `Invalid payment filter: ${payment}` });
+      }
+      paymentSelect = 'payment_transactions!inner:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
+      paymentFilter = payment;
+    }
+
     let query = supabaseAdmin
       .from('renewal_orders')
       .select(`
-        id, order_number, order_type, amount_paid, status, user_id,
+        id, order_number, order_type, amount_paid, status, scheduled_for, user_id,
         delivery_address, delivery_state, delivery_lga, delivery_contact,
         created_at, updated_at,
         cars:car_id ( id, slug, vehicle_make, vehicle_model, registration_no ),
-        payment_transactions:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )
+        ${paymentSelect}
       `, { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(offset, offset + limit - 1);
 
     if (status && status !== 'all') {
       query = query.eq('status', frontendStatusToDB(status));
+    }
+
+    if (paymentFilter) {
+      query = query.eq('payment_transactions.status', paymentFilter);
     }
 
     // Order number search at DB level — avoids loading full pages to filter in JS
@@ -1264,9 +1314,9 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     const dbStatus = frontendStatusToDB(status);
-    const validStatuses = ['pending', 'processing', 'completed', 'cancelled'];
+    const validStatuses = ['pending', 'processing', 'completed', 'cancelled', 'scheduled'];
     if (!validStatuses.includes(dbStatus)) {
-      return res.status(400).json({ status: false, message: 'Invalid status. Must be one of: pending, in_progress, completed, declined' });
+      return res.status(400).json({ status: false, message: 'Invalid status. Must be one of: pending, in_progress, completed, declined, scheduled' });
     }
 
     // Fetch current order
@@ -1315,6 +1365,25 @@ export const updateOrderStatus = async (req, res) => {
       if (dbStatus === 'cancelled') {
         updateData.cancelled_at = new Date().toISOString();
         updateData.rejection_reason = notes || null;
+      }
+
+      // Manual (re-)scheduling: derive the hold date from the car's expiry
+      // when the admin doesn't supply one; leaving scheduled_from pending
+      // clears any hold so the order is actionable immediately.
+      if (dbStatus === 'scheduled') {
+        const carExpiry = current.cars?.expiry_date || null;
+        const holdFrom = req.body?.scheduled_for || null;
+        if (holdFrom && !Number.isNaN(new Date(holdFrom).getTime())) {
+          updateData.scheduled_for = holdFrom.slice(0, 10);
+        } else if (carExpiry && !Number.isNaN(new Date(carExpiry).getTime())) {
+          const d = new Date(carExpiry);
+          d.setDate(d.getDate() - 30);
+          updateData.scheduled_for = d.toISOString().slice(0, 10);
+        } else {
+          updateData.scheduled_for = new Date().toISOString().slice(0, 10);
+        }
+      } else if (['pending', 'processing'].includes(dbStatus)) {
+        updateData.scheduled_for = null;
       }
 
       if (notes && dbStatus !== 'cancelled') {
@@ -1595,40 +1664,6 @@ export const listTransactions = async (req, res) => {
 };
 
 // ─── Failed Transactions (top N) ─────────────────────────────────────────────
-export const getFailedTransactions = async (req, res) => {
-  try {
-    const supabaseAdmin = getSupabaseAdmin();
-    const { per_page = 8 } = req.query;
-    const limit = Math.min(50, Math.max(1, parseInt(per_page)));
-
-    const { data: transactions, error } = await supabaseAdmin
-      .from('payment_transactions')
-      .select('id, reference, amount, status, payment_type, user_id, created_at')
-      .in('status', ['failed', 'abandoned'])
-      .order('created_at', { ascending: false })
-      .limit(limit);
-
-    if (error) return res.status(500).json({ status: false, message: 'Failed to retrieve failed transactions' });
-
-    const formatted = (transactions || []).map(t => ({
-      id: t.id,
-      transaction_id: t.reference,
-      amount: koboToNaira(t.amount),
-      status: t.status,
-      payment_description: t.payment_type?.replace(/_/g, ' ') || 'Transaction',
-      created_at: t.created_at,
-    }));
-
-    return res.status(200).json({
-      status: true,
-      message: 'Failed transactions retrieved',
-      data: { data: formatted },
-    });
-  } catch (error) {
-    logError('Get failed transactions', error);
-    return response.serverError(res, 'Failed to retrieve failed transactions');
-  }
-};
 
 // GET /admin/transactions/:reference
 export const getTransactionDetails = async (req, res) => {
@@ -2548,12 +2583,38 @@ export async function triggerExpiryReminders(req, res) {
 // ─── Guest Orders ─────────────────────────────────────────────────────────────
 
 /**
+ * Resolve each order's selected_items (array of item_keys) into display-ready
+ * { id, name, price } objects so the admin UI can show what was bought.
+ * Inactive items still resolve — old orders may reference retired items.
+ */
+async function enrichGuestOrderItems(orders) {
+  if (!orders.length) return orders;
+  let itemMap = new Map();
+  try {
+    const allItems = await getRenewalItems({ includeInactive: true });
+    itemMap = new Map(allItems.map((i) => [i.id, i]));
+  } catch (err) {
+    logError('[Admin] enrichGuestOrderItems failed, returning raw keys', err);
+  }
+  return orders.map((order) => ({
+    ...order,
+    items: (order.selected_items || []).map((id) => {
+      const item = itemMap.get(id);
+      return item
+        ? { id, name: item.name, price: item.price }
+        : { id, name: id, price: null };
+    }),
+  }));
+}
+
+/**
  * GET /api/admin/guest-orders
  *
  * Lists all guest renewal orders with optional filters.
  *
  * Query params:
  *   ?page=1 &limit=20 &status=pending_payment|payment_success|payment_failed
+ *   &fulfillment=pending|processing|completed|cancelled
  *   &search=<plate or email>
  */
 export const listGuestOrders = async (req, res) => {
@@ -2563,15 +2624,16 @@ export const listGuestOrders = async (req, res) => {
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
     const from = (page - 1) * limit;
     const to = from + limit - 1;
-    const { status, search } = req.query;
+    const { status, fulfillment, search } = req.query;
 
     let query = supabase
       .from('guest_renewal_orders')
-      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, payment_gateway, total_amount, created_at, linked_user_id, payment_reference, delivery_fee, delivery_details, selected_items, attribution_source, attribution_campaign', { count: 'exact' })
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, fulfillment_status, processing_started_at, completed_at, payment_gateway, total_amount, created_at, linked_user_id, car_id, payment_reference, delivery_fee, delivery_details, selected_items, scheduled_for, expiry_date, attribution_source, attribution_campaign', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
 
     if (status) query = query.eq('payment_status', status);
+    if (fulfillment) query = query.eq('fulfillment_status', fulfillmentStatusToDB(fulfillment));
     if (search) {
       query = query.or(`plate_number.ilike.%${search}%,guest_email.ilike.%${search}%,guest_name.ilike.%${search}%`);
     }
@@ -2583,7 +2645,7 @@ export const listGuestOrders = async (req, res) => {
     }
 
     return response.success(res, {
-      orders: orders || [],
+      orders: await enrichGuestOrderItems(orders || []),
       pagination: {
         current_page: page,
         limit,
@@ -2700,11 +2762,175 @@ export const getGuestOrderDetails = async (req, res) => {
       return response.notFound(res, 'Guest order not found');
     }
 
+    // Linked car (if the guest has since registered + added the vehicle) so
+    // admin can upload processed documents exactly like the signed-in flow.
+    let car = null;
+    if (order.car_id) {
+      const { data: carRow } = await supabase
+        .from('cars')
+        .select('id, slug, vehicle_make, vehicle_model, vehicle_year, vehicle_color, registration_no, chasis_no, engine_no, expiry_date')
+        .eq('id', order.car_id)
+        .maybeSingle();
+      car = carRow || null;
+    }
+
     const delivery = await getDeliveryProgressForGuestOrder(order, { includeLabel: true });
-    return response.success(res, { ...order, ...delivery }, 'Guest order retrieved');
+    const [enriched] = await enrichGuestOrderItems([order]);
+    return response.success(res, { ...enriched, ...delivery, car }, 'Guest order retrieved');
   } catch (err) {
     logError('[Admin] getGuestOrderDetails error', err);
     return response.serverError(res, 'Failed to retrieve guest order');
+  }
+};
+
+/**
+ * PUT /api/admin/guest-orders/:id/status
+ *
+ * Mirrors PUT /api/admin/orders/:orderNumber/status for the signed-in flow:
+ * pending (New) → processing (In Progress) → completed / cancelled.
+ *
+ * Guards mirror the signed-in flow: only paid orders can move past pending,
+ * completed orders are terminal.
+ */
+export const updateGuestOrderStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, notes } = req.body || {};
+    if (!status) {
+      return res.status(400).json({ status: false, message: 'Status is required' });
+    }
+
+    const dbStatus = fulfillmentStatusToDB(status);
+    const validStatuses = ['pending', 'processing', 'completed', 'cancelled'];
+    if (!validStatuses.includes(dbStatus)) {
+      return res.status(400).json({ status: false, message: 'Invalid status. Must be one of: pending, processing, completed, cancelled' });
+    }
+
+    const supabaseAdmin = getSupabaseAdmin();
+    const { data: current, error: fetchError } = await supabaseAdmin
+      .from('guest_renewal_orders')
+      .select('id, payment_status, fulfillment_status, guest_email, guest_name, plate_number')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchError || !current) {
+      return res.status(404).json({ status: false, message: 'Guest order not found' });
+    }
+
+    if ((current.fulfillment_status || 'pending') === 'completed') {
+      return res.status(409).json({ status: false, message: 'Cannot update a completed order' });
+    }
+
+    // Fulfilment only applies to paid orders — unpaid rows stay in the
+    // payment pipeline (pending_payment / failed / expired).
+    if (current.payment_status !== 'payment_success' && ['processing', 'completed'].includes(dbStatus)) {
+      return res.status(409).json({
+        status: false,
+        message: `Only paid orders can be processed (payment: ${current.payment_status})`,
+      });
+    }
+
+    const now = new Date().toISOString();
+    const updateData = {
+      fulfillment_status: dbStatus,
+      updated_at: now,
+    };
+    if (dbStatus === 'processing' && (current.fulfillment_status || 'pending') === 'pending') {
+      updateData.processing_started_at = now;
+      updateData.assigned_to = req.admin?.id || null;
+    }
+    if (dbStatus === 'completed') {
+      updateData.completed_at = now;
+      updateData.cancelled_at = null;
+    }
+    if (dbStatus === 'cancelled') {
+      updateData.cancelled_at = now;
+    }
+    if (notes) {
+      updateData.processing_notes = notes;
+    }
+
+    const { data: updated, error: updateError } = await supabaseAdmin
+      .from('guest_renewal_orders')
+      .update(updateData)
+      .eq('id', id)
+      .select('id, payment_status, fulfillment_status, scheduled_for')
+      .single();
+
+    if (updateError) {
+      logError('[Admin] updateGuestOrderStatus failed', updateError);
+      return response.serverError(res, 'Failed to update guest order status');
+    }
+
+    logInfo('[Admin] Guest order status updated', {
+      id,
+      from: current.fulfillment_status || 'pending',
+      to: dbStatus,
+      adminId: req.admin?.id || null,
+    });
+
+    return res.status(200).json({ status: true, message: 'Guest order status updated successfully', data: updated });
+  } catch (error) {
+    logError('[Admin] updateGuestOrderStatus error', error);
+    return res.status(500).json({ status: false, message: 'Failed to update guest order status' });
+  }
+};
+
+/**
+ * POST /api/admin/guest-orders/:id/reopen
+ *
+ * Mirrors POST /api/admin/orders/:orderNumber/reopen: a cancelled guest
+ * order returns to pending so it can be completed deliberately.
+ */
+export const reopenGuestOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body || {};
+    const supabaseAdmin = getSupabaseAdmin();
+
+    const { data: order, error: fetchError } = await supabaseAdmin
+      .from('guest_renewal_orders')
+      .select('id, fulfillment_status')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchError || !order) {
+      return res.status(404).json({ status: false, message: 'Guest order not found' });
+    }
+
+    if ((order.fulfillment_status || 'pending') !== 'cancelled') {
+      return res.status(409).json({
+        status: false,
+        message: `Only cancelled orders can be reopened (this one is ${order.fulfillment_status || 'pending'})`,
+      });
+    }
+
+    const note = `Reopened${reason ? `: ${reason}` : ''} (was cancelled)`;
+    const { error: updateError } = await supabaseAdmin
+      .from('guest_renewal_orders')
+      .update({
+        fulfillment_status: 'pending',
+        cancelled_at: null,
+        processing_notes: note,
+        assigned_to: req.admin?.id || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id);
+
+    if (updateError) {
+      logError('[Admin] reopenGuestOrder failed', updateError);
+      return response.serverError(res, 'Failed to reopen guest order');
+    }
+
+    logInfo('[Admin] Guest order reopened', { id, adminId: req.admin?.id || null });
+    return response.success(
+      res,
+      { id, fulfillment_status: 'pending' },
+      'Guest order reopened. Mark it Completed to finish the renewal.'
+    );
+  } catch (error) {
+    logError('[Admin] reopenGuestOrder error', error);
+    return response.serverError(res, 'Failed to reopen guest order');
   }
 };
 
@@ -2940,7 +3166,11 @@ export const adminCreateUser = async (req, res) => {
 
       if (profileError) {
         logError('[Admin] createUser profile insert failed', profileError);
-        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch((delErr) => {
+          console.error('[Admin] ORPHANED AUTH USER — rollback delete failed. Manual cleanup required.', {
+            userId, error: delErr?.message
+          });
+        });
         return res.status(500).json({ status: false, message: 'Failed to create user profile' });
       }
     }

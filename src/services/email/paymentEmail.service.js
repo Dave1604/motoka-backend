@@ -11,6 +11,7 @@
 
 import { sendEmail } from './email.service.js';
 import { formatAmount } from '../../utils/paymentHelpers.js';
+import { buildWhatsAppUrl, SUPPORT_PHONE_DISPLAY } from '../../constants/support.constants.js';
 
 /**
  * Send payment success email
@@ -23,8 +24,13 @@ import { formatAmount } from '../../utils/paymentHelpers.js';
  * @param {string} options.orderNumber - Order number created
  * @param {Object} options.carDetails - Car information
  */
-export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType }) {
+export async function sendPaymentSuccessEmail({ to, firstName, amount, reference, orderNumber, carDetails, documentNames, paymentType, scheduledFor = null }) {
   const subject = 'Payment Successful - Motoka';
+  const whatsappUrl = buildWhatsAppUrl([
+    "Hello Motoka, I've just made a payment.",
+    orderNumber ? `Order: ${orderNumber}` : null,
+    `Reference: ${reference}`,
+  ]);
   const isPlateNumber = paymentType === 'plate_number';
   const isDriverLicense = paymentType === 'driver_license';
   
@@ -32,11 +38,13 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
     ? `${carDetails.vehicle_make || ''} ${carDetails.vehicle_model || ''} (${carDetails.registration_no || 'N/A'})`.trim()
     : (isDriverLicense ? 'Driver\'s license' : 'Your vehicle');
 
-  const bodyIntro = isDriverLicense
-    ? 'Your payment has been processed successfully. Your driver\'s license application has been received and is being processed by our team.'
-    : isPlateNumber
-      ? 'Your payment has been processed successfully. Your plate number application has been received and is being processed by our team.'
-      : 'Your payment has been processed successfully. A renewal order has been created and is being processed by our team.';
+  const bodyIntro = scheduledFor
+    ? `Your payment has been processed successfully. This renewal is scheduled — our team starts processing it on ${scheduledFor} and will notify you.`
+    : isDriverLicense
+      ? 'Your payment has been processed successfully. Your driver\'s license application has been received and is being processed by our team.'
+      : isPlateNumber
+        ? 'Your payment has been processed successfully. Your plate number application has been received and is being processed by our team.'
+        : 'Your payment has been processed successfully. A renewal order has been created and is being processed by our team.';
 
   const bodyOutro = isDriverLicense
     ? "Our team will process your driver's license application and you'll receive a confirmation once it's ready."
@@ -110,15 +118,20 @@ export async function sendPaymentSuccessEmail({ to, firstName, amount, reference
             </div>` : ''}
             <div class="detail-row">
               <span class="detail-label">Status</span>
-              <span class="detail-value" style="color: #22c55e;">Processing</span>
+              <span class="detail-value" style="color: #22c55e;">${scheduledFor ? `Scheduled · starts ${scheduledFor}` : 'Processing'}</span>
             </div>
           </div>
           
           <p>${bodyOutro}</p>
+
+          <p>To follow progress, log in to your Motoka account with this email address. Your order and this receipt are under <strong>Settings &rarr; Payment &amp; Billing</strong> (My Orders and Transaction History) on your dashboard.</p>
           
           <center>
             <a href="${process.env.FRONTEND_URL}/orders/${orderNumber}/track" class="cta-button">Track your order</a>
+            <br>
+            <a href="${whatsappUrl}" class="cta-button" style="background-color: #25D366; margin-top: 12px;">Message us on WhatsApp</a>
           </center>
+          <p style="text-align: center; font-size: 13px; color: #6c757d; margin-top: 14px;">You can also text us on ${SUPPORT_PHONE_DISPLAY} to let us know your payment went through. Keep this email as your receipt. Reference: ${reference}</p>
         </div>
         <div class="footer">
           <p>Thank you for using Motoka!</p>
@@ -142,6 +155,12 @@ Order Number: ${orderNumber}
 Vehicle: ${carInfo}
 ${serviceValue ? `${serviceLabel}: ${serviceValue}\n` : ''}
 ${bodyOutro}
+
+To follow progress, log in to your Motoka account with this email address and open Settings > Payment & Billing (My Orders / Transaction History).
+Track your order: ${process.env.FRONTEND_URL}/orders/${orderNumber}/track
+Or text us on WhatsApp (${SUPPORT_PHONE_DISPLAY}) to let us know your payment went through: ${whatsappUrl}
+
+Keep this email as your receipt.
 
 Thank you for using Motoka!
   `.trim();
@@ -346,219 +365,6 @@ Need help? Contact our support team.
 }
 
 /**
- * Send subscription created email
- * 
- * @param {Object} options
- * @param {string} options.to - Recipient email
- * @param {string} options.firstName - User's first name
- * @param {string} options.subscriptionCode - Subscription identifier
- * @param {number} options.amount - Subscription amount
- * @param {string} options.plan - Subscription plan (annual/monthly)
- * @param {Object} options.carDetails - Car information
- * @param {string} options.nextBillingDate - Next billing date
- */
-export async function sendSubscriptionCreatedEmail({ 
-  to, firstName, subscriptionCode, amount, plan, carDetails, nextBillingDate 
-}) {
-  const subject = 'Auto-Renewal Subscription Activated - Motoka';
-  
-  const carInfo = carDetails 
-    ? `${carDetails.vehicle_make || ''} ${carDetails.vehicle_model || ''} (${carDetails.registration_no || 'N/A'})`.trim()
-    : 'Your vehicle';
-  
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
-        .header { background-color: #6366f1; color: #ffffff; padding: 30px 20px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { padding: 40px 30px; }
-        .subscription-box { background-color: #eef2ff; border: 2px solid #6366f1; border-radius: 8px; padding: 20px; text-align: center; margin: 30px 0; }
-        .details { background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
-        .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e9ecef; }
-        .detail-row:last-child { border-bottom: none; }
-        .detail-label { color: #6c757d; }
-        .detail-value { font-weight: 600; color: #1a1a1a; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
-        .cta-button { display: inline-block; background-color: #1a1a1a; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 20px; }
-        .sub-icon { font-size: 48px; margin-bottom: 10px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <div class="sub-icon">🔄</div>
-          <h1>Auto-Renewal Activated!</h1>
-        </div>
-        <div class="content">
-          <p>Hello ${firstName || 'there'},</p>
-          <p>Great news! Your auto-renewal subscription has been activated. Your vehicle documents will be automatically renewed, so you never have to worry about expiry dates again.</p>
-          
-          <div class="subscription-box">
-            <div style="font-size: 24px; font-weight: bold; color: #4f46e5;">${formatAmount(amount)}<span style="font-size: 14px; color: #6c757d;">/${plan === 'annual' ? 'year' : 'month'}</span></div>
-            <div style="color: #6c757d; margin-top: 5px;">Auto-Renewal Amount</div>
-          </div>
-          
-          <div class="details">
-            <div class="detail-row">
-              <span class="detail-label">Subscription ID</span>
-              <span class="detail-value">${subscriptionCode}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Vehicle</span>
-              <span class="detail-value">${carInfo}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Plan</span>
-              <span class="detail-value">${plan === 'annual' ? 'Annual' : 'Monthly'}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Next Billing</span>
-              <span class="detail-value">${nextBillingDate || 'Upon expiry'}</span>
-            </div>
-          </div>
-          
-          <p style="color: #6c757d; font-size: 14px;">You can manage or cancel your subscription at any time from your account settings.</p>
-          
-          <center>
-            <a href="${process.env.FRONTEND_URL}/subscriptions" class="cta-button">Manage Subscription</a>
-          </center>
-        </div>
-        <div class="footer">
-          <p>Thank you for choosing Motoka Auto-Renewal!</p>
-          <p style="margin-top: 15px; color: #9ca3af;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  const text = `
-Auto-Renewal Subscription Activated!
-
-Hello ${firstName || 'there'},
-
-Your auto-renewal subscription has been activated for ${carInfo}.
-
-Subscription ID: ${subscriptionCode}
-Amount: ${formatAmount(amount)}/${plan === 'annual' ? 'year' : 'month'}
-Next Billing: ${nextBillingDate || 'Upon expiry'}
-
-You can manage or cancel your subscription at any time from your account.
-
-Thank you for choosing Motoka Auto-Renewal!
-  `.trim();
-
-  return sendEmail({ to, subject, html, text });
-}
-
-/**
- * Send subscription cancelled email
- * 
- * @param {Object} options
- * @param {string} options.to - Recipient email
- * @param {string} options.firstName - User's first name
- * @param {string} options.subscriptionCode - Subscription identifier
- * @param {Object} options.carDetails - Car information
- */
-export async function sendSubscriptionCancelledEmail({ to, firstName, subscriptionCode, carDetails }) {
-  const subject = 'Auto-Renewal Subscription Cancelled - Motoka';
-  
-  const carInfo = carDetails 
-    ? `${carDetails.vehicle_make || ''} ${carDetails.vehicle_model || ''} (${carDetails.registration_no || 'N/A'})`.trim()
-    : 'Your vehicle';
-  
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
-        .header { background-color: #6b7280; color: #ffffff; padding: 30px 20px; text-align: center; }
-        .header h1 { margin: 0; font-size: 24px; }
-        .content { padding: 40px 30px; }
-        .notice-box { background-color: #f3f4f6; border: 2px solid #9ca3af; border-radius: 8px; padding: 20px; text-align: center; margin: 30px 0; }
-        .details { background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }
-        .detail-row { display: flex; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #e9ecef; }
-        .detail-row:last-child { border-bottom: none; }
-        .detail-label { color: #6c757d; }
-        .detail-value { font-weight: 600; color: #1a1a1a; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
-        .cta-button { display: inline-block; background-color: #6366f1; color: #ffffff; padding: 14px 28px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 20px; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>Subscription Cancelled</h1>
-        </div>
-        <div class="content">
-          <p>Hello ${firstName || 'there'},</p>
-          <p>Your auto-renewal subscription has been cancelled as requested. You will no longer be charged automatically.</p>
-          
-          <div class="notice-box">
-            <div style="font-size: 18px; color: #4b5563;">Auto-Renewal Disabled</div>
-            <div style="color: #9ca3af; margin-top: 5px;">No future charges will be made</div>
-          </div>
-          
-          <div class="details">
-            <div class="detail-row">
-              <span class="detail-label">Subscription ID</span>
-              <span class="detail-value">${subscriptionCode}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Vehicle</span>
-              <span class="detail-value">${carInfo}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Status</span>
-              <span class="detail-value" style="color: #6b7280;">Cancelled</span>
-            </div>
-          </div>
-          
-          <p style="color: #6c757d; font-size: 14px;"><strong>Remember:</strong> You'll need to manually renew your vehicle documents before they expire to avoid penalties.</p>
-          
-          <center>
-            <a href="${process.env.FRONTEND_URL}/subscriptions" class="cta-button">Reactivate Auto-Renewal</a>
-          </center>
-        </div>
-        <div class="footer">
-          <p>We're sorry to see you go. You can reactivate auto-renewal anytime.</p>
-          <p style="margin-top: 15px; color: #9ca3af;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  const text = `
-Subscription Cancelled
-
-Hello ${firstName || 'there'},
-
-Your auto-renewal subscription has been cancelled as requested.
-
-Subscription ID: ${subscriptionCode}
-Vehicle: ${carInfo}
-Status: Cancelled
-
-Remember: You'll need to manually renew your vehicle documents before they expire.
-
-You can reactivate auto-renewal anytime from your account.
-  `.trim();
-
-  return sendEmail({ to, subject, html, text });
-}
-
-/**
  * Send payment confirmation email to a guest (unauthenticated) customer.
  *
  * @param {Object} options
@@ -571,10 +377,15 @@ You can reactivate auto-renewal anytime from your account.
  * @param {string} options.receiptUrl   - Direct link to the receipt page
  */
 export async function sendGuestPaymentConfirmationEmail({
-  to, guestName, reference, amount, plateNumber, documentNames = [], receiptUrl
+  to, guestName, reference, amount, plateNumber, documentNames = [], receiptUrl, accountCreated = false, scheduledFor = null
 }) {
   const subject = 'Payment Confirmed – Your Motoka Renewal';
   const firstName = guestName?.split(' ')[0] || 'there';
+  const whatsappUrl = buildWhatsAppUrl([
+    "Hello Motoka, I've just made a payment.",
+    plateNumber ? `Plate: ${plateNumber}` : null,
+    `Reference: ${reference}`,
+  ]);
   const docList = documentNames.length > 0
     ? documentNames.map(d => `<li style="padding:4px 0;">${d}</li>`).join('')
     : '<li>Vehicle Document Renewal</li>';
@@ -639,15 +450,21 @@ export async function sendGuestPaymentConfirmationEmail({
             </div>
             <div class="detail-row">
               <span class="detail-label">Status</span>
-              <span class="detail-value" style="color:#22c55e;">Payment Received ✓</span>
+              <span class="detail-value" style="color:#22c55e;">${scheduledFor ? `Scheduled · starts ${scheduledFor}` : 'Payment Received ✓'}</span>
             </div>
           </div>
 
           <div class="tip-box">
-            💡 <strong>Tip:</strong> Create a free Motoka account to track your documents, get expiry reminders, and manage renewals in one place.
+            💡 <strong>Tip:</strong> ${accountCreated
+              ? 'We\'ve created your free Motoka account — this renewal is already saved to it. Log in anytime with OTP using this email address, or set a password on your receipt page, to track documents and get expiry reminders.'
+              : 'Create a free Motoka account to track your documents, get expiry reminders, and manage renewals in one place.'}
           </div>
 
-          ${receiptUrl ? `<center><a href="${receiptUrl}" class="cta-button">View Your Receipt</a></center>` : ''}
+          <center>
+            ${receiptUrl ? `<a href="${receiptUrl}" class="cta-button">View Your Receipt</a><br>` : ''}
+            <a href="${whatsappUrl}" class="cta-button" style="background-color:#25D366;margin-top:12px;">Message us on WhatsApp</a>
+          </center>
+          <p style="text-align:center;font-size:13px;color:#697c8c;margin-top:14px;">You can also text us on ${SUPPORT_PHONE_DISPLAY} to let us know your payment went through.</p>
         </div>
         <div class="footer">
           <p>Thank you for using Motoka!</p>
@@ -669,9 +486,10 @@ Your payment of ${formatAmount(amount)} has been received.
 Reference   : ${reference}
 Plate Number: ${plateNumber}
 Documents   : ${documentNames.join(', ') || 'Vehicle Document Renewal'}
-Status      : Payment Received
+Status      : ${scheduledFor ? `Scheduled - processing starts ${scheduledFor}` : 'Payment Received'}
 
 ${receiptUrl ? `View your receipt: ${receiptUrl}` : ''}
+Text us on WhatsApp (${SUPPORT_PHONE_DISPLAY}) to let us know your payment went through: ${whatsappUrl}
 
 Thank you for using Motoka!
   `.trim();
@@ -781,148 +599,6 @@ Status: Completed
 Your vehicle is all set!
 
 Thank you for using Motoka!
-  `.trim();
-
-  return sendEmail({ to, subject, html, text });
-}
-
-export async function sendDeferredDocReminderEmail({
-  to,
-  firstName,
-  documentName,
-  expiryDate,
-  carInfo,
-  daysUntilExpiry
-}) {
-  const subject = `Reminder: Your ${documentName} expires in ${daysUntilExpiry} days - Motoka`;
-  const renewUrl = `${process.env.FRONTEND_URL || 'https://motokaapp.com'}/licenses/renew`;
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
-        .header { background-color: #1d4ed8; color: #ffffff; padding: 30px 20px; text-align: center; }
-        .content { padding: 32px 28px; color: #1f2937; }
-        .details { background-color: #f8fafc; border-radius: 8px; padding: 16px; margin: 20px 0; }
-        .row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #e5e7eb; }
-        .row:last-child { border-bottom: none; }
-        .cta { display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; border-radius: 6px; padding: 12px 24px; font-weight: 600; margin-top: 16px; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>Document Expiry Reminder</h1>
-        </div>
-        <div class="content">
-          <p>Hello ${firstName || 'there'},</p>
-          <p>This is a reminder that your <strong>${documentName}</strong> expires in <strong>${daysUntilExpiry} days</strong>.</p>
-          <div class="details">
-            <div class="row"><span>Document</span><strong>${documentName}</strong></div>
-            <div class="row"><span>Expiry Date</span><strong>${expiryDate || 'N/A'}</strong></div>
-            <div class="row"><span>Vehicle</span><strong>${carInfo || 'Your vehicle'}</strong></div>
-          </div>
-          <p>Renew now to avoid delays and keep your documents up to date.</p>
-          <a class="cta" href="${renewUrl}">Renew Now</a>
-        </div>
-        <div class="footer">
-          <p>Motoka reminders are sent to help you stay compliant.</p>
-          <p style="margin-top: 10px; color: #9ca3af;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  const text = `
-Document Expiry Reminder
-
-Hello ${firstName || 'there'},
-
-Your ${documentName} expires in ${daysUntilExpiry} days.
-Expiry Date: ${expiryDate || 'N/A'}
-Vehicle: ${carInfo || 'Your vehicle'}
-
-Renew now: ${renewUrl}
-  `.trim();
-
-  return sendEmail({ to, subject, html, text });
-}
-
-export async function sendSkippedDocNudgeEmail({
-  to,
-  firstName,
-  skippedDocNames = [],
-  carInfo,
-  nudgeDay = 1
-}) {
-  const renewUrl = `${process.env.FRONTEND_URL || 'https://motokaapp.com'}/licenses/renew`;
-  const subject = "Did you forget? Some of your vehicle documents weren't renewed - Motoka";
-  const docs = skippedDocNames.length ? skippedDocNames.join(', ') : 'some documents';
-
-  const nudges = {
-    1: 'Quick reminder: you skipped some document renewals in your last checkout.',
-    2: 'Friendly follow-up: your skipped document renewals are still pending.',
-    3: 'Final nudge: complete your skipped document renewals to stay up to date.'
-  };
-  const intro = nudges[nudgeDay] || nudges[1];
-
-  const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta charset="UTF-8">
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; background-color: #f4f4f4; }
-        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; }
-        .header { background-color: #0f766e; color: #ffffff; padding: 30px 20px; text-align: center; }
-        .content { padding: 32px 28px; color: #1f2937; }
-        .details { background-color: #f8fafc; border-radius: 8px; padding: 16px; margin: 20px 0; }
-        .cta { display: inline-block; background-color: #111827; color: #ffffff; text-decoration: none; border-radius: 6px; padding: 12px 24px; font-weight: 600; margin-top: 16px; }
-        .footer { background-color: #f8f9fa; padding: 20px; text-align: center; font-size: 12px; color: #6c757d; }
-      </style>
-    </head>
-    <body>
-      <div class="container">
-        <div class="header">
-          <h1>Skipped Renewal Reminder</h1>
-        </div>
-        <div class="content">
-          <p>Hello ${firstName || 'there'},</p>
-          <p>${intro}</p>
-          <div class="details">
-            <p><strong>Skipped documents:</strong> ${docs}</p>
-            <p><strong>Vehicle:</strong> ${carInfo || 'Your vehicle'}</p>
-          </div>
-          <p>You can complete the remaining document renewals anytime.</p>
-          <a class="cta" href="${renewUrl}">Complete Renewal</a>
-        </div>
-        <div class="footer">
-          <p>Thank you for using Motoka.</p>
-          <p style="margin-top: 10px; color: #9ca3af;">© ${new Date().getFullYear()} Motoka. All rights reserved.</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
-
-  const text = `
-Skipped Renewal Reminder
-
-Hello ${firstName || 'there'},
-
-${intro}
-Skipped documents: ${docs}
-Vehicle: ${carInfo || 'Your vehicle'}
-
-Complete renewal: ${renewUrl}
   `.trim();
 
   return sendEmail({ to, subject, html, text });

@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
+import { getTrafficReportHandler } from '../controllers/admin-analytics.controller.js';
+import { rollOrderToNextCycle, rollGuestOrder } from '../controllers/admin-order-ops.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
 import * as renewals from '../controllers/adminRenewals.controller.js';
 import { adminCreateShipmentHandler, adminTrackShipmentHandler } from '../controllers/delivery.controller.js';
@@ -83,6 +85,9 @@ router.get('/gateways/health', authenticateAdmin, admin.getGatewayHealth);
 router.get('/dashboard/stats', authenticateAdmin, admin.getDashboardStats);
 router.get('/recent-orders', authenticateAdmin, admin.getRecentOrders);
 router.get('/recent-transactions', authenticateAdmin, admin.getRecentTransactions);
+// GA4 website traffic (sessions/users by channel + top pages). 503 until the
+// GA4 service-account env vars are set; see ga4.service.js.
+router.get('/analytics/traffic', authenticateAdmin, getTrafficReportHandler);
 // Polled by the admin tab's new-activity ping; deliberately light.
 router.get('/activity/since', authenticateAdmin, admin.getActivitySince);
 
@@ -94,6 +99,7 @@ router.get('/orders/:orderNumber', authenticateAdmin, admin.getOrderDetails);
 router.put('/orders/:orderNumber/status', authenticateAdmin, admin.updateOrderStatus);
 // Undo an accidental cancellation — returns the order to pending so it can be completed
 router.post('/orders/:orderNumber/reopen', authenticateAdmin, admin.reopenOrder);
+router.post('/orders/:orderNumber/rollover', authenticateAdmin, rollOrderToNextCycle);
 
 // ── Ladipo marketplace management (authenticateAdmin) ────────────────────────
 router.get('/ladipo/capabilities', authenticateAdmin, getLadipoAdminCapabilities);
@@ -111,7 +117,6 @@ router.get('/ladipo/categories', authenticateAdmin, listLadipoCategories);
 router.patch('/ladipo/categories/:id/image', authenticateAdmin, handleLadipoProductImageUpload, updateLadipoCategoryImage);
 
 // ── Transaction management (authenticateAdmin) ────────────────────────────────
-router.get('/transactions/failed', authenticateAdmin, admin.getFailedTransactions);
 router.get('/transactions', authenticateAdmin, admin.listTransactions);
 router.get('/transactions/:reference', authenticateAdmin, admin.getTransactionDetails);
 
@@ -143,6 +148,9 @@ router.get('/mo-conversations', authenticateAdmin, admin.listMoConversations);
 // guest-orders must be registered before /:orderId to avoid capture conflicts
 router.get('/guest-orders', authenticateAdmin, admin.listGuestOrders);
 router.get('/guest-orders/:orderId', authenticateAdmin, admin.getGuestOrderDetails);
+router.put('/guest-orders/:id/status', authenticateAdmin, admin.updateGuestOrderStatus);
+router.post('/guest-orders/:id/reopen', authenticateAdmin, admin.reopenGuestOrder);
+router.post('/guest-orders/:id/rollover', authenticateAdmin, rollGuestOrder);
 
 // ── Driver license applications ───────────────────────────────────────────────
 router.get('/driver-license-applications', authenticateAdmin, admin.listDriverLicenseApplications);

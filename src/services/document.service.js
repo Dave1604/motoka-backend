@@ -44,29 +44,6 @@ export async function createDocument({
 }
 
 /**
- * Get documents for a user, optionally filtered by car or type
- */
-export async function getUserDocuments(userId, { carId, documentType, status } = {}) {
-  const supabase = getSupabaseAdmin();
-  let query = supabase
-    .from('documents')
-    .select('*')
-    .eq('user_id', userId)
-    .order('created_at', { ascending: false });
-
-  if (carId != null) query = query.eq('car_id', carId);
-  if (documentType) query = query.eq('document_type', documentType);
-  if (status) query = query.eq('status', status);
-
-  const { data, error } = await query;
-  if (error) {
-    logError('Get user documents error', { error, userId });
-    throw error;
-  }
-  return data || [];
-}
-
-/**
  * Get documents for a car (user-facing).
  *
  * Rejected documents are hidden from users by design: once admin rejects a

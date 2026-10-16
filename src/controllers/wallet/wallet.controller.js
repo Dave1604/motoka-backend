@@ -1,6 +1,7 @@
 import { getWallet, getWalletLedger, payWithWallet as payWithWalletService, WalletError } from '../../services/wallet/wallet.service.js';
-import { createTransaction, updateTransactionWithPaystackInit, getTransactionByReference, markTransactionAbandoned } from '../../services/payment/transaction.service.js';
+import { createTransaction, updateTransactionWithPaystackInit, updateTransactionWithMonipayInit, getTransactionByReference, markTransactionAbandoned } from '../../services/payment/transaction.service.js';
 import { initializeTransaction, PaystackError } from '../../services/payment/paystack.service.js';
+import { initializeTransaction as initializeMonipayTransaction, MonipayError } from '../../services/payment/monipay/monipay.service.js';
 import { validateRenewalItemsSelection } from '../../services/payment/renewalItems.service.js';
 import { quoteFromDeliveryFields, DeliveryQuoteError } from '../../services/courier/deliveryQuote.service.js';
 import { TerminalError } from '../../services/courier/terminal.service.js';
@@ -352,7 +353,8 @@ export const payWithWallet = async (req, res) => {
   }
 };
 
-// POST /api/wallet/fund  { amount_kobo }  → Paystack checkout for (credit + fee)
+// POST /api/wallet/fund  { amount_kobo, payment_gateway? }  → Monipay (default) or
+// Paystack checkout for (credit + fee)
 export const initFunding = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -371,6 +373,10 @@ export const initFunding = async (req, res) => {
 
     const { feeKobo, chargeKobo } = computeFunding(desiredKobo);
 
+    const gateway = String(req.body?.payment_gateway || '').toLowerCase().trim() === PAYMENT_GATEWAY.PAYSTACK
+      ? PAYMENT_GATEWAY.PAYSTACK
+      : PAYMENT_GATEWAY.MONIPAY;
+
     // The transaction amount is the GROSS charge (credit + fee). The amount to
     // land in the wallet is carried in metadata and applied on verified success.
     const transaction = await createTransaction({
@@ -378,7 +384,7 @@ export const initFunding = async (req, res) => {
       carId: null,
       amount: chargeKobo,
       paymentType: PAYMENT_TYPE.WALLET_FUNDING,
-      paymentGateway: PAYMENT_GATEWAY.PAYSTACK,
+      paymentGateway: gateway,
       metadata: {
         payment_type: PAYMENT_TYPE.WALLET_FUNDING,
         wallet_credit_kobo: desiredKobo,
@@ -386,7 +392,9 @@ export const initFunding = async (req, res) => {
       }
     });
 
-    const callbackUrl = process.env.WALLET_CALLBACK_URL || process.env.PAYMENT_CALLBACK_URL || undefined;
+    const callbackUrl = process.env.WALLET_CALLBACK_URL
+      || process.env.PAYMENT_CALLBACK_URL
+      || (process.env.FRONTEND_URL ? `${process.env.FRONTEND_URL}/wallet/callback` : undefined);
 
     // Who paid. The reference stays opaque — it travels in callback URLs, webhook
     // bodies and logs, and is the idempotency key for wallet_credit(), so it is a
@@ -403,7 +411,7 @@ export const initFunding = async (req, res) => {
       { display_name: 'Motoka user ID', variable_name: 'motoka_user_id', value: userId }
     ].filter(Boolean);
 
-    const init = await initializeTransaction({
+    const payer = {
       email: userEmail,
       amount: chargeKobo,
       reference: transaction.reference,
@@ -411,26 +419,45 @@ export const initFunding = async (req, res) => {
       first_name: profile.first_name || undefined,
       last_name: profile.last_name || undefined,
       phone: profile.phone_number || undefined,
-      metadata: {
-        payment_type: PAYMENT_TYPE.WALLET_FUNDING,
-        wallet_credit_kobo: desiredKobo,
-        fee_kobo: feeKobo,
-        user_id: userId,
-        custom_fields: customFields
-      },
-      // Card + bank transfer + USSD by default. Override via env without a redeploy.
-      // The fee gross-up is computed at the (higher) card rate, so the wallet is
-      // always fully funded regardless of which channel the user picks.
-      channels: (process.env.WALLET_FUNDING_CHANNELS || 'card,bank_transfer,ussd')
-        .split(',').map((c) => c.trim()).filter(Boolean)
-    });
+    };
 
-    await updateTransactionWithPaystackInit(transaction.reference, init);
+    let init;
+    if (gateway === PAYMENT_GATEWAY.MONIPAY) {
+      init = await initializeMonipayTransaction({
+        ...payer,
+        metadata: {
+          payment_type: PAYMENT_TYPE.WALLET_FUNDING,
+          wallet_credit_kobo: desiredKobo,
+          fee_kobo: feeKobo,
+          user_id: userId,
+          purpose: 'Wallet top-up'
+        }
+      });
+      await updateTransactionWithMonipayInit(transaction.reference, init);
+    } else {
+      init = await initializeTransaction({
+        ...payer,
+        metadata: {
+          payment_type: PAYMENT_TYPE.WALLET_FUNDING,
+          wallet_credit_kobo: desiredKobo,
+          fee_kobo: feeKobo,
+          user_id: userId,
+          custom_fields: customFields
+        },
+        // Card + bank transfer + USSD by default. Override via env without a redeploy.
+        // The fee gross-up is computed at the (higher) card rate, so the wallet is
+        // always fully funded regardless of which channel the user picks.
+        channels: (process.env.WALLET_FUNDING_CHANNELS || 'card,bank_transfer,ussd')
+          .split(',').map((c) => c.trim()).filter(Boolean)
+      });
+      await updateTransactionWithPaystackInit(transaction.reference, init);
+    }
 
-    logInfo('[Wallet] Funding initialized', { reference: transaction.reference, userId, desiredKobo, chargeKobo });
+    logInfo('[Wallet] Funding initialized', { reference: transaction.reference, userId, gateway, desiredKobo, chargeKobo });
 
     return paymentResponse.success(res, {
       reference: transaction.reference,
+      gateway,
       authorization_url: init.authorization_url,
       access_code: init.access_code,
       credit_kobo: desiredKobo,
@@ -438,7 +465,7 @@ export const initFunding = async (req, res) => {
       total_charge_kobo: chargeKobo
     }, 'Wallet funding initialized');
   } catch (error) {
-    if (error instanceof PaystackError || error instanceof WalletError) {
+    if (error instanceof PaystackError || error instanceof MonipayError || error instanceof WalletError) {
       return paymentResponse.error(res, error.message, error.statusCode || 500);
     }
     logError('[Wallet] initFunding error', { error: error.message });

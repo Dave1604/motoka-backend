@@ -4,15 +4,13 @@ import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
 import { verifyPaystackWebhook } from '../middleware/verifyPaystackWebhook.js';
 import { verifyMonipayWebhook } from '../middleware/verifyMonipayWebhook.js';
 import { verifyMonicreditWebhook } from '../middleware/verifyMonicreditWebhook.js';
-import { verifyShipbubbleWebhook } from '../middleware/verifyShipbubbleWebhook.js';
 import { paymentLimiter, webhookLimiter } from '../middleware/rateLimiter.js';
 import {
   initializePayment,
   getRenewalItems,
   getPaymentHeads,
   getStates,
-  getLGAs,
-  getPaymentConfig
+  getLGAs
 } from '../controllers/payment/payment-init.controller.js';
 
 import {
@@ -29,13 +27,13 @@ import {
   getCarPaymentReceipt,
   checkExistingPayments
 } from '../controllers/payment/payment-status.controller.js';
+import { releaseSweepHandler } from '../services/payment/renewalSweeper.service.js';
 
 import {
   handlePaystackWebhook,
   handleMonipayWebhook,
   handleMonicreditWebhook
 } from '../controllers/payment/webhook.controller.js';
-import { handleShipbubbleWebhook } from '../controllers/courier/shipbubbleWebhook.controller.js';
 
 import {
   getUserOrdersHandler,
@@ -119,26 +117,6 @@ router.post(
 );
 
 router.post(
-  '/webhooks/shipbubble',
-  webhookLimiter,
-  express.raw({ type: 'application/json', limit: '2mb' }),
-  verifyShipbubbleWebhook,
-  (req, res, next) => {
-    try {
-      const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
-      req.body = raw ? JSON.parse(raw) : {};
-      next();
-    } catch (error) {
-      return res.status(400).json({
-        status: false,
-        message: 'Invalid JSON payload'
-      });
-    }
-  },
-  handleShipbubbleWebhook
-);
-
-router.post(
   '/webhooks/monicredit',
   webhookLimiter,
   express.raw({ type: 'application/json', limit: '2mb' }),
@@ -158,11 +136,9 @@ router.post(
   handleMonicreditWebhook
 );
 
-router.get('/payments/config', authenticate, getPaymentConfig);
 router.get('/payment-schedule', authenticate, getRenewalItems);
 router.get('/payment-schedule/get-payment-head', authenticate, getPaymentHeads);
 router.get('/get-all-state', authenticate, getStates);
-router.get('/payments/states/:stateCode/lgas', authenticate, getLGAs);
 router.get('/get-lga/:stateCode', authenticate, getLGAs);
 
 router.post(
@@ -222,6 +198,10 @@ router.post(
 
 router.post('/payment/check-existing', authenticate, checkExistingPayments);
 router.get('/payment/car-receipt/:identifier', authenticate, getCarPaymentReceipt);
+
+// Internal pg_cron trigger (migration 102). Secret-gated, no auth/limiter:
+// the sweeper is idempotent and the header is the only credential.
+router.post('/internal/sweeper/release', releaseSweepHandler);
 
 router.post('/delivery/quote', authenticate, paymentLimiter, quoteDeliveryHandler);
 router.get('/orders', authenticate, getUserOrdersHandler);

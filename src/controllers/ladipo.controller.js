@@ -62,8 +62,11 @@ export const handleGetMerchandisedSections = async (req, res) => {
 const SAFE_STRING_RE = /^[\w\s\-.,&()'/]+$/;
 
 // GET /ladipo/parts
-const ALLOWED_CONDITIONS = new Set(['new', 'used', 'refurbished']);
-const ALLOWED_PART_TYPES = new Set(['oem', 'aftermarket', 'genuine']);
+// These must mirror the ladipo_condition / ladipo_part_type enums exactly.
+// Anything not listed here is dropped silently, so a mismatch makes the
+// sidebar facet return nothing for a value the facets themselves offered.
+const ALLOWED_CONDITIONS = new Set(['new', 'tokunbo', 'nigerian_used']);
+const ALLOWED_PART_TYPES = new Set(['oem', 'oes', 'aftermarket']);
 const ALLOWED_SORTS = new Set(['newest', 'oldest', 'name_asc']);
 const ALLOWED_TAGS = new Set(['essential', 'must_have', 'featured', 'bestseller', 'deal']);
 

@@ -1,3 +1,4 @@
+-- Migration 106 (was 096 on the feature branch; renumbered past 104).
 -- Mo conversation log: every question asked of the Mo assistant (signed-in
 -- `chat` and public marketing-site `publicChat`), stored for marketing
 -- intelligence (search-gap mining: what visitors ask → content/supply gaps).

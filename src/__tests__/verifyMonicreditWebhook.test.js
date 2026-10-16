@@ -1,9 +1,14 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import crypto from 'crypto';
 
-// Mock logger before importing the middleware
+// Mock logger before importing the middleware. The mock must cover every
+// name the middleware imports — a missing export is an ESM SyntaxError that
+// kills the whole suite (that is exactly how this file went permanently red).
 jest.unstable_mockModule('../utils/logger.js', () => ({
-  logError: jest.fn()
+  logError: jest.fn(),
+  logWarn: jest.fn(),
+  logInfo: jest.fn(),
+  logDebug: jest.fn()
 }));
 
 describe('verifyMonicreditWebhook Middleware', () => {
@@ -174,38 +179,40 @@ describe('verifyMonicreditWebhook Middleware', () => {
     });
   });
 
-  describe('Development Mode - Permissive', () => {
+  // NODE_ENV alone no longer bypasses verification — that was a hole. The only
+  // bypass is the explicit SKIP_WEBHOOK_VERIFY=true, which index.js refuses to
+  // boot with in production.
+  describe('Development Mode', () => {
     beforeEach(() => {
       process.env.NODE_ENV = 'development';
     });
 
-    it('should allow requests without webhook secret in development', () => {
+    it('still rejects when the webhook secret is missing', () => {
       delete process.env.MONICREDIT_WEBHOOK_SECRET;
-      
+
       verifyMonicreditWebhook(req, res, next);
-      
-      expect(next).toHaveBeenCalled();
-      expect(res.status).not.toHaveBeenCalled();
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(500);
     });
 
-    it('should allow requests without signature in development', () => {
+    it('still rejects a request without a signature', () => {
       process.env.MONICREDIT_WEBHOOK_SECRET = 'test-secret';
       req.body = Buffer.from(JSON.stringify({ test: 'data' }));
-      
+
       verifyMonicreditWebhook(req, res, next);
-      
-      expect(next).toHaveBeenCalled();
-      expect(res.status).not.toHaveBeenCalled();
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(401);
     });
 
-    it('should allow requests with invalid signature in development', () => {
+    it('bypasses verification only with SKIP_WEBHOOK_VERIFY=true', () => {
+      process.env.SKIP_WEBHOOK_VERIFY = 'true';
       process.env.MONICREDIT_WEBHOOK_SECRET = 'test-secret';
-      const payload = JSON.stringify({ test: 'data' });
-      req.body = Buffer.from(payload);
-      req.headers['x-monicredit-signature'] = 'invalid-signature';
-      
+      req.body = Buffer.from(JSON.stringify({ test: 'data' }));
+
       verifyMonicreditWebhook(req, res, next);
-      
+
       expect(next).toHaveBeenCalled();
       expect(res.status).not.toHaveBeenCalled();
     });

@@ -221,18 +221,6 @@ class HealthMonitor {
     return metrics.status === 'healthy' || metrics.status === 'degraded';
   }
 
-  recordOperation(gatewayName, success, responseTime, error = null) {
-    this.updateMetrics(gatewayName, {
-      success,
-      responseTime,
-      error: error ? {
-        message: error.message,
-        code: error.code || 'OPERATION_FAILED',
-        timestamp: new Date().toISOString()
-      } : null
-    });
-  }
-
   resetMetrics(gatewayName) {
     const metrics = this.healthMetrics.get(gatewayName);
     if (metrics) {
@@ -243,9 +231,3 @@ class HealthMonitor {
 }
 
 export const healthMonitor = new HealthMonitor();
-
-if (process.env.NODE_ENV === 'production') {
-  setTimeout(() => {
-    healthMonitor.start();
-  }, 5000);
-}

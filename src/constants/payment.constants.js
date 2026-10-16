@@ -1,82 +1,3 @@
-// Prices in kobo. Monicredit expects Naira — convert before API calls.
-// vehicle_licence is required and cannot be deselected.
-export const RENEWAL_ITEMS = {
-  VEHICLE_LICENCE: {
-    id: 'vehicle_licence',
-    name: 'Vehicle Licence',
-    price: 470000, // ₦4,700
-    required: true
-  },
-  ROAD_WORTHINESS: {
-    id: 'road_worthiness',
-    name: 'Road Worthiness',
-    price: 1500000, // ₦15,000
-    required: false
-  },
-  INSURANCE: {
-    id: 'insurance',
-    name: 'Insurance',
-    price: 1500000, // ₦15,000
-    required: false
-  },
-  REFERRAL: {
-    id: 'referral',
-    name: 'Referral',
-    price: 329000, // ₦3,290
-    required: false
-  },
-  PROOF_OF_OWNERSHIP: {
-    id: 'proof_of_ownership',
-    name: 'Proof of Ownership',
-    price: 100000, // ₦1,000
-    required: false
-  }
-};
-
-export const getAllRenewalItems = () => {
-  return Object.values(RENEWAL_ITEMS);
-};
-
-export const calculateRenewalTotal = (selectedItemIds = []) => {
-  if (!Array.isArray(selectedItemIds) || selectedItemIds.length === 0) {
-    return 0;
-  }
-  
-  const allItems = getAllRenewalItems();
-  let total = 0;
-  
-  for (const itemId of selectedItemIds) {
-    const item = allItems.find(i => i.id === itemId);
-    if (item) {
-      total += item.price;
-    }
-  }
-  
-  return total;
-};
-
-export const validateRenewalItems = (selectedItemIds = []) => {
-  if (!Array.isArray(selectedItemIds) || selectedItemIds.length === 0) {
-    return { valid: false, error: 'At least one renewal item must be selected' };
-  }
-  
-  const allItems = getAllRenewalItems();
-  const validIds = allItems.map(item => item.id);
-  
-  for (const itemId of selectedItemIds) {
-    if (!validIds.includes(itemId)) {
-      return { valid: false, error: `Invalid renewal item: ${itemId}` };
-    }
-  }
-  
-  const vehicleLicence = allItems.find(item => item.required);
-  if (vehicleLicence && !selectedItemIds.includes(vehicleLicence.id)) {
-    return { valid: false, error: `${vehicleLicence.name} is required and cannot be deselected` };
-  }
-  
-  return { valid: true, total: calculateRenewalTotal(selectedItemIds) };
-};
-
 export const PAYMENT_STATUS = {
   PENDING: 'pending',
   SUCCESSFUL: 'successful',
@@ -177,11 +98,6 @@ export const MONIPAY_EVENTS = {
 export const MONIPAY_ENDPOINTS = {
   INITIALIZE: '/transaction/initialize',
   VERIFY: '/transaction/verify'
-};
-
-export const MONICREDIT_ENDPOINTS = {
-  INITIALIZE: '/payment/transactions/init-transaction',
-  VERIFY: '/payment/transactions/verify-transaction'
 };
 
 export const HTTP_STATUS = {

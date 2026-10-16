@@ -1,6 +1,6 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
 import { logError, logDebug, logWarn, logInfo } from '../../utils/logger.js';
-import { sanitizeError, getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
+import { getUserFriendlyMessage } from '../../utils/errorSanitizer.js';
 import paymentMetrics from '../../services/payment/metrics.service.js';
 import { paymentResponse } from './payment-response.util.js';
 import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
@@ -15,6 +15,11 @@ import {
 import {
   validateRenewalItemsSelection
 } from '../../services/payment/renewalItems.service.js';
+import {
+  IN_FLIGHT_ORDER_STATUSES,
+  CHAIN_SILENT_AFTER_MINUTES,
+  itemsOverlap,
+} from '../../services/payment/scheduling.util.js';
 import {
   getAllStates,
   getLGAsByState
@@ -109,7 +114,7 @@ export const getStates = async (req, res) => {
   }
 };
 
-// GET /api/payments/states/:stateCode/lgas  |  GET /api/get-lga/:stateCode
+// GET /api/get-lga/:stateCode
 export const getLGAs = async (req, res) => {
   try {
     const { stateCode } = req.params;
@@ -131,26 +136,6 @@ export const getLGAs = async (req, res) => {
   }
 };
 
-// GET /api/payments/config
-export const getPaymentConfig = async (req, res) => {
-  try {
-    const publicKey = process.env.PAYSTACK_PUBLIC_KEY;
-    const monipayPublicKey = process.env.MONIPAY_PUBLIC_KEY || null;
-
-    if (!publicKey && !monipayPublicKey) {
-      return paymentResponse.error(res, 'Payment not configured', HTTP_STATUS.SERVER_ERROR);
-    }
-    
-    return paymentResponse.success(res, {
-      public_key: publicKey || null,
-      monipay_public_key: monipayPublicKey,
-      currency: 'NGN'
-    }, 'Payment configuration retrieved');
-  } catch (error) {
-    logError('Get payment config error', error);
-    return paymentResponse.serverError(res, 'Failed to retrieve payment configuration');
-  }
-};
 
 // POST /api/payments/initialize
 
@@ -220,7 +205,15 @@ export const initializePayment = async (req, res) => {
         });
       }
       const reserved = await reserveIdempotencyKey(idempotencyKey, userId);
-      if (!reserved) {
+      if (reserved === 'error') {
+        // Transient DB failure, NOT a duplicate — a 409 here sent users in
+        // circles ("Duplicate request" for a payment that never happened).
+        return res.status(503).json({
+          status: false,
+          message: 'Payment service is temporarily unavailable. Please try again.'
+        });
+      }
+      if (reserved === 'duplicate') {
         const retry = await getIdempotencyResponse(idempotencyKey, userId);
         if (retry?.cached && retry.response) {
           return paymentResponse.success(res, retry.response, SUCCESS_MESSAGES.PAYMENT_INITIALIZED);
@@ -249,7 +242,10 @@ export const initializePayment = async (req, res) => {
       // State of renewal
       renewal_state = null,
       // Marketing attribution ({ source, campaign }) — sanitized, optional
-      attribution = null
+      attribution = null,
+      // Second payment for items an in-flight order already covers: when
+      // true the new payment chains to the next cycle instead of 409ing.
+      confirm_duplicate = false
     } = req.body;
 
     const isPlatePayment = payment_type === PAYMENT_TYPE.PLATE_NUMBER;
@@ -510,6 +506,60 @@ export const initializePayment = async (req, res) => {
       }
     }
 
+    // In-flight same-item coverage → chain to the next cycle or ask first.
+    // Money is always accepted (pay-anytime policy); the only question is
+    // whether this payment extends the queue silently. Silent chaining is
+    // reserved for old scheduled orders (a deliberate next-cycle payment);
+    // anything sooner — or any pending/processing coverage — needs an
+    // explicit confirm_duplicate so double-clicks don't mint extra cycles.
+    let chainedAfter = null;
+    if (car && !isNonCarPayment && Array.isArray(payment_schedule_id) && payment_schedule_id.length > 0) {
+      let covering = [];
+      try {
+        const { data } = await supabaseAdmin
+          .from('renewal_orders')
+          .select('order_number, status, scheduled_for, previous_expiry_date, renewal_months, selected_items, created_at')
+          .eq('car_id', car.id)
+          .eq('user_id', userId)
+          .in('status', IN_FLIGHT_ORDER_STATUSES);
+        covering = data || [];
+      } catch (coverErr) {
+        // Coverage check must never sink an init — proceed unchained and let
+        // the success-time anchor resolution handle it.
+        logWarn('[Payment Init] Coverage check failed — proceeding', { carId: car.id, error: coverErr.message });
+      }
+      const hits = covering.filter((o) => itemsOverlap(payment_schedule_id, o.selected_items));
+      if (hits.length > 0) {
+        const ageMinutes = (iso) => (Date.now() - new Date(iso).getTime()) / 60000;
+        const silentOk = hits.every(
+          (o) => o.status === 'scheduled' && ageMinutes(o.created_at) > CHAIN_SILENT_AFTER_MINUTES
+        );
+        if (!silentOk && confirm_duplicate !== true) {
+          return paymentResponse.error(
+            res,
+            'These items are already covered by an order that is still being worked on. Confirm to pay for the following cycle.',
+            HTTP_STATUS.CONFLICT,
+            {
+              needs_confirm: true,
+              covering: hits.map((o) => ({
+                order_number: o.order_number,
+                status: o.status,
+                scheduled_for: o.scheduled_for || null,
+              })),
+            }
+          );
+        }
+        chainedAfter = hits
+          .reduce((a, b) => (new Date(b.created_at) > new Date(a.created_at) ? b : a))
+          .order_number;
+        logInfo('[Payment Init] Chaining duplicate payment to next cycle', {
+          carId: car.id,
+          userId,
+          chainedAfter,
+        });
+      }
+    }
+
     const transaction = await createTransaction({
       userId,
       carId: car?.id ?? null,
@@ -532,7 +582,8 @@ export const initializePayment = async (req, res) => {
         licenseType: isDriverLicensePayment ? String(license_type).toLowerCase() : null,
         licenseDuration: isDriverLicensePayment ? (duration || null) : null,
         renewalState: (!isNonCarPayment && renewal_state) ? renewal_state : null,
-        attribution: sanitizeAttribution(attribution)
+        attribution: sanitizeAttribution(attribution),
+        chainedAfter
       })
     });
 

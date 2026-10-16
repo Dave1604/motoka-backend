@@ -1,3 +1,4 @@
+-- Migration 105 (was 086 on the feature branch; renumbered past 104).
 -- Insurance policies issued through an embedded provider (currently Curacel).
 --
 -- Insurance was previously sourced manually through an agent and never
@@ -14,7 +15,8 @@
 create table if not exists public.insurance_policies (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
-  car_id uuid not null references public.cars(id) on delete cascade,
+  -- cars.id is bigint in this schema (not uuid); the FK type must match.
+  car_id bigint not null references public.cars(id) on delete cascade,
 
   provider text not null default 'curacel',
   provider_quotation_id text,

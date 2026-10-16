@@ -89,7 +89,7 @@ export function mapCourierStage(tracking, shipment) {
     return 'in_transit';
   }
   if (status === 'cancelled' || status === 'canceled') return 'cancelled';
-  // Shipbubble: pending / confirmed / created still count as booked
+  // pending / confirmed / created still count as booked
   return 'booked';
 }
 

@@ -30,3 +30,38 @@ export const CANONICAL = {
   INTERIOR: 'c1000000-0000-0000-0000-000000000025',
   EXTERIOR: 'c1000000-0000-0000-0000-000000000026',
 };
+
+/** Canonical slug → UUID, used by the AI pipeline when the model returns a slug. */
+export const SLUG_TO_ID = {
+  'spare-parts': CANONICAL.SPARE_PARTS,
+  'spare-parts-brake-wheel-hub-bearings': CANONICAL.BRAKE_WHEEL_HUB,
+  'spare-parts-suspension-parts': CANONICAL.SUSPENSION,
+  'spare-parts-engine-parts': CANONICAL.ENGINE_PARTS,
+  'spare-parts-steering-parts': CANONICAL.STEERING_PARTS,
+  'spare-parts-exhaust-system': CANONICAL.EXHAUST,
+  'spare-parts-transmission-drivetrain': CANONICAL.TRANSMISSION_DRIVETRAIN,
+  'servicing-parts': CANONICAL.SERVICING_PARTS,
+  'servicing-parts-oil-filter': CANONICAL.OIL_FILTER,
+  'servicing-parts-air-filter': CANONICAL.AIR_FILTER,
+  'servicing-parts-spark-plugs': CANONICAL.SPARK_PLUGS,
+  'servicing-parts-fuel-filter': CANONICAL.FUEL_FILTER,
+  'servicing-parts-timing-belts': CANONICAL.TIMING_BELTS,
+  'lubricants-fluids': CANONICAL.LUBRICANTS_FLUIDS,
+  'lubricants-fluids-engine-oil': CANONICAL.ENGINE_OIL,
+  'lubricants-fluids-gear-oil': CANONICAL.GEAR_OIL,
+  'lubricants-fluids-brake-fluid-coolant': CANONICAL.BRAKE_FLUID_COOLANT,
+  'tyres-wheels': CANONICAL.TYRES_WHEELS,
+  'tyres-wheels-car-tyres': CANONICAL.CAR_TYRES,
+  'tyres-wheels-alloy-wheels': CANONICAL.ALLOY_WHEELS,
+  'electrical-batteries': CANONICAL.ELECTRICAL_BATTERIES,
+  'electrical-batteries-car-batteries': CANONICAL.CAR_BATTERIES,
+  'electrical-batteries-bulbs-lighting': CANONICAL.BULBS_LIGHTING,
+  'electrical-batteries-alternators': CANONICAL.ALTERNATORS,
+  'car-accessories': CANONICAL.CAR_ACCESSORIES,
+  'car-accessories-interior': CANONICAL.INTERIOR,
+  'car-accessories-exterior': CANONICAL.EXTERIOR,
+};
+
+export const ID_TO_SLUG = Object.fromEntries(
+  Object.entries(SLUG_TO_ID).map(([slug, id]) => [id, slug])
+);

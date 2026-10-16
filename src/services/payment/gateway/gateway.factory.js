@@ -9,8 +9,6 @@ import { GatewayError } from './gateway.interface.js';
  * 
  * Creates and returns the appropriate gateway adapter based on the gateway name.
  * This factory pattern allows for easy gateway switching and configuration.
- * 
- * Enhanced with failover support via GatewayManager.
  */
 export class GatewayFactory {
   /**
@@ -40,37 +38,6 @@ export class GatewayFactory {
           'UNSUPPORTED_GATEWAY'
         );
     }
-  }
-
-  /**
-   * Get default gateway adapter
-   * 
-   * @returns {Object} Default gateway adapter instance
-   * Defaults to Monicredit to match frontend default
-   * Uses gateway manager for failover support
-   */
-  static async getDefaultGateway() {
-    try {
-      // Lazy import to avoid circular dependency
-      const { gatewayManager } = await import('./gateway-manager.js');
-      // Try to get available gateway with failover
-      return gatewayManager.getAvailableGateway(PAYMENT_GATEWAY.MONIPAY);
-    } catch (error) {
-      return this.getGateway(PAYMENT_GATEWAY.MONIPAY);
-    }
-  }
-
-  /**
-   * Get gateway adapter with failover support
-   * 
-   * @param {string} preferredGateway - Preferred gateway name (optional)
-   * @returns {Object} Gateway adapter instance
-   * @throws {GatewayError} If no gateway is available
-   */
-  static async getGatewayWithFailover(preferredGateway = null) {
-    // Lazy import to avoid circular dependency
-    const { gatewayManager } = await import('./gateway-manager.js');
-    return gatewayManager.getAvailableGateway(preferredGateway);
   }
 
   /**

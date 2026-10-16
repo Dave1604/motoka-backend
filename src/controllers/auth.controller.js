@@ -1,5 +1,6 @@
 import { getSupabase, getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
+import { invalidateProfileCache } from '../middleware/authenticate.js';
 import * as twoFactorService from '../services/twoFactor.service.js';
 import { sendPasswordResetOTP as sendPasswordResetEmail } from '../services/email/email.service.js';
 import {
@@ -12,7 +13,7 @@ const SAFE_PROFILE_FIELDS = [
   'id', 'user_id', 'first_name', 'last_name', 'phone_number', 'email',
   'image', 'nin', 'address', 'gender', 'user_type', 'user_type_id',
   'is_admin', 'is_suspended', 'two_factor_enabled', 'two_factor_type',
-  'two_factor_confirmed_at', 'created_at', 'updated_at',
+  'two_factor_confirmed_at', 'email_verified_at', 'created_at', 'updated_at',
 ];
 
 function sanitizeProfile(profile) {
@@ -22,7 +23,19 @@ function sanitizeProfile(profile) {
   );
 }
 
-const SAFE_PROFILE_SELECT = 'id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, created_at, updated_at';
+const SAFE_PROFILE_SELECT = 'id, user_id, first_name, last_name, phone_number, email, image, nin, address, gender, user_type, user_type_id, is_admin, is_suspended, deleted_at, two_factor_enabled, two_factor_type, two_factor_confirmed_at, email_verified_at, created_at, updated_at';
+
+// Supabase auto-confirms signups, so auth.users.email_confirmed_at is always
+// set. profiles.email_verified_at is the flag that means the user proved
+// ownership of the address (OTP, Google, or a receipt token sent by email).
+async function markEmailVerified(supabaseAdmin, userId) {
+  await supabaseAdmin
+    .from('profiles')
+    .update({ email_verified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+    .eq('id', userId)
+    .is('email_verified_at', null);
+  invalidateProfileCache(userId);
+}
 
 export const register = async (req, res) => {
   try {
@@ -99,8 +112,15 @@ export const register = async (req, res) => {
 
       if (insertError) {
         console.error('[Register] Profile insert failed:', insertError);
-        // Auth user was created — delete it to avoid orphaned auth records
-        await supabaseAdmin.auth.admin.deleteUser(userId).catch(() => {});
+        // Auth user was created — delete it to avoid orphaned auth records.
+        // If THIS delete also fails, the email is permanently stuck: it can
+        // neither register again (auth.users unique) nor log in (no profile).
+        // Log it loudly so support can find and clean the orphan.
+        await supabaseAdmin.auth.admin.deleteUser(userId).catch((delErr) => {
+          console.error('[Register] ORPHANED AUTH USER — rollback delete failed. Manual cleanup required.', {
+            userId, email, error: delErr?.message
+          });
+        });
         return response.error(res, 'Registration failed. Please try again.', 500);
       }
       profile = inserted;
@@ -108,11 +128,19 @@ export const register = async (req, res) => {
       profile = existingProfile;
     }
 
-    // Send OTP for email verification
+    // Send OTP for email verification. Non-fatal, but never silent: if this
+    // fails the user is registered yet can never verify, and every gated
+    // route will block them with no trace of why.
+    let verificationEmailSent = true;
     await supabase.auth.signInWithOtp({
       email,
       options: { shouldCreateUser: false }
-    }).catch(() => {}); // non-fatal if OTP fails
+    }).catch((otpErr) => {
+      verificationEmailSent = false;
+      console.error('[Register] Verification email failed to send — user cannot verify until resend', {
+        email, error: otpErr?.message
+      });
+    });
 
     // Referral: attribute if code provided, then ensure this user has a share code.
     // Never fail registration because of referral errors.
@@ -125,10 +153,14 @@ export const register = async (req, res) => {
       console.error('[Register] Referral hook failed (non-fatal):', referralErr?.message || referralErr);
     }
 
+    // No session until the code is entered: the verify step returns one.
     return response.created(res, {
-      user: { id: userId, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...sanitizeProfile(profile) },
-      session: data.session
-    }, 'Registration successful. Please check your email for verification code.');
+      user: { id: userId, email: data.user.email, email_verified: false, ...sanitizeProfile(profile) },
+      session: null,
+      verification_email_sent: verificationEmailSent
+    }, verificationEmailSent
+      ? 'Registration successful. Please check your email for verification code.'
+      : 'Registration successful, but the verification email could not be sent. Use "Resend code" on the verification screen.');
   } catch (error) {
     console.error('Registration error:', error);
     return response.serverError(res, 'Registration failed');
@@ -167,6 +199,14 @@ export const login = async (req, res) => {
       return response.forbidden(res, 'Your account has been deleted');
     }
 
+    // Unverified: resend the code and refuse. The frontend matches this exact
+    // message and sends the user to the verify screen.
+    if (!profile?.email_verified_at) {
+      await supabase.auth.signInWithOtp({ email, options: { shouldCreateUser: false } })
+        .catch((otpErr) => console.error('[Login] Verification resend failed', { email, error: otpErr?.message }));
+      return response.forbidden(res, 'Please verify your email before logging in.');
+    }
+
     if (profile?.two_factor_enabled) {
       const tempToken = await twoFactorService.create2FALoginToken(data.user.id);
 
@@ -183,7 +223,7 @@ export const login = async (req, res) => {
     }
 
     return response.success(res, {
-      user: { id: data.user.id, email: data.user.email, email_verified: !!data.user.email_confirmed_at, ...sanitizeProfile(profile) },
+      user: { id: data.user.id, email: data.user.email, email_verified: true, ...sanitizeProfile(profile) },
       session: data.session
     }, 'Login successful');
   } catch (error) {
@@ -373,6 +413,9 @@ export const verifyLoginOTP = async (req, res) => {
       return response.error(res, 'Invalid or expired OTP');
     }
     
+    // A correct OTP proves the inbox is theirs.
+    await markEmailVerified(supabaseAdmin, data.user.id);
+
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('*')
@@ -447,6 +490,8 @@ export const verifyEmail = async (req, res) => {
       return response.error(res, 'Invalid or expired verification code');
     }
     
+    await markEmailVerified(supabaseAdmin, data.user.id);
+
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('*')
@@ -520,8 +565,29 @@ export const verify2FALogin = async (req, res) => {
     const { data: { user } } = await supabaseAdmin.auth.admin.getUserById(user_id);
     const { data: fullProfile } = await supabaseAdmin.from('profiles').select(SAFE_PROFILE_SELECT).eq('id', user_id).single();
 
+    // The password session from step one is never returned to the client, so a
+    // verified 2FA login must mint its own. generateLink + verifyOtp is the only
+    // server-side way to create a session without re-asking for the password.
+    const { data: linkData, error: linkError } = await supabaseAdmin.auth.admin.generateLink({
+      type: 'magiclink',
+      email: user.email,
+    });
+    if (linkError) {
+      console.error('2FA session mint failed (generateLink):', linkError.message);
+      return response.serverError(res, 'Could not create login session');
+    }
+    const { data: otpData, error: otpError } = await getSupabase().auth.verifyOtp({
+      token_hash: linkData.properties.hashed_token,
+      type: 'email',
+    });
+    if (otpError || !otpData?.session) {
+      console.error('2FA session mint failed (verifyOtp):', otpError?.message);
+      return response.serverError(res, 'Could not create login session');
+    }
+
     return response.success(res, {
-      user: { id: user.id, email: user.email, email_verified: !!user.email_confirmed_at, ...sanitizeProfile(fullProfile) }
+      user: { id: user.id, email: user.email, email_verified: !!user.email_confirmed_at, ...sanitizeProfile(fullProfile) },
+      session: otpData.session
     }, '2FA verified successfully');
   } catch (error) {
     console.error('2FA verify login error:', error);

@@ -230,8 +230,8 @@ PRODUCTION_VEHICLES: List[Tuple[str, str, List[int]]] = [
     ("ACURA", "MDX", [2012, 2014, 2017]),
 ]
 
-# Back-compat alias
-TARGET_VEHICLES = LOCAL_TEST_VEHICLES
+# Default fleet for enrichment. --quick still pins Camry + C300.
+TARGET_VEHICLES = PRODUCTION_VEHICLES
 
 # Extra garage-facing model labels written alongside the RockAuto model so
 # users who saved "C-Class" / "E-Class" / "G-Wagon" still match fitment.
@@ -1052,6 +1052,9 @@ def merge_compatibility_entries(
                 "model": model,
                 "year_min": entry["year_min"],
                 "year_max": entry["year_max"],
+                "source": "rockauto",
+                "confidence": 1.0,
+                "verified_by": "rockauto",
             }
         )
     if payload:
@@ -1244,7 +1247,7 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--full",
         action="store_true",
-        help="Use PRODUCTION_VEHICLES (full Nigerian fleet). Default is Camry + C300 only.",
+        help="Use PRODUCTION_VEHICLES (full Nigerian fleet). This is now the default; kept for compatibility.",
     )
     parser.add_argument(
         "--quick",
@@ -1269,11 +1272,8 @@ def select_vehicles(options: argparse.Namespace) -> List[Tuple[str, str, List[in
             ("TOYOTA", "CAMRY", [2015]),
             ("MERCEDES-BENZ", "C300", [2015]),
         ]
-    elif options.full:
-        vehicles = list(PRODUCTION_VEHICLES)
     else:
-        # Default local validation set
-        vehicles = list(LOCAL_TEST_VEHICLES)
+        vehicles = list(PRODUCTION_VEHICLES)
 
     if options.make:
         wanted = {m.strip().upper().replace(" ", "-") for m in options.make}

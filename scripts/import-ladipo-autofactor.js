@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { getSupabaseAdmin } from '../src/config/supabase.js';
 import { CANONICAL } from './lib/ladipoCanonicalCategories.js';
+import { runCatalogPipeline } from './lib/ladipoCatalogPipeline.js';
 
 // Maps raw autofactorng.com category slugs onto the canonical taxonomy from
 // supabase/migrations/065_ladipo_catalog_reseed.sql instead of spawning new
@@ -17,6 +18,11 @@ const CATEGORY_SLUG_MAP = {
   'car-care-tools-car-care': CANONICAL.INTERIOR,
   'car-care-tools-tools-gadget-safety-products': CANONICAL.INTERIOR,
   'lubricants-fluids-additives': CANONICAL.ENGINE_OIL,
+  // The shop splits and renames these periodically; an unmapped slug falls
+  // back to Spare Parts, which files engine coolant next to CV axles and
+  // costs it the universal status its category would otherwise earn.
+  'lubricants-fluids-automotive-chemicals': CANONICAL.LUBRICANTS_FLUIDS,
+  'lubricants-fluids-coolants': CANONICAL.BRAKE_FLUID_COOLANT,
   'lubricants-fluids-coolants-appearance-products': CANONICAL.BRAKE_FLUID_COOLANT,
   'lubricants-fluids-engine-oil': CANONICAL.ENGINE_OIL,
   'lubricants-fluids-grease-gum': CANONICAL.ENGINE_OIL,
@@ -44,8 +50,21 @@ const CATEGORY_SLUG_MAP = {
 // (car-care liquids, tools, generic interior/exterior accessories).
 const UNIVERSAL_CATEGORY_IDS = new Set([CANONICAL.INTERIOR]);
 
+const warnedCategorySlugs = new Set();
+
 function resolveCanonicalCategoryId(categorySlug) {
-  return CATEGORY_SLUG_MAP[categorySlug] || CANONICAL.SPARE_PARTS;
+  const mapped = CATEGORY_SLUG_MAP[categorySlug];
+  if (mapped) return mapped;
+  // Falling back is right — an unknown category should still yield products —
+  // but doing it silently is how coolant ends up shelved as a spare part.
+  if (!warnedCategorySlugs.has(categorySlug)) {
+    warnedCategorySlugs.add(categorySlug);
+    console.warn(
+      `[import-autofactor] unmapped source category "${categorySlug}" — filing as `
+      + `Spare Parts. Add it to CATEGORY_SLUG_MAP to shelve it correctly.`
+    );
+  }
+  return CANONICAL.SPARE_PARTS;
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -260,7 +279,7 @@ function inferBrand(title) {
   return firstToken.replace(/[^A-Za-z0-9/&.-]/g, '') || 'Autofactor';
 }
 
-async function crawlAutofactorProducts(limit, maxPages, perCategoryLimit) {
+export async function crawlAutofactorProducts(limit, maxPages, perCategoryLimit) {
   const homeHtml = await fetchHtml(BASE_URL);
   const categoryLinks = extractCategoryLinks(homeHtml);
   const products = [];
@@ -472,11 +491,24 @@ async function main() {
     return;
   }
 
-  const result = await syncToDatabase(products, options);
-  console.log(`[import-autofactor] Import complete. upserted=${result.created}, skipped=${result.skipped}`);
+  if (options.sync) {
+    const result = await syncToDatabase(products, options);
+    console.log(`[import-autofactor] Raw import complete. upserted=${result.created}, skipped=${result.skipped}`);
+    return;
+  }
+
+  await runCatalogPipeline(products, {
+    dryRun: false,
+    rehostImages: true,
+    resume: true,
+    sellerLabel: options.sellerLabel,
+  });
 }
 
-main().catch((error) => {
-  console.error(`[import-autofactor] Fatal error: ${error.message}`);
-  process.exit(1);
-});
+const invokedDirectly = process.argv[1]?.endsWith('import-ladipo-autofactor.js');
+if (invokedDirectly) {
+  main().catch((error) => {
+    console.error(`[import-autofactor] Fatal error: ${error.message}`);
+    process.exit(1);
+  });
+}

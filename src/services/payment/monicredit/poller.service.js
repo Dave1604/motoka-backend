@@ -39,8 +39,8 @@ import { verifyGuestPayment } from '../../guest/guestRenewal.service.js';
  *     so we never accidentally credit a payment Monicredit hasn't approved.
  *   - Amount tolerance is configurable via MONICREDIT_AMOUNT_TOLERANCE_BPS,
  *     same envelope the webhook handler uses.
- *   - Disabled by default in production; opt in by setting
- *     MONICREDIT_POLLER_ENABLED=true.
+ *   - Enabled by default; opt out by setting
+ *     MONICREDIT_POLLER_ENABLED=false.
  */
 class MonicreditPoller {
   constructor() {

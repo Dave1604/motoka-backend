@@ -1,0 +1,6023 @@
+{
+  "generated_at": "2026-09-02T12:34:08.834Z",
+  "source": "NHTSA vPIC + Nigeria supplement",
+  "year_range": [
+    1995,
+    2027
+  ],
+  "makes": {
+    "toyota": {
+      "name": "Toyota",
+      "models": {
+        "86": {
+          "name": "86",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "86"
+          ],
+          "source": "vpic"
+        },
+        "corolla": {
+          "name": "Corolla",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Corolla"
+          ],
+          "source": "vpic"
+        },
+        "landcruiser": {
+          "name": "Land Cruiser",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Land Cruiser",
+            "Landcruiser",
+            "LC200",
+            "LC300"
+          ],
+          "source": "vpic+ng"
+        },
+        "4runner": {
+          "name": "4Runner",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "4Runner"
+          ],
+          "source": "vpic"
+        },
+        "tacoma": {
+          "name": "Tacoma",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Tacoma"
+          ],
+          "source": "vpic"
+        },
+        "avalon": {
+          "name": "Avalon",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "Avalon"
+          ],
+          "source": "vpic"
+        },
+        "tundra": {
+          "name": "Tundra",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Tundra"
+          ],
+          "source": "vpic"
+        },
+        "sienna": {
+          "name": "Sienna",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Sienna"
+          ],
+          "source": "vpic"
+        },
+        "camry": {
+          "name": "Camry",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Camry"
+          ],
+          "source": "vpic"
+        },
+        "rav4": {
+          "name": "RAV4",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "RAV4"
+          ],
+          "source": "vpic"
+        },
+        "prius": {
+          "name": "Prius",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Prius"
+          ],
+          "source": "vpic"
+        },
+        "highlander": {
+          "name": "Highlander",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Highlander"
+          ],
+          "source": "vpic"
+        },
+        "sequoia": {
+          "name": "Sequoia",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Sequoia"
+          ],
+          "source": "vpic"
+        },
+        "yaris": {
+          "name": "Yaris",
+          "year_min": 2006,
+          "year_max": 2020,
+          "labels": [
+            "Yaris"
+          ],
+          "source": "vpic"
+        },
+        "priusc": {
+          "name": "Prius C",
+          "year_min": 2012,
+          "year_max": 2020,
+          "labels": [
+            "Prius C"
+          ],
+          "source": "vpic"
+        },
+        "mirai": {
+          "name": "Mirai",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Mirai"
+          ],
+          "source": "vpic"
+        },
+        "corollaim": {
+          "name": "COROLLA iM",
+          "year_min": 2016,
+          "year_max": 2018,
+          "labels": [
+            "COROLLA iM"
+          ],
+          "source": "vpic"
+        },
+        "priusprimephev": {
+          "name": "Prius Prime (PHEV)",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Prius Prime (PHEV)"
+          ],
+          "source": "vpic"
+        },
+        "yarisia": {
+          "name": "Yaris iA",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "Yaris iA"
+          ],
+          "source": "vpic"
+        },
+        "chr": {
+          "name": "C-HR",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "C-HR"
+          ],
+          "source": "vpic"
+        },
+        "hilux": {
+          "name": "Hilux",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Hilux",
+            "Hi-Lux"
+          ],
+          "source": "ng"
+        },
+        "hiace": {
+          "name": "Hiace",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Hiace",
+            "Hi-Ace"
+          ],
+          "source": "ng"
+        },
+        "landcruiserprado": {
+          "name": "Land Cruiser Prado",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "Land Cruiser Prado",
+            "Prado",
+            "LC Prado"
+          ],
+          "source": "ng"
+        },
+        "avensis": {
+          "name": "Avensis",
+          "year_min": 1997,
+          "year_max": 2018,
+          "labels": [
+            "Avensis"
+          ],
+          "source": "ng"
+        },
+        "rush": {
+          "name": "Rush",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Rush"
+          ],
+          "source": "ng"
+        },
+        "fortuner": {
+          "name": "Fortuner",
+          "year_min": 2005,
+          "year_max": 2027,
+          "labels": [
+            "Fortuner"
+          ],
+          "source": "ng"
+        },
+        "innova": {
+          "name": "Innova",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Innova"
+          ],
+          "source": "ng"
+        },
+        "corollaquest": {
+          "name": "Corolla Quest",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "Corolla Quest"
+          ],
+          "source": "ng"
+        },
+        "picnic": {
+          "name": "Picnic",
+          "year_min": 1996,
+          "year_max": 2009,
+          "labels": [
+            "Picnic"
+          ],
+          "source": "ng"
+        },
+        "coaster": {
+          "name": "Coaster",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Coaster"
+          ],
+          "source": "ng"
+        },
+        "dyna": {
+          "name": "Dyna",
+          "year_min": 1995,
+          "year_max": 2020,
+          "labels": [
+            "Dyna"
+          ],
+          "source": "ng"
+        },
+        "verso": {
+          "name": "Verso",
+          "year_min": 2001,
+          "year_max": 2018,
+          "labels": [
+            "Verso",
+            "Corolla Verso"
+          ],
+          "source": "ng"
+        },
+        "etios": {
+          "name": "Etios",
+          "year_min": 2010,
+          "year_max": 2022,
+          "labels": [
+            "Etios"
+          ],
+          "source": "ng"
+        },
+        "vitz": {
+          "name": "Vitz",
+          "year_min": 1999,
+          "year_max": 2027,
+          "labels": [
+            "Vitz"
+          ],
+          "source": "ng"
+        },
+        "allion": {
+          "name": "Allion",
+          "year_min": 2001,
+          "year_max": 2027,
+          "labels": [
+            "Allion"
+          ],
+          "source": "ng"
+        },
+        "premio": {
+          "name": "Premio",
+          "year_min": 2001,
+          "year_max": 2027,
+          "labels": [
+            "Premio"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "honda": {
+      "name": "Honda",
+      "models": {
+        "accord": {
+          "name": "Accord",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Accord"
+          ],
+          "source": "vpic"
+        },
+        "civic": {
+          "name": "Civic",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Civic"
+          ],
+          "source": "vpic"
+        },
+        "odyssey": {
+          "name": "Odyssey",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Odyssey"
+          ],
+          "source": "vpic"
+        },
+        "crv": {
+          "name": "CR-V",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "CR-V",
+            "CRV"
+          ],
+          "source": "vpic+ng"
+        },
+        "pilot": {
+          "name": "Pilot",
+          "year_min": 2002,
+          "year_max": 2027,
+          "labels": [
+            "Pilot"
+          ],
+          "source": "vpic"
+        },
+        "ridgeline": {
+          "name": "Ridgeline",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Ridgeline"
+          ],
+          "source": "vpic"
+        },
+        "fit": {
+          "name": "Fit",
+          "year_min": 2006,
+          "year_max": 2020,
+          "labels": [
+            "Fit"
+          ],
+          "source": "vpic"
+        },
+        "hrv": {
+          "name": "HR-V",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "HR-V",
+            "HRV"
+          ],
+          "source": "vpic+ng"
+        },
+        "clarity": {
+          "name": "Clarity",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "Clarity"
+          ],
+          "source": "vpic"
+        },
+        "civictyper": {
+          "name": "Civic Type R",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Civic Type R"
+          ],
+          "source": "vpic"
+        },
+        "city": {
+          "name": "City",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "City"
+          ],
+          "source": "ng"
+        },
+        "jazz": {
+          "name": "Jazz",
+          "year_min": 2001,
+          "year_max": 2027,
+          "labels": [
+            "Jazz"
+          ],
+          "source": "ng"
+        },
+        "stream": {
+          "name": "Stream",
+          "year_min": 2000,
+          "year_max": 2014,
+          "labels": [
+            "Stream"
+          ],
+          "source": "ng"
+        },
+        "crosstour": {
+          "name": "Crosstour",
+          "year_min": 2010,
+          "year_max": 2015,
+          "labels": [
+            "Crosstour"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "nissan": {
+      "name": "Nissan",
+      "models": {
+        "altima": {
+          "name": "Altima",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Altima"
+          ],
+          "source": "vpic"
+        },
+        "sentra": {
+          "name": "Sentra",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Sentra"
+          ],
+          "source": "vpic"
+        },
+        "pathfinder": {
+          "name": "Pathfinder",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Pathfinder"
+          ],
+          "source": "vpic"
+        },
+        "maxima": {
+          "name": "Maxima",
+          "year_min": 1995,
+          "year_max": 2024,
+          "labels": [
+            "Maxima"
+          ],
+          "source": "vpic"
+        },
+        "frontier": {
+          "name": "Frontier",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "Frontier"
+          ],
+          "source": "vpic"
+        },
+        "murano": {
+          "name": "Murano",
+          "year_min": 2002,
+          "year_max": 2027,
+          "labels": [
+            "Murano"
+          ],
+          "source": "vpic"
+        },
+        "armada": {
+          "name": "Armada",
+          "year_min": 2002,
+          "year_max": 2027,
+          "labels": [
+            "Armada"
+          ],
+          "source": "vpic"
+        },
+        "titan": {
+          "name": "Titan",
+          "year_min": 2002,
+          "year_max": 2024,
+          "labels": [
+            "Titan"
+          ],
+          "source": "vpic"
+        },
+        "gtr": {
+          "name": "GT-R",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "GT-R"
+          ],
+          "source": "vpic"
+        },
+        "versa": {
+          "name": "Versa",
+          "year_min": 2006,
+          "year_max": 2026,
+          "labels": [
+            "Versa"
+          ],
+          "source": "vpic"
+        },
+        "370z": {
+          "name": "370Z",
+          "year_min": 2008,
+          "year_max": 2022,
+          "labels": [
+            "370Z"
+          ],
+          "source": "vpic"
+        },
+        "rogue": {
+          "name": "Rogue",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "Rogue"
+          ],
+          "source": "vpic"
+        },
+        "leaf": {
+          "name": "Leaf",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "Leaf"
+          ],
+          "source": "vpic"
+        },
+        "juke": {
+          "name": "Juke",
+          "year_min": 2010,
+          "year_max": 2018,
+          "labels": [
+            "Juke"
+          ],
+          "source": "vpic"
+        },
+        "nv200": {
+          "name": "NV200",
+          "year_min": 2012,
+          "year_max": 2024,
+          "labels": [
+            "NV200"
+          ],
+          "source": "vpic"
+        },
+        "nv": {
+          "name": "NV",
+          "year_min": 2010,
+          "year_max": 2022,
+          "labels": [
+            "NV"
+          ],
+          "source": "vpic"
+        },
+        "versanote": {
+          "name": "Versa Note",
+          "year_min": 2014,
+          "year_max": 2020,
+          "labels": [
+            "Versa Note"
+          ],
+          "source": "vpic"
+        },
+        "roguesport": {
+          "name": "Rogue Sport",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "Rogue Sport"
+          ],
+          "source": "vpic"
+        },
+        "kicks": {
+          "name": "Kicks",
+          "year_min": 2018,
+          "year_max": 2024,
+          "labels": [
+            "Kicks"
+          ],
+          "source": "vpic"
+        },
+        "xtrail": {
+          "name": "X-Trail",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "X-Trail",
+            "XTrail"
+          ],
+          "source": "ng"
+        },
+        "qashqai": {
+          "name": "Qashqai",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Qashqai"
+          ],
+          "source": "ng"
+        },
+        "primera": {
+          "name": "Primera",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "Primera"
+          ],
+          "source": "ng"
+        },
+        "almera": {
+          "name": "Almera",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Almera"
+          ],
+          "source": "ng"
+        },
+        "micra": {
+          "name": "Micra",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Micra"
+          ],
+          "source": "ng"
+        },
+        "patrol": {
+          "name": "Patrol",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Patrol"
+          ],
+          "source": "ng"
+        },
+        "navara": {
+          "name": "Navara",
+          "year_min": 1997,
+          "year_max": 2027,
+          "labels": [
+            "Navara"
+          ],
+          "source": "ng"
+        },
+        "sunny": {
+          "name": "Sunny",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Sunny"
+          ],
+          "source": "ng"
+        },
+        "note": {
+          "name": "Note",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Note"
+          ],
+          "source": "ng"
+        },
+        "serena": {
+          "name": "Serena",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Serena"
+          ],
+          "source": "ng"
+        },
+        "tiida": {
+          "name": "Tiida",
+          "year_min": 2004,
+          "year_max": 2020,
+          "labels": [
+            "Tiida"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "lexus": {
+      "name": "Lexus",
+      "models": {
+        "gs": {
+          "name": "GS",
+          "year_min": 1995,
+          "year_max": 2020,
+          "labels": [
+            "GS"
+          ],
+          "source": "vpic"
+        },
+        "ls": {
+          "name": "LS",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "LS"
+          ],
+          "source": "vpic"
+        },
+        "es": {
+          "name": "ES",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "ES"
+          ],
+          "source": "vpic+ng"
+        },
+        "lx": {
+          "name": "LX",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "LX"
+          ],
+          "source": "vpic+ng"
+        },
+        "rx": {
+          "name": "RX",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "RX"
+          ],
+          "source": "vpic+ng"
+        },
+        "is": {
+          "name": "IS",
+          "year_min": 1999,
+          "year_max": 2027,
+          "labels": [
+            "IS"
+          ],
+          "source": "vpic+ng"
+        },
+        "gx": {
+          "name": "GX",
+          "year_min": 2002,
+          "year_max": 2027,
+          "labels": [
+            "GX"
+          ],
+          "source": "vpic+ng"
+        },
+        "rc": {
+          "name": "RC",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "RC"
+          ],
+          "source": "vpic+ng"
+        },
+        "nx": {
+          "name": "NX",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "NX"
+          ],
+          "source": "vpic+ng"
+        },
+        "lc": {
+          "name": "LC",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "LC"
+          ],
+          "source": "vpic"
+        },
+        "es330": {
+          "name": "ES330",
+          "year_min": 2004,
+          "year_max": 2006,
+          "labels": [
+            "ES330",
+            "ES"
+          ],
+          "source": "ng"
+        },
+        "es350": {
+          "name": "ES350",
+          "year_min": 2007,
+          "year_max": 2027,
+          "labels": [
+            "ES350",
+            "ES"
+          ],
+          "source": "ng"
+        },
+        "rx300": {
+          "name": "RX300",
+          "year_min": 1999,
+          "year_max": 2003,
+          "labels": [
+            "RX300",
+            "RX"
+          ],
+          "source": "ng"
+        },
+        "rx330": {
+          "name": "RX330",
+          "year_min": 2004,
+          "year_max": 2006,
+          "labels": [
+            "RX330",
+            "RX"
+          ],
+          "source": "ng"
+        },
+        "rx350": {
+          "name": "RX350",
+          "year_min": 2007,
+          "year_max": 2027,
+          "labels": [
+            "RX350",
+            "RX"
+          ],
+          "source": "ng"
+        },
+        "gx460": {
+          "name": "GX460",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "GX460",
+            "GX"
+          ],
+          "source": "ng"
+        },
+        "gx470": {
+          "name": "GX470",
+          "year_min": 2003,
+          "year_max": 2009,
+          "labels": [
+            "GX470",
+            "GX"
+          ],
+          "source": "ng"
+        },
+        "lx470": {
+          "name": "LX470",
+          "year_min": 1998,
+          "year_max": 2007,
+          "labels": [
+            "LX470",
+            "LX"
+          ],
+          "source": "ng"
+        },
+        "lx570": {
+          "name": "LX570",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "LX570",
+            "LX"
+          ],
+          "source": "ng"
+        },
+        "is250": {
+          "name": "IS250",
+          "year_min": 2006,
+          "year_max": 2015,
+          "labels": [
+            "IS250",
+            "IS"
+          ],
+          "source": "ng"
+        },
+        "is300": {
+          "name": "IS300",
+          "year_min": 2001,
+          "year_max": 2027,
+          "labels": [
+            "IS300",
+            "IS"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "mercedesbenz": {
+      "name": "Mercedes-Benz",
+      "models": {
+        "slclass": {
+          "name": "SL-Class",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "SL-Class"
+          ],
+          "source": "vpic"
+        },
+        "eclass": {
+          "name": "E-Class",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "E-Class",
+            "E Class"
+          ],
+          "source": "vpic+ng"
+        },
+        "cclass": {
+          "name": "C-Class",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "C-Class",
+            "C Class"
+          ],
+          "source": "vpic+ng"
+        },
+        "sclass": {
+          "name": "S-Class",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "S-Class",
+            "S Class"
+          ],
+          "source": "vpic+ng"
+        },
+        "mclass": {
+          "name": "M-Class",
+          "year_min": 1995,
+          "year_max": 2020,
+          "labels": [
+            "M-Class",
+            "ML"
+          ],
+          "source": "vpic+ng"
+        },
+        "gclass": {
+          "name": "G-Class",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "G-Class",
+            "G Class",
+            "G-Wagon",
+            "G Wagon"
+          ],
+          "source": "vpic+ng"
+        },
+        "clsclass": {
+          "name": "CLS-Class",
+          "year_min": 2004,
+          "year_max": 2024,
+          "labels": [
+            "CLS-Class"
+          ],
+          "source": "vpic"
+        },
+        "sprinter": {
+          "name": "Sprinter",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Sprinter"
+          ],
+          "source": "vpic+ng"
+        },
+        "slsclass": {
+          "name": "SLS-Class",
+          "year_min": 2010,
+          "year_max": 2022,
+          "labels": [
+            "SLS-Class"
+          ],
+          "source": "vpic"
+        },
+        "bclass": {
+          "name": "B-Class",
+          "year_min": 2010,
+          "year_max": 2022,
+          "labels": [
+            "B-Class"
+          ],
+          "source": "vpic"
+        },
+        "glkclass": {
+          "name": "GLK-Class",
+          "year_min": 2009,
+          "year_max": 2020,
+          "labels": [
+            "GLK-Class",
+            "GLK"
+          ],
+          "source": "vpic+ng"
+        },
+        "claclass": {
+          "name": "CLA-Class",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "CLA-Class"
+          ],
+          "source": "vpic"
+        },
+        "glaclass": {
+          "name": "GLA-Class",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "GLA-Class",
+            "GLA"
+          ],
+          "source": "vpic+ng"
+        },
+        "amggt": {
+          "name": "AMG GT",
+          "year_min": 2016,
+          "year_max": 2026,
+          "labels": [
+            "AMG GT"
+          ],
+          "source": "vpic"
+        },
+        "glcclass": {
+          "name": "GLC-Class",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "GLC-Class",
+            "GLC"
+          ],
+          "source": "vpic+ng"
+        },
+        "gleclass": {
+          "name": "GLE-Class",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "GLE-Class",
+            "GLE"
+          ],
+          "source": "vpic+ng"
+        },
+        "metris": {
+          "name": "Metris",
+          "year_min": 2016,
+          "year_max": 2024,
+          "labels": [
+            "Metris"
+          ],
+          "source": "vpic"
+        },
+        "slcclass": {
+          "name": "SLC-Class",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "SLC-Class"
+          ],
+          "source": "vpic"
+        },
+        "glsclass": {
+          "name": "GLS-Class",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "GLS-Class",
+            "GLS"
+          ],
+          "source": "vpic+ng"
+        },
+        "c180": {
+          "name": "C180",
+          "year_min": 1995,
+          "year_max": 2021,
+          "labels": [
+            "C180",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "c200": {
+          "name": "C200",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "C200",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "c230": {
+          "name": "C230",
+          "year_min": 1996,
+          "year_max": 2007,
+          "labels": [
+            "C230",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "c240": {
+          "name": "C240",
+          "year_min": 1998,
+          "year_max": 2005,
+          "labels": [
+            "C240",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "c250": {
+          "name": "C250",
+          "year_min": 2008,
+          "year_max": 2015,
+          "labels": [
+            "C250",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "c280": {
+          "name": "C280",
+          "year_min": 1995,
+          "year_max": 2007,
+          "labels": [
+            "C280",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "c300": {
+          "name": "C300",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "C300",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "c350": {
+          "name": "C350",
+          "year_min": 2006,
+          "year_max": 2015,
+          "labels": [
+            "C350",
+            "C-Class"
+          ],
+          "source": "ng"
+        },
+        "e200": {
+          "name": "E200",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "E200",
+            "E-Class"
+          ],
+          "source": "ng"
+        },
+        "e230": {
+          "name": "E230",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "E230",
+            "E-Class"
+          ],
+          "source": "ng"
+        },
+        "e240": {
+          "name": "E240",
+          "year_min": 1997,
+          "year_max": 2005,
+          "labels": [
+            "E240",
+            "E-Class"
+          ],
+          "source": "ng"
+        },
+        "e280": {
+          "name": "E280",
+          "year_min": 1995,
+          "year_max": 2009,
+          "labels": [
+            "E280",
+            "E-Class"
+          ],
+          "source": "ng"
+        },
+        "e300": {
+          "name": "E300",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "E300",
+            "E-Class"
+          ],
+          "source": "ng"
+        },
+        "e320": {
+          "name": "E320",
+          "year_min": 1995,
+          "year_max": 2009,
+          "labels": [
+            "E320",
+            "E-Class"
+          ],
+          "source": "ng"
+        },
+        "e350": {
+          "name": "E350",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "E350",
+            "E-Class"
+          ],
+          "source": "ng"
+        },
+        "s350": {
+          "name": "S350",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "S350",
+            "S-Class"
+          ],
+          "source": "ng"
+        },
+        "s550": {
+          "name": "S550",
+          "year_min": 2007,
+          "year_max": 2020,
+          "labels": [
+            "S550",
+            "S-Class"
+          ],
+          "source": "ng"
+        },
+        "g550": {
+          "name": "G550",
+          "year_min": 2009,
+          "year_max": 2027,
+          "labels": [
+            "G550",
+            "G-Class",
+            "G-Wagon"
+          ],
+          "source": "ng"
+        },
+        "g63amg": {
+          "name": "G63 AMG",
+          "year_min": 2013,
+          "year_max": 2027,
+          "labels": [
+            "G63 AMG",
+            "G63",
+            "G-Class",
+            "G-Wagon"
+          ],
+          "source": "ng"
+        },
+        "glk350": {
+          "name": "GLK350",
+          "year_min": 2010,
+          "year_max": 2015,
+          "labels": [
+            "GLK350",
+            "GLK",
+            "GLK-Class"
+          ],
+          "source": "ng"
+        },
+        "ml350": {
+          "name": "ML350",
+          "year_min": 2003,
+          "year_max": 2015,
+          "labels": [
+            "ML350",
+            "ML",
+            "M-Class"
+          ],
+          "source": "ng"
+        },
+        "gle350": {
+          "name": "GLE350",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "GLE350",
+            "GLE",
+            "GLE-Class"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "bmw": {
+      "name": "BMW",
+      "models": {
+        "m3": {
+          "name": "M3",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "M3"
+          ],
+          "source": "vpic"
+        },
+        "740i": {
+          "name": "740i",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "740i"
+          ],
+          "source": "vpic"
+        },
+        "530i": {
+          "name": "530i",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "530i"
+          ],
+          "source": "vpic"
+        },
+        "540i": {
+          "name": "540i",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "540i"
+          ],
+          "source": "vpic"
+        },
+        "x5": {
+          "name": "X5",
+          "year_min": 1999,
+          "year_max": 2027,
+          "labels": [
+            "X5"
+          ],
+          "source": "vpic+ng"
+        },
+        "750i": {
+          "name": "750i",
+          "year_min": 2000,
+          "year_max": 2022,
+          "labels": [
+            "750i"
+          ],
+          "source": "vpic"
+        },
+        "m5": {
+          "name": "M5",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "M5"
+          ],
+          "source": "vpic"
+        },
+        "330i": {
+          "name": "330i",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "330i",
+            "3-Series"
+          ],
+          "source": "vpic+ng"
+        },
+        "x3": {
+          "name": "X3",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "X3"
+          ],
+          "source": "vpic+ng"
+        },
+        "m6": {
+          "name": "M6",
+          "year_min": 2006,
+          "year_max": 2020,
+          "labels": [
+            "M6"
+          ],
+          "source": "vpic"
+        },
+        "650i": {
+          "name": "650i",
+          "year_min": 2006,
+          "year_max": 2020,
+          "labels": [
+            "650i"
+          ],
+          "source": "vpic"
+        },
+        "x6": {
+          "name": "X6",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "X6"
+          ],
+          "source": "vpic+ng"
+        },
+        "640i": {
+          "name": "640i",
+          "year_min": 2012,
+          "year_max": 2020,
+          "labels": [
+            "640i"
+          ],
+          "source": "vpic"
+        },
+        "228i": {
+          "name": "228i",
+          "year_min": 2014,
+          "year_max": 2026,
+          "labels": [
+            "228i"
+          ],
+          "source": "vpic"
+        },
+        "320i": {
+          "name": "320i",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "320i",
+            "3-Series"
+          ],
+          "source": "vpic+ng"
+        },
+        "328d": {
+          "name": "328d",
+          "year_min": 2014,
+          "year_max": 2018,
+          "labels": [
+            "328d"
+          ],
+          "source": "vpic"
+        },
+        "i3": {
+          "name": "i3",
+          "year_min": 2014,
+          "year_max": 2022,
+          "labels": [
+            "i3"
+          ],
+          "source": "vpic"
+        },
+        "activehybrid5": {
+          "name": "ActiveHybrid 5",
+          "year_min": 2012,
+          "year_max": 2016,
+          "labels": [
+            "ActiveHybrid 5"
+          ],
+          "source": "vpic"
+        },
+        "x1": {
+          "name": "X1",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "X1"
+          ],
+          "source": "vpic+ng"
+        },
+        "x4": {
+          "name": "X4",
+          "year_min": 2014,
+          "year_max": 2026,
+          "labels": [
+            "X4"
+          ],
+          "source": "vpic"
+        },
+        "m4": {
+          "name": "M4",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "M4"
+          ],
+          "source": "vpic"
+        },
+        "m2": {
+          "name": "M2",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "M2"
+          ],
+          "source": "vpic"
+        },
+        "340i": {
+          "name": "340i",
+          "year_min": 2016,
+          "year_max": 2024,
+          "labels": [
+            "340i"
+          ],
+          "source": "vpic"
+        },
+        "330e": {
+          "name": "330e",
+          "year_min": 2016,
+          "year_max": 2024,
+          "labels": [
+            "330e"
+          ],
+          "source": "vpic"
+        },
+        "230i": {
+          "name": "230i",
+          "year_min": 2016,
+          "year_max": 2026,
+          "labels": [
+            "230i"
+          ],
+          "source": "vpic"
+        },
+        "m240i": {
+          "name": "M240i",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "M240i"
+          ],
+          "source": "vpic"
+        },
+        "430i": {
+          "name": "430i",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "430i"
+          ],
+          "source": "vpic"
+        },
+        "440i": {
+          "name": "440i",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "440i"
+          ],
+          "source": "vpic"
+        },
+        "740e": {
+          "name": "740e",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "740e"
+          ],
+          "source": "vpic"
+        },
+        "m760i": {
+          "name": "M760i",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "M760i"
+          ],
+          "source": "vpic"
+        },
+        "750ib7": {
+          "name": "750i, B7",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "750i, B7"
+          ],
+          "source": "vpic"
+        },
+        "650ib6": {
+          "name": "650i, B6",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "650i, B6"
+          ],
+          "source": "vpic"
+        },
+        "530e": {
+          "name": "530e",
+          "year_min": 2018,
+          "year_max": 2024,
+          "labels": [
+            "530e"
+          ],
+          "source": "vpic"
+        },
+        "m550i": {
+          "name": "M550i",
+          "year_min": 2018,
+          "year_max": 2024,
+          "labels": [
+            "M550i"
+          ],
+          "source": "vpic"
+        },
+        "x2": {
+          "name": "X2",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "X2"
+          ],
+          "source": "vpic"
+        },
+        "540d": {
+          "name": "540d",
+          "year_min": 2018,
+          "year_max": 2020,
+          "labels": [
+            "540d"
+          ],
+          "source": "vpic"
+        },
+        "640xi": {
+          "name": "640xi",
+          "year_min": 2018,
+          "year_max": 2020,
+          "labels": [
+            "640xi"
+          ],
+          "source": "vpic"
+        },
+        "3series": {
+          "name": "3-Series",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "3-Series",
+            "3 Series"
+          ],
+          "source": "ng"
+        },
+        "328i": {
+          "name": "328i",
+          "year_min": 1996,
+          "year_max": 2016,
+          "labels": [
+            "328i",
+            "3-Series"
+          ],
+          "source": "ng"
+        },
+        "5series": {
+          "name": "5-Series",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "5-Series",
+            "5 Series"
+          ],
+          "source": "ng"
+        },
+        "520i": {
+          "name": "520i",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "520i",
+            "5-Series"
+          ],
+          "source": "ng"
+        },
+        "528i": {
+          "name": "528i",
+          "year_min": 1996,
+          "year_max": 2016,
+          "labels": [
+            "528i",
+            "5-Series"
+          ],
+          "source": "ng"
+        },
+        "535i": {
+          "name": "535i",
+          "year_min": 2008,
+          "year_max": 2016,
+          "labels": [
+            "535i",
+            "5-Series"
+          ],
+          "source": "ng"
+        },
+        "7series": {
+          "name": "7-Series",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "7-Series",
+            "7 Series"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "ford": {
+      "name": "Ford",
+      "models": {
+        "34": {
+          "name": "'34",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "'34"
+          ],
+          "source": "vpic"
+        },
+        "mustang": {
+          "name": "Mustang",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Mustang"
+          ],
+          "source": "vpic"
+        },
+        "taurus": {
+          "name": "Taurus",
+          "year_min": 1995,
+          "year_max": 2020,
+          "labels": [
+            "Taurus"
+          ],
+          "source": "vpic"
+        },
+        "explorer": {
+          "name": "Explorer",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Explorer"
+          ],
+          "source": "vpic"
+        },
+        "f150": {
+          "name": "F-150",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "F-150"
+          ],
+          "source": "vpic"
+        },
+        "f250": {
+          "name": "F-250",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "F-250"
+          ],
+          "source": "vpic"
+        },
+        "f350": {
+          "name": "F-350",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "F-350"
+          ],
+          "source": "vpic"
+        },
+        "expedition": {
+          "name": "Expedition",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "Expedition"
+          ],
+          "source": "vpic"
+        },
+        "f450": {
+          "name": "F-450",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "F-450"
+          ],
+          "source": "vpic"
+        },
+        "f550": {
+          "name": "F-550",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "F-550"
+          ],
+          "source": "vpic"
+        },
+        "focus": {
+          "name": "Focus",
+          "year_min": 2000,
+          "year_max": 2018,
+          "labels": [
+            "Focus"
+          ],
+          "source": "vpic"
+        },
+        "escape": {
+          "name": "Escape",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Escape"
+          ],
+          "source": "vpic"
+        },
+        "gt": {
+          "name": "GT",
+          "year_min": 2004,
+          "year_max": 2022,
+          "labels": [
+            "GT"
+          ],
+          "source": "vpic"
+        },
+        "fusion": {
+          "name": "Fusion",
+          "year_min": 2006,
+          "year_max": 2020,
+          "labels": [
+            "Fusion"
+          ],
+          "source": "vpic"
+        },
+        "edge": {
+          "name": "Edge",
+          "year_min": 2006,
+          "year_max": 2024,
+          "labels": [
+            "Edge"
+          ],
+          "source": "vpic"
+        },
+        "expeditionmax": {
+          "name": "Expedition MAX",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Expedition MAX"
+          ],
+          "source": "vpic"
+        },
+        "flex": {
+          "name": "Flex",
+          "year_min": 2008,
+          "year_max": 2020,
+          "labels": [
+            "Flex"
+          ],
+          "source": "vpic"
+        },
+        "transitconnect": {
+          "name": "Transit Connect",
+          "year_min": 2010,
+          "year_max": 2024,
+          "labels": [
+            "Transit Connect"
+          ],
+          "source": "vpic"
+        },
+        "fiesta": {
+          "name": "Fiesta",
+          "year_min": 2010,
+          "year_max": 2020,
+          "labels": [
+            "Fiesta"
+          ],
+          "source": "vpic"
+        },
+        "cmax": {
+          "name": "C-Max",
+          "year_min": 2012,
+          "year_max": 2018,
+          "labels": [
+            "C-Max"
+          ],
+          "source": "vpic"
+        },
+        "transit": {
+          "name": "Transit",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Transit"
+          ],
+          "source": "vpic+ng"
+        },
+        "malibusedan": {
+          "name": "Malibu Sedan",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Malibu Sedan"
+          ],
+          "source": "vpic"
+        },
+        "cordovasedan": {
+          "name": "Cordova Sedan",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Cordova Sedan"
+          ],
+          "source": "vpic"
+        },
+        "classicsedan": {
+          "name": "Classic Sedan",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Classic Sedan"
+          ],
+          "source": "vpic"
+        },
+        "ecosport": {
+          "name": "Ecosport",
+          "year_min": 2018,
+          "year_max": 2022,
+          "labels": [
+            "Ecosport"
+          ],
+          "source": "vpic"
+        },
+        "ranger": {
+          "name": "Ranger",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Ranger"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "hyundai": {
+      "name": "Hyundai",
+      "models": {
+        "sonata": {
+          "name": "Sonata",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Sonata"
+          ],
+          "source": "vpic"
+        },
+        "elantra": {
+          "name": "Elantra",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Elantra"
+          ],
+          "source": "vpic"
+        },
+        "accent": {
+          "name": "Accent",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "Accent"
+          ],
+          "source": "vpic"
+        },
+        "santafe": {
+          "name": "Santa Fe",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Santa Fe"
+          ],
+          "source": "vpic"
+        },
+        "tucson": {
+          "name": "Tucson",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Tucson"
+          ],
+          "source": "vpic"
+        },
+        "azera": {
+          "name": "Azera",
+          "year_min": 2006,
+          "year_max": 2018,
+          "labels": [
+            "Azera"
+          ],
+          "source": "vpic"
+        },
+        "veloster": {
+          "name": "Veloster",
+          "year_min": 2012,
+          "year_max": 2022,
+          "labels": [
+            "Veloster"
+          ],
+          "source": "vpic"
+        },
+        "santafesport": {
+          "name": "Santa Fe Sport",
+          "year_min": 2012,
+          "year_max": 2018,
+          "labels": [
+            "Santa Fe Sport"
+          ],
+          "source": "vpic"
+        },
+        "elantragt": {
+          "name": "Elantra GT",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "Elantra GT"
+          ],
+          "source": "vpic"
+        },
+        "ioniq": {
+          "name": "Ioniq",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "Ioniq"
+          ],
+          "source": "vpic"
+        },
+        "kona": {
+          "name": "Kona",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "Kona"
+          ],
+          "source": "vpic"
+        },
+        "i10": {
+          "name": "i10",
+          "year_min": 2007,
+          "year_max": 2027,
+          "labels": [
+            "i10",
+            "Grand i10"
+          ],
+          "source": "ng"
+        },
+        "i20": {
+          "name": "i20",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "i20"
+          ],
+          "source": "ng"
+        },
+        "i30": {
+          "name": "i30",
+          "year_min": 2007,
+          "year_max": 2027,
+          "labels": [
+            "i30"
+          ],
+          "source": "ng"
+        },
+        "ix35": {
+          "name": "ix35",
+          "year_min": 2009,
+          "year_max": 2015,
+          "labels": [
+            "ix35"
+          ],
+          "source": "ng"
+        },
+        "creta": {
+          "name": "Creta",
+          "year_min": 2015,
+          "year_max": 2027,
+          "labels": [
+            "Creta"
+          ],
+          "source": "ng"
+        },
+        "getz": {
+          "name": "Getz",
+          "year_min": 2002,
+          "year_max": 2011,
+          "labels": [
+            "Getz"
+          ],
+          "source": "ng"
+        },
+        "matrix": {
+          "name": "Matrix",
+          "year_min": 2001,
+          "year_max": 2010,
+          "labels": [
+            "Matrix"
+          ],
+          "source": "ng"
+        },
+        "h1": {
+          "name": "H-1",
+          "year_min": 1997,
+          "year_max": 2027,
+          "labels": [
+            "H-1",
+            "H1"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "kia": {
+      "name": "Kia",
+      "models": {
+        "sportage": {
+          "name": "Sportage",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Sportage"
+          ],
+          "source": "vpic"
+        },
+        "miami": {
+          "name": "Miami",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Miami"
+          ],
+          "source": "vpic"
+        },
+        "rio": {
+          "name": "Rio",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Rio"
+          ],
+          "source": "vpic+ng"
+        },
+        "optima": {
+          "name": "Optima",
+          "year_min": 2000,
+          "year_max": 2020,
+          "labels": [
+            "Optima"
+          ],
+          "source": "vpic"
+        },
+        "sedona": {
+          "name": "Sedona",
+          "year_min": 2000,
+          "year_max": 2022,
+          "labels": [
+            "Sedona"
+          ],
+          "source": "vpic"
+        },
+        "sorento": {
+          "name": "Sorento",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Sorento"
+          ],
+          "source": "vpic"
+        },
+        "soul": {
+          "name": "Soul",
+          "year_min": 2010,
+          "year_max": 2026,
+          "labels": [
+            "Soul"
+          ],
+          "source": "vpic"
+        },
+        "forte": {
+          "name": "Forte",
+          "year_min": 2010,
+          "year_max": 2024,
+          "labels": [
+            "Forte"
+          ],
+          "source": "vpic"
+        },
+        "cadenza": {
+          "name": "Cadenza",
+          "year_min": 2014,
+          "year_max": 2020,
+          "labels": [
+            "Cadenza"
+          ],
+          "source": "vpic"
+        },
+        "k900": {
+          "name": "K900",
+          "year_min": 2014,
+          "year_max": 2020,
+          "labels": [
+            "K900"
+          ],
+          "source": "vpic"
+        },
+        "niro": {
+          "name": "Niro",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Niro"
+          ],
+          "source": "vpic"
+        },
+        "stinger": {
+          "name": "Stinger",
+          "year_min": 2018,
+          "year_max": 2024,
+          "labels": [
+            "Stinger"
+          ],
+          "source": "vpic"
+        },
+        "picanto": {
+          "name": "Picanto",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Picanto"
+          ],
+          "source": "ng"
+        },
+        "cerato": {
+          "name": "Cerato",
+          "year_min": 2003,
+          "year_max": 2027,
+          "labels": [
+            "Cerato"
+          ],
+          "source": "ng"
+        },
+        "carnival": {
+          "name": "Carnival",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "Carnival"
+          ],
+          "source": "ng"
+        },
+        "ceed": {
+          "name": "Ceed",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Ceed"
+          ],
+          "source": "ng"
+        },
+        "pride": {
+          "name": "Pride",
+          "year_min": 1995,
+          "year_max": 2011,
+          "labels": [
+            "Pride"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "volkswagen": {
+      "name": "Volkswagen",
+      "models": {
+        "golf": {
+          "name": "Golf",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Golf"
+          ],
+          "source": "vpic+ng"
+        },
+        "passat": {
+          "name": "Passat",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Passat"
+          ],
+          "source": "vpic+ng"
+        },
+        "jetta": {
+          "name": "Jetta",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Jetta"
+          ],
+          "source": "vpic"
+        },
+        "beetle": {
+          "name": "Beetle",
+          "year_min": 1998,
+          "year_max": 2020,
+          "labels": [
+            "Beetle"
+          ],
+          "source": "vpic"
+        },
+        "touareg": {
+          "name": "Touareg",
+          "year_min": 2003,
+          "year_max": 2027,
+          "labels": [
+            "Touareg"
+          ],
+          "source": "vpic+ng"
+        },
+        "tiguan": {
+          "name": "Tiguan",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "Tiguan"
+          ],
+          "source": "vpic+ng"
+        },
+        "golfr": {
+          "name": "Golf R",
+          "year_min": 2012,
+          "year_max": 2027,
+          "labels": [
+            "Golf R"
+          ],
+          "source": "vpic"
+        },
+        "golfsportwagen": {
+          "name": "Golf SportWagen",
+          "year_min": 2014,
+          "year_max": 2020,
+          "labels": [
+            "Golf SportWagen"
+          ],
+          "source": "vpic"
+        },
+        "egolf": {
+          "name": "e-Golf",
+          "year_min": 2014,
+          "year_max": 2020,
+          "labels": [
+            "e-Golf"
+          ],
+          "source": "vpic"
+        },
+        "cc": {
+          "name": "CC",
+          "year_min": 2014,
+          "year_max": 2018,
+          "labels": [
+            "CC"
+          ],
+          "source": "vpic"
+        },
+        "golfgti": {
+          "name": "Golf GTI",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Golf GTI"
+          ],
+          "source": "vpic"
+        },
+        "golfalltrack": {
+          "name": "Golf Alltrack",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "Golf Alltrack"
+          ],
+          "source": "vpic"
+        },
+        "atlas": {
+          "name": "Atlas",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "Atlas"
+          ],
+          "source": "vpic"
+        },
+        "polo": {
+          "name": "Polo",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Polo"
+          ],
+          "source": "ng"
+        },
+        "amarok": {
+          "name": "Amarok",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "Amarok"
+          ],
+          "source": "ng"
+        },
+        "sharan": {
+          "name": "Sharan",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "Sharan"
+          ],
+          "source": "ng"
+        },
+        "caddy": {
+          "name": "Caddy",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Caddy"
+          ],
+          "source": "ng"
+        },
+        "transporter": {
+          "name": "Transporter",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Transporter"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "peugeot": {
+      "name": "Peugeot",
+      "models": {
+        "206": {
+          "name": "206",
+          "year_min": 1998,
+          "year_max": 2012,
+          "labels": [
+            "206"
+          ],
+          "source": "ng"
+        },
+        "207": {
+          "name": "207",
+          "year_min": 2006,
+          "year_max": 2014,
+          "labels": [
+            "207"
+          ],
+          "source": "ng"
+        },
+        "301": {
+          "name": "301",
+          "year_min": 2012,
+          "year_max": 2027,
+          "labels": [
+            "301"
+          ],
+          "source": "ng"
+        },
+        "307": {
+          "name": "307",
+          "year_min": 2001,
+          "year_max": 2014,
+          "labels": [
+            "307"
+          ],
+          "source": "ng"
+        },
+        "308": {
+          "name": "308",
+          "year_min": 2007,
+          "year_max": 2027,
+          "labels": [
+            "308"
+          ],
+          "source": "ng"
+        },
+        "405": {
+          "name": "405",
+          "year_min": 1995,
+          "year_max": 1999,
+          "labels": [
+            "405"
+          ],
+          "source": "ng"
+        },
+        "406": {
+          "name": "406",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "406"
+          ],
+          "source": "ng"
+        },
+        "407": {
+          "name": "407",
+          "year_min": 2004,
+          "year_max": 2011,
+          "labels": [
+            "407"
+          ],
+          "source": "ng"
+        },
+        "508": {
+          "name": "508",
+          "year_min": 2011,
+          "year_max": 2027,
+          "labels": [
+            "508"
+          ],
+          "source": "ng"
+        },
+        "3008": {
+          "name": "3008",
+          "year_min": 2009,
+          "year_max": 2027,
+          "labels": [
+            "3008"
+          ],
+          "source": "ng"
+        },
+        "5008": {
+          "name": "5008",
+          "year_min": 2009,
+          "year_max": 2027,
+          "labels": [
+            "5008"
+          ],
+          "source": "ng"
+        },
+        "speedfight2": {
+          "name": "Speedfight2",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Speedfight2"
+          ],
+          "source": "vpic"
+        },
+        "vivacity": {
+          "name": "Vivacity",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Vivacity"
+          ],
+          "source": "vpic"
+        },
+        "looxor": {
+          "name": "Looxor",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Looxor"
+          ],
+          "source": "vpic"
+        },
+        "trekker": {
+          "name": "Trekker",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "Trekker"
+          ],
+          "source": "vpic"
+        },
+        "partner": {
+          "name": "Partner",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "Partner"
+          ],
+          "source": "ng"
+        },
+        "boxer": {
+          "name": "Boxer",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Boxer"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "mazda": {
+      "name": "Mazda",
+      "models": {
+        "mx5": {
+          "name": "MX-5",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "MX-5"
+          ],
+          "source": "vpic"
+        },
+        "mazda6": {
+          "name": "Mazda6",
+          "year_min": 2002,
+          "year_max": 2022,
+          "labels": [
+            "Mazda6"
+          ],
+          "source": "vpic"
+        },
+        "mazda3": {
+          "name": "Mazda3",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Mazda3"
+          ],
+          "source": "vpic"
+        },
+        "cx9": {
+          "name": "CX-9",
+          "year_min": 2006,
+          "year_max": 2024,
+          "labels": [
+            "CX-9"
+          ],
+          "source": "vpic"
+        },
+        "mazda2": {
+          "name": "Mazda2",
+          "year_min": 2010,
+          "year_max": 2022,
+          "labels": [
+            "Mazda2"
+          ],
+          "source": "vpic"
+        },
+        "cx5": {
+          "name": "CX-5",
+          "year_min": 2012,
+          "year_max": 2027,
+          "labels": [
+            "CX-5"
+          ],
+          "source": "vpic"
+        },
+        "cx3": {
+          "name": "CX-3",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "CX-3"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "mitsubishi": {
+      "name": "Mitsubishi",
+      "models": {
+        "mirage": {
+          "name": "Mirage",
+          "year_min": 1995,
+          "year_max": 2024,
+          "labels": [
+            "Mirage"
+          ],
+          "source": "vpic"
+        },
+        "outlander": {
+          "name": "Outlander",
+          "year_min": 2001,
+          "year_max": 2027,
+          "labels": [
+            "Outlander"
+          ],
+          "source": "vpic+ng"
+        },
+        "rvr": {
+          "name": "RVR",
+          "year_min": 2010,
+          "year_max": 2022,
+          "labels": [
+            "RVR"
+          ],
+          "source": "vpic"
+        },
+        "imiev": {
+          "name": "i-MiEV",
+          "year_min": 2012,
+          "year_max": 2018,
+          "labels": [
+            "i-MiEV"
+          ],
+          "source": "vpic"
+        },
+        "outlandersport": {
+          "name": "Outlander Sport",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "Outlander Sport"
+          ],
+          "source": "vpic"
+        },
+        "mirageg4": {
+          "name": "Mirage G4",
+          "year_min": 2016,
+          "year_max": 2024,
+          "labels": [
+            "Mirage G4"
+          ],
+          "source": "vpic"
+        },
+        "eclipsecross": {
+          "name": "Eclipse Cross",
+          "year_min": 2018,
+          "year_max": 2026,
+          "labels": [
+            "Eclipse Cross"
+          ],
+          "source": "vpic"
+        },
+        "pajero": {
+          "name": "Pajero",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Pajero"
+          ],
+          "source": "ng"
+        },
+        "l200": {
+          "name": "L200",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "L200"
+          ],
+          "source": "ng"
+        },
+        "canter": {
+          "name": "Canter",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Canter"
+          ],
+          "source": "ng"
+        },
+        "spacestar": {
+          "name": "Space Star",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "Space Star"
+          ],
+          "source": "ng"
+        },
+        "lancer": {
+          "name": "Lancer",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Lancer"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "suzuki": {
+      "name": "Suzuki",
+      "models": {
+        "marauder250": {
+          "name": "Marauder 250",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "Marauder 250"
+          ],
+          "source": "vpic"
+        },
+        "bandit650": {
+          "name": "Bandit 650",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Bandit 650"
+          ],
+          "source": "vpic"
+        },
+        "bandit650s": {
+          "name": "Bandit 650S",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Bandit 650S"
+          ],
+          "source": "vpic"
+        },
+        "intruder800": {
+          "name": "Intruder 800",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "Intruder 800"
+          ],
+          "source": "vpic"
+        },
+        "bandit1250s": {
+          "name": "Bandit 1250S",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "Bandit 1250S"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc90c90t": {
+          "name": "Boulevard C90/C90T",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "Boulevard C90/C90T"
+          ],
+          "source": "vpic"
+        },
+        "quadsportz250": {
+          "name": "QuadSport Z250",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "QuadSport Z250"
+          ],
+          "source": "vpic"
+        },
+        "quadrunner500": {
+          "name": "QuadRunner 500",
+          "year_min": 1995,
+          "year_max": 2002,
+          "labels": [
+            "QuadRunner 500"
+          ],
+          "source": "vpic"
+        },
+        "quadmaster500": {
+          "name": "QuadMaster 500",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "QuadMaster 500"
+          ],
+          "source": "vpic"
+        },
+        "drz70": {
+          "name": "DR-Z70",
+          "year_min": 1995,
+          "year_max": 2018,
+          "labels": [
+            "DR-Z70"
+          ],
+          "source": "vpic"
+        },
+        "drz125l": {
+          "name": "DR-Z125L",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "DR-Z125L"
+          ],
+          "source": "vpic"
+        },
+        "drz250": {
+          "name": "DR-Z250",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "DR-Z250"
+          ],
+          "source": "vpic"
+        },
+        "rm85": {
+          "name": "RM85",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "RM85"
+          ],
+          "source": "vpic"
+        },
+        "kingquad450axi": {
+          "name": "KingQuad 450 Axi",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "KingQuad 450 Axi"
+          ],
+          "source": "vpic"
+        },
+        "jr80": {
+          "name": "JR80",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "JR80"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc109rc109rt": {
+          "name": "Boulevard C109R/C109RT",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "Boulevard C109R/C109RT"
+          ],
+          "source": "vpic"
+        },
+        "gladius650": {
+          "name": "Gladius 650",
+          "year_min": 1995,
+          "year_max": 2018,
+          "labels": [
+            "Gladius 650"
+          ],
+          "source": "vpic"
+        },
+        "gsx650f": {
+          "name": "GSX650F",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "GSX650F"
+          ],
+          "source": "vpic"
+        },
+        "bking": {
+          "name": "B-King",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "B-King"
+          ],
+          "source": "vpic"
+        },
+        "swift": {
+          "name": "Swift",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Swift"
+          ],
+          "source": "vpic+ng"
+        },
+        "esteem": {
+          "name": "Esteem",
+          "year_min": 1995,
+          "year_max": 2002,
+          "labels": [
+            "Esteem"
+          ],
+          "source": "vpic"
+        },
+        "sidekick": {
+          "name": "Sidekick",
+          "year_min": 1995,
+          "year_max": 1998,
+          "labels": [
+            "Sidekick"
+          ],
+          "source": "vpic"
+        },
+        "sidekicksport": {
+          "name": "Sidekick Sport",
+          "year_min": 1995,
+          "year_max": 1998,
+          "labels": [
+            "Sidekick Sport"
+          ],
+          "source": "vpic"
+        },
+        "tl1000r": {
+          "name": "TL1000R",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "TL1000R"
+          ],
+          "source": "vpic"
+        },
+        "dr350s": {
+          "name": "DR350S",
+          "year_min": 1995,
+          "year_max": 2000,
+          "labels": [
+            "DR350S"
+          ],
+          "source": "vpic"
+        },
+        "savage": {
+          "name": "Savage",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Savage"
+          ],
+          "source": "vpic"
+        },
+        "rf900r": {
+          "name": "RF900R",
+          "year_min": 1995,
+          "year_max": 1998,
+          "labels": [
+            "RF900R"
+          ],
+          "source": "vpic"
+        },
+        "tl1000s": {
+          "name": "TL1000S",
+          "year_min": 1995,
+          "year_max": 2002,
+          "labels": [
+            "TL1000S"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc90c90tc90bossc90tboss": {
+          "name": "Boulevard C90/C90T, C90 B.O.S.S./C90T B.O.S.S.",
+          "year_min": 1995,
+          "year_max": 2018,
+          "labels": [
+            "Boulevard C90/C90T, C90 B.O.S.S./C90T B.O.S.S."
+          ],
+          "source": "vpic"
+        },
+        "gw250": {
+          "name": "GW250",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "GW250"
+          ],
+          "source": "vpic"
+        },
+        "quadmaster50": {
+          "name": "QuadMaster 50",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "QuadMaster 50"
+          ],
+          "source": "vpic"
+        },
+        "quadsport80": {
+          "name": "QuadSport 80",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "QuadSport 80"
+          ],
+          "source": "vpic"
+        },
+        "quadrunner160": {
+          "name": "QuadRunner 160",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "QuadRunner 160"
+          ],
+          "source": "vpic"
+        },
+        "ozark250": {
+          "name": "Ozark 250",
+          "year_min": 1995,
+          "year_max": 2014,
+          "labels": [
+            "Ozark 250"
+          ],
+          "source": "vpic"
+        },
+        "quadrunner250": {
+          "name": "QuadRunner 250",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "QuadRunner 250"
+          ],
+          "source": "vpic"
+        },
+        "kingquad300": {
+          "name": "KingQuad 300",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "KingQuad 300"
+          ],
+          "source": "vpic"
+        },
+        "gs500": {
+          "name": "GS500",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "GS500"
+          ],
+          "source": "vpic"
+        },
+        "katana600": {
+          "name": "Katana 600",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Katana 600"
+          ],
+          "source": "vpic"
+        },
+        "bandit600": {
+          "name": "Bandit 600",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "Bandit 600"
+          ],
+          "source": "vpic"
+        },
+        "katana750": {
+          "name": "Katana 750",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Katana 750"
+          ],
+          "source": "vpic"
+        },
+        "intruder1400": {
+          "name": "Intruder 1400",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "Intruder 1400"
+          ],
+          "source": "vpic"
+        },
+        "intruder1500lc": {
+          "name": "Intruder 1500 LC",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "Intruder 1500 LC"
+          ],
+          "source": "vpic"
+        },
+        "jr50": {
+          "name": "JR50",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "JR50"
+          ],
+          "source": "vpic"
+        },
+        "drz400": {
+          "name": "DR-Z400",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "DR-Z400"
+          ],
+          "source": "vpic"
+        },
+        "rm125": {
+          "name": "RM125",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "RM125"
+          ],
+          "source": "vpic"
+        },
+        "rm250": {
+          "name": "RM250",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "RM250"
+          ],
+          "source": "vpic"
+        },
+        "drz110": {
+          "name": "DR-Z110",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "DR-Z110"
+          ],
+          "source": "vpic"
+        },
+        "rm60": {
+          "name": "RM60",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "RM60"
+          ],
+          "source": "vpic"
+        },
+        "rm65": {
+          "name": "RM65",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "RM65"
+          ],
+          "source": "vpic"
+        },
+        "rm100": {
+          "name": "RM100",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "RM100"
+          ],
+          "source": "vpic"
+        },
+        "bandit1200s": {
+          "name": "Bandit 1200S",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Bandit 1200S"
+          ],
+          "source": "vpic"
+        },
+        "sv650": {
+          "name": "SV650",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "SV650"
+          ],
+          "source": "vpic"
+        },
+        "samurai": {
+          "name": "Samurai",
+          "year_min": 1995,
+          "year_max": 1996,
+          "labels": [
+            "Samurai"
+          ],
+          "source": "vpic"
+        },
+        "kingquad500axi": {
+          "name": "KingQuad 500 Axi",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "KingQuad 500 Axi"
+          ],
+          "source": "vpic"
+        },
+        "quadracer450": {
+          "name": "QuadRacer 450",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "QuadRacer 450"
+          ],
+          "source": "vpic"
+        },
+        "quadsportz400": {
+          "name": "QuadSport Z400",
+          "year_min": 1995,
+          "year_max": 2014,
+          "labels": [
+            "QuadSport Z400"
+          ],
+          "source": "vpic"
+        },
+        "rmz250": {
+          "name": "RM-Z250",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "RM-Z250"
+          ],
+          "source": "vpic"
+        },
+        "rmz450": {
+          "name": "RM-Z450",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "RM-Z450"
+          ],
+          "source": "vpic"
+        },
+        "drz400s": {
+          "name": "DR-Z400S",
+          "year_min": 1995,
+          "year_max": 2026,
+          "labels": [
+            "DR-Z400S"
+          ],
+          "source": "vpic"
+        },
+        "drz125": {
+          "name": "DR-Z125",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "DR-Z125"
+          ],
+          "source": "vpic"
+        },
+        "rmx450": {
+          "name": "RMX450",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "RMX450"
+          ],
+          "source": "vpic"
+        },
+        "gsxr600": {
+          "name": "GSX-R600",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "GSX-R600"
+          ],
+          "source": "vpic"
+        },
+        "gsxr750": {
+          "name": "GSX-R750",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "GSX-R750"
+          ],
+          "source": "vpic"
+        },
+        "tu250x": {
+          "name": "TU250X",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "TU250X"
+          ],
+          "source": "vpic"
+        },
+        "boulevardm109r": {
+          "name": "Boulevard M109R",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "Boulevard M109R"
+          ],
+          "source": "vpic"
+        },
+        "addressv125": {
+          "name": "Address V125",
+          "year_min": 1995,
+          "year_max": 2010,
+          "labels": [
+            "Address V125"
+          ],
+          "source": "vpic"
+        },
+        "gsxr1000": {
+          "name": "GSX-R1000",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "GSX-R1000"
+          ],
+          "source": "vpic"
+        },
+        "marauder800": {
+          "name": "Marauder 800",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "Marauder 800"
+          ],
+          "source": "vpic"
+        },
+        "sv1000s": {
+          "name": "SV1000S",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "SV1000S"
+          ],
+          "source": "vpic"
+        },
+        "kingquad400fsi": {
+          "name": "KingQuad 400 Fsi",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "KingQuad 400 Fsi"
+          ],
+          "source": "vpic"
+        },
+        "bandit1200": {
+          "name": "Bandit 1200",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Bandit 1200"
+          ],
+          "source": "vpic"
+        },
+        "kingquad400asi": {
+          "name": "KingQuad 400 Asi",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "KingQuad 400 Asi"
+          ],
+          "source": "vpic"
+        },
+        "quv620f": {
+          "name": "QUV620F",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "QUV620F"
+          ],
+          "source": "vpic"
+        },
+        "twinpeaks700": {
+          "name": "Twin Peaks 700",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Twin Peaks 700"
+          ],
+          "source": "vpic"
+        },
+        "gs500f": {
+          "name": "GS500F",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "GS500F"
+          ],
+          "source": "vpic"
+        },
+        "eiger400": {
+          "name": "Eiger 400",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "Eiger 400"
+          ],
+          "source": "vpic"
+        },
+        "vinson500": {
+          "name": "Vinson 500",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "Vinson 500"
+          ],
+          "source": "vpic"
+        },
+        "marauder1600": {
+          "name": "Marauder 1600",
+          "year_min": 1995,
+          "year_max": 2006,
+          "labels": [
+            "Marauder 1600"
+          ],
+          "source": "vpic"
+        },
+        "rm80": {
+          "name": "RM80",
+          "year_min": 1995,
+          "year_max": 2002,
+          "labels": [
+            "RM80"
+          ],
+          "source": "vpic"
+        },
+        "ds80": {
+          "name": "DS80",
+          "year_min": 1995,
+          "year_max": 2000,
+          "labels": [
+            "DS80"
+          ],
+          "source": "vpic"
+        },
+        "dr350": {
+          "name": "DR350",
+          "year_min": 1995,
+          "year_max": 2000,
+          "labels": [
+            "DR350"
+          ],
+          "source": "vpic"
+        },
+        "gn125": {
+          "name": "GN125",
+          "year_min": 1995,
+          "year_max": 1998,
+          "labels": [
+            "GN125"
+          ],
+          "source": "vpic"
+        },
+        "rmx250": {
+          "name": "RMX250",
+          "year_min": 1995,
+          "year_max": 1998,
+          "labels": [
+            "RMX250"
+          ],
+          "source": "vpic"
+        },
+        "kingquad280": {
+          "name": "KingQuad 280",
+          "year_min": 1995,
+          "year_max": 1998,
+          "labels": [
+            "KingQuad 280"
+          ],
+          "source": "vpic"
+        },
+        "rf600r": {
+          "name": "RF600R",
+          "year_min": 1995,
+          "year_max": 1996,
+          "labels": [
+            "RF600R"
+          ],
+          "source": "vpic"
+        },
+        "dr125s": {
+          "name": "DR125S",
+          "year_min": 1995,
+          "year_max": 1996,
+          "labels": [
+            "DR125S"
+          ],
+          "source": "vpic"
+        },
+        "dr250s": {
+          "name": "DR250S",
+          "year_min": 1995,
+          "year_max": 1996,
+          "labels": [
+            "DR250S"
+          ],
+          "source": "vpic"
+        },
+        "dr650s": {
+          "name": "DR650S",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "DR650S"
+          ],
+          "source": "vpic"
+        },
+        "gsxr1100": {
+          "name": "GSX-R1100",
+          "year_min": 1995,
+          "year_max": 1998,
+          "labels": [
+            "GSX-R1100"
+          ],
+          "source": "vpic"
+        },
+        "vstrom1000": {
+          "name": "V-Strom 1000",
+          "year_min": 1995,
+          "year_max": 2018,
+          "labels": [
+            "V-Strom 1000"
+          ],
+          "source": "vpic"
+        },
+        "burgman650": {
+          "name": "Burgman 650",
+          "year_min": 1995,
+          "year_max": 2018,
+          "labels": [
+            "Burgman 650"
+          ],
+          "source": "vpic"
+        },
+        "boulevardm90": {
+          "name": "Boulevard M90",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "Boulevard M90"
+          ],
+          "source": "vpic"
+        },
+        "boulevardm50": {
+          "name": "Boulevard M50",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "Boulevard M50"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc50c50t": {
+          "name": "Boulevard C50/C50T",
+          "year_min": 1995,
+          "year_max": 2020,
+          "labels": [
+            "Boulevard C50/C50T"
+          ],
+          "source": "vpic"
+        },
+        "quadsportz90": {
+          "name": "QuadSport Z90",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "QuadSport Z90"
+          ],
+          "source": "vpic"
+        },
+        "quadsportz50": {
+          "name": "QuadSport Z50",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "QuadSport Z50"
+          ],
+          "source": "vpic"
+        },
+        "burgman400": {
+          "name": "Burgman 400",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Burgman 400"
+          ],
+          "source": "vpic"
+        },
+        "burgman200": {
+          "name": "Burgman 200",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "Burgman 200"
+          ],
+          "source": "vpic"
+        },
+        "dr200s": {
+          "name": "DR200S",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "DR200S"
+          ],
+          "source": "vpic"
+        },
+        "gsxs750": {
+          "name": "GSX-S750",
+          "year_min": 1995,
+          "year_max": 2024,
+          "labels": [
+            "GSX-S750"
+          ],
+          "source": "vpic"
+        },
+        "vstrom650": {
+          "name": "V-Strom 650",
+          "year_min": 1995,
+          "year_max": 2026,
+          "labels": [
+            "V-Strom 650"
+          ],
+          "source": "vpic"
+        },
+        "hayabusa": {
+          "name": "Hayabusa",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Hayabusa"
+          ],
+          "source": "vpic"
+        },
+        "kingquad700axi": {
+          "name": "KingQuad 700 Axi",
+          "year_min": 1995,
+          "year_max": 2008,
+          "labels": [
+            "KingQuad 700 Axi"
+          ],
+          "source": "vpic"
+        },
+        "x90": {
+          "name": "X-90",
+          "year_min": 1996,
+          "year_max": 1998,
+          "labels": [
+            "X-90"
+          ],
+          "source": "vpic"
+        },
+        "vitara": {
+          "name": "Vitara",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Vitara"
+          ],
+          "source": "vpic+ng"
+        },
+        "grandvitara": {
+          "name": "Grand Vitara",
+          "year_min": 1998,
+          "year_max": 2014,
+          "labels": [
+            "Grand Vitara"
+          ],
+          "source": "vpic"
+        },
+        "aerio": {
+          "name": "Aerio",
+          "year_min": 2002,
+          "year_max": 2008,
+          "labels": [
+            "Aerio"
+          ],
+          "source": "vpic"
+        },
+        "xl7": {
+          "name": "XL7",
+          "year_min": 2002,
+          "year_max": 2010,
+          "labels": [
+            "XL7"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc50": {
+          "name": "Boulevard C50",
+          "year_min": 2000,
+          "year_max": 2002,
+          "labels": [
+            "Boulevard C50"
+          ],
+          "source": "vpic"
+        },
+        "forenza": {
+          "name": "Forenza",
+          "year_min": 2004,
+          "year_max": 2008,
+          "labels": [
+            "Forenza"
+          ],
+          "source": "vpic"
+        },
+        "reno": {
+          "name": "Reno",
+          "year_min": 2004,
+          "year_max": 2008,
+          "labels": [
+            "Reno"
+          ],
+          "source": "vpic"
+        },
+        "verona": {
+          "name": "Verona",
+          "year_min": 2004,
+          "year_max": 2008,
+          "labels": [
+            "Verona"
+          ],
+          "source": "vpic"
+        },
+        "boulevards83": {
+          "name": "Boulevard S83",
+          "year_min": 2004,
+          "year_max": 2010,
+          "labels": [
+            "Boulevard S83"
+          ],
+          "source": "vpic"
+        },
+        "boulevardm95": {
+          "name": "Boulevard M95",
+          "year_min": 2004,
+          "year_max": 2006,
+          "labels": [
+            "Boulevard M95"
+          ],
+          "source": "vpic"
+        },
+        "quadsport50": {
+          "name": "QuadSport 50",
+          "year_min": 2004,
+          "year_max": 2006,
+          "labels": [
+            "QuadSport 50"
+          ],
+          "source": "vpic"
+        },
+        "boulevards50": {
+          "name": "Boulevard S50",
+          "year_min": 2004,
+          "year_max": 2006,
+          "labels": [
+            "Boulevard S50"
+          ],
+          "source": "vpic"
+        },
+        "sx4": {
+          "name": "SX4",
+          "year_min": 2006,
+          "year_max": 2014,
+          "labels": [
+            "SX4"
+          ],
+          "source": "vpic"
+        },
+        "grandvitaraxl7": {
+          "name": "Grand Vitara XL-7",
+          "year_min": 2006,
+          "year_max": 2008,
+          "labels": [
+            "Grand Vitara XL-7"
+          ],
+          "source": "vpic"
+        },
+        "boulevards40": {
+          "name": "Boulevard S40",
+          "year_min": 2006,
+          "year_max": 2022,
+          "labels": [
+            "Boulevard S40"
+          ],
+          "source": "vpic"
+        },
+        "equator": {
+          "name": "Equator",
+          "year_min": 2008,
+          "year_max": 2014,
+          "labels": [
+            "Equator"
+          ],
+          "source": "vpic"
+        },
+        "kizashi": {
+          "name": "Kizashi",
+          "year_min": 2010,
+          "year_max": 2014,
+          "labels": [
+            "Kizashi"
+          ],
+          "source": "vpic"
+        },
+        "boulevardm109": {
+          "name": "Boulevard M109",
+          "year_min": 2010,
+          "year_max": 2018,
+          "labels": [
+            "Boulevard M109"
+          ],
+          "source": "vpic"
+        },
+        "bandit1250f": {
+          "name": "Bandit 1250F",
+          "year_min": 2010,
+          "year_max": 2012,
+          "labels": [
+            "Bandit 1250F"
+          ],
+          "source": "vpic"
+        },
+        "lowspeedvehicle": {
+          "name": "Low Speed Vehicle",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "Low Speed Vehicle"
+          ],
+          "source": "vpic"
+        },
+        "kingquad750axi": {
+          "name": "KingQuad 750 Axi",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "KingQuad 750 Axi"
+          ],
+          "source": "vpic"
+        },
+        "boulevardm109rboss": {
+          "name": "Boulevard M109R B.O.S.S.",
+          "year_min": 2014,
+          "year_max": 2024,
+          "labels": [
+            "Boulevard M109R B.O.S.S."
+          ],
+          "source": "vpic"
+        },
+        "rmz450l": {
+          "name": "RM-Z450L",
+          "year_min": 2016,
+          "year_max": 2018,
+          "labels": [
+            "RM-Z450L"
+          ],
+          "source": "vpic"
+        },
+        "gsxs1000": {
+          "name": "GSX-S1000",
+          "year_min": 2016,
+          "year_max": 2026,
+          "labels": [
+            "GSX-S1000"
+          ],
+          "source": "vpic"
+        },
+        "gsxs1000f": {
+          "name": "GSX-S1000F",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "GSX-S1000F"
+          ],
+          "source": "vpic"
+        },
+        "vanvan200": {
+          "name": "VanVan 200",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "VanVan 200"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc90boss": {
+          "name": "Boulevard C90 B.O.S.S.",
+          "year_min": 2016,
+          "year_max": 2018,
+          "labels": [
+            "Boulevard C90 B.O.S.S."
+          ],
+          "source": "vpic"
+        },
+        "rmx450z": {
+          "name": "RMX450Z",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "RMX450Z"
+          ],
+          "source": "vpic"
+        },
+        "gsxr1000r": {
+          "name": "GSX-R1000R",
+          "year_min": 2020,
+          "year_max": 2026,
+          "labels": [
+            "GSX-R1000R"
+          ],
+          "source": "vpic"
+        },
+        "gsx250r": {
+          "name": "GSX250R",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "GSX250R"
+          ],
+          "source": "vpic"
+        },
+        "vstrom650xt": {
+          "name": "V-Strom 650XT",
+          "year_min": 2018,
+          "year_max": 2022,
+          "labels": [
+            "V-Strom 650XT"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc90bossboulevardc90t": {
+          "name": "Boulevard C90 B.O.S.S./Boulevard C90T",
+          "year_min": 2018,
+          "year_max": 2022,
+          "labels": [
+            "Boulevard C90 B.O.S.S./Boulevard C90T"
+          ],
+          "source": "vpic"
+        },
+        "vstrom1000xt": {
+          "name": "V-Strom 1000XT",
+          "year_min": 2018,
+          "year_max": 2022,
+          "labels": [
+            "V-Strom 1000XT"
+          ],
+          "source": "vpic"
+        },
+        "boulevardc50t": {
+          "name": "Boulevard C50T",
+          "year_min": 2020,
+          "year_max": 2022,
+          "labels": [
+            "Boulevard C50T"
+          ],
+          "source": "vpic"
+        },
+        "drz400sm": {
+          "name": "DR-Z400SM",
+          "year_min": 2020,
+          "year_max": 2026,
+          "labels": [
+            "DR-Z400SM"
+          ],
+          "source": "vpic"
+        },
+        "vstrom1050": {
+          "name": "V-Strom 1050",
+          "year_min": 2020,
+          "year_max": 2026,
+          "labels": [
+            "V-Strom 1050"
+          ],
+          "source": "vpic"
+        },
+        "vstrom1050xt": {
+          "name": "V-Strom 1050XT",
+          "year_min": 2020,
+          "year_max": 2022,
+          "labels": [
+            "V-Strom 1050XT"
+          ],
+          "source": "vpic"
+        },
+        "drz50": {
+          "name": "DR-Z50",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "DR-Z50"
+          ],
+          "source": "vpic"
+        },
+        "katana1000": {
+          "name": "Katana 1000",
+          "year_min": 2020,
+          "year_max": 2024,
+          "labels": [
+            "Katana 1000"
+          ],
+          "source": "vpic"
+        },
+        "boulevard": {
+          "name": "Boulevard",
+          "year_min": 2022,
+          "year_max": 2026,
+          "labels": [
+            "Boulevard"
+          ],
+          "source": "vpic"
+        },
+        "dl1050": {
+          "name": "DL1050",
+          "year_min": 2022,
+          "year_max": 2024,
+          "labels": [
+            "DL1050"
+          ],
+          "source": "vpic"
+        },
+        "vstrom800de": {
+          "name": "V-Strom 800DE",
+          "year_min": 2022,
+          "year_max": 2026,
+          "labels": [
+            "V-Strom 800DE"
+          ],
+          "source": "vpic"
+        },
+        "gsx8s": {
+          "name": "GSX-8S",
+          "year_min": 2022,
+          "year_max": 2026,
+          "labels": [
+            "GSX-8S"
+          ],
+          "source": "vpic"
+        },
+        "gsxs1000gt": {
+          "name": "GSX-S1000GT",
+          "year_min": 2022,
+          "year_max": 2024,
+          "labels": [
+            "GSX-S1000GT"
+          ],
+          "source": "vpic"
+        },
+        "gsxs1000gtgsxs1000gt": {
+          "name": "GSX-S1000GT/GSX-S1000GT+",
+          "year_min": 2024,
+          "year_max": 2026,
+          "labels": [
+            "GSX-S1000GT/GSX-S1000GT+"
+          ],
+          "source": "vpic"
+        },
+        "vstrom800": {
+          "name": "V-Strom 800",
+          "year_min": 2024,
+          "year_max": 2026,
+          "labels": [
+            "V-Strom 800"
+          ],
+          "source": "vpic"
+        },
+        "gsx8r": {
+          "name": "GSX-8R",
+          "year_min": 2024,
+          "year_max": 2026,
+          "labels": [
+            "GSX-8R"
+          ],
+          "source": "vpic"
+        },
+        "alto": {
+          "name": "Alto",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Alto"
+          ],
+          "source": "ng"
+        },
+        "jimny": {
+          "name": "Jimny",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "Jimny"
+          ],
+          "source": "ng"
+        },
+        "every": {
+          "name": "Every",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Every"
+          ],
+          "source": "ng"
+        },
+        "carry": {
+          "name": "Carry",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Carry"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "landrover": {
+      "name": "Land Rover",
+      "models": {
+        "rangerover": {
+          "name": "Range Rover",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Range Rover"
+          ],
+          "source": "vpic+ng"
+        },
+        "discovery": {
+          "name": "Discovery",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Discovery"
+          ],
+          "source": "vpic+ng"
+        },
+        "rangeroversport": {
+          "name": "Range Rover Sport",
+          "year_min": 2005,
+          "year_max": 2027,
+          "labels": [
+            "Range Rover Sport"
+          ],
+          "source": "vpic+ng"
+        },
+        "rangeroverevoque": {
+          "name": "Range Rover Evoque",
+          "year_min": 2011,
+          "year_max": 2027,
+          "labels": [
+            "Range Rover Evoque",
+            "Evoque"
+          ],
+          "source": "vpic+ng"
+        },
+        "discoverysport": {
+          "name": "Discovery Sport",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "Discovery Sport"
+          ],
+          "source": "vpic"
+        },
+        "rangerovervelar": {
+          "name": "Range Rover Velar",
+          "year_min": 2018,
+          "year_max": 2027,
+          "labels": [
+            "Range Rover Velar"
+          ],
+          "source": "vpic"
+        },
+        "defender": {
+          "name": "Defender",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Defender"
+          ],
+          "source": "ng"
+        },
+        "freelander": {
+          "name": "Freelander",
+          "year_min": 1997,
+          "year_max": 2014,
+          "labels": [
+            "Freelander"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "acura": {
+      "name": "Acura",
+      "models": {
+        "nsx": {
+          "name": "NSX",
+          "year_min": 1995,
+          "year_max": 2022,
+          "labels": [
+            "NSX"
+          ],
+          "source": "vpic"
+        },
+        "mdx": {
+          "name": "MDX",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "MDX"
+          ],
+          "source": "vpic"
+        },
+        "rdx": {
+          "name": "RDX",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "RDX"
+          ],
+          "source": "vpic"
+        },
+        "ilx": {
+          "name": "ILX",
+          "year_min": 2012,
+          "year_max": 2022,
+          "labels": [
+            "ILX"
+          ],
+          "source": "vpic"
+        },
+        "rlx": {
+          "name": "RLX",
+          "year_min": 2014,
+          "year_max": 2020,
+          "labels": [
+            "RLX"
+          ],
+          "source": "vpic"
+        },
+        "tlx": {
+          "name": "TLX",
+          "year_min": 2014,
+          "year_max": 2026,
+          "labels": [
+            "TLX"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "infiniti": {
+      "name": "Infiniti",
+      "models": {
+        "q50": {
+          "name": "Q50",
+          "year_min": 2014,
+          "year_max": 2024,
+          "labels": [
+            "Q50"
+          ],
+          "source": "vpic"
+        },
+        "q60": {
+          "name": "Q60",
+          "year_min": 2014,
+          "year_max": 2022,
+          "labels": [
+            "Q60"
+          ],
+          "source": "vpic"
+        },
+        "q70": {
+          "name": "Q70",
+          "year_min": 2014,
+          "year_max": 2022,
+          "labels": [
+            "Q70"
+          ],
+          "source": "vpic"
+        },
+        "qx70": {
+          "name": "QX70",
+          "year_min": 2014,
+          "year_max": 2018,
+          "labels": [
+            "QX70"
+          ],
+          "source": "vpic"
+        },
+        "qx80": {
+          "name": "QX80",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "QX80"
+          ],
+          "source": "vpic"
+        },
+        "qx60": {
+          "name": "QX60",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "QX60"
+          ],
+          "source": "vpic"
+        },
+        "q70l": {
+          "name": "Q70L",
+          "year_min": 2014,
+          "year_max": 2022,
+          "labels": [
+            "Q70L"
+          ],
+          "source": "vpic"
+        },
+        "qx30": {
+          "name": "QX30",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "QX30"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "audi": {
+      "name": "Audi",
+      "models": {
+        "a6": {
+          "name": "A6",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "A6"
+          ],
+          "source": "vpic"
+        },
+        "s6": {
+          "name": "S6",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "S6"
+          ],
+          "source": "vpic"
+        },
+        "a4": {
+          "name": "A4",
+          "year_min": 1996,
+          "year_max": 2026,
+          "labels": [
+            "A4"
+          ],
+          "source": "vpic"
+        },
+        "a8": {
+          "name": "A8",
+          "year_min": 1996,
+          "year_max": 2020,
+          "labels": [
+            "A8"
+          ],
+          "source": "vpic"
+        },
+        "tt": {
+          "name": "TT",
+          "year_min": 2000,
+          "year_max": 2024,
+          "labels": [
+            "TT"
+          ],
+          "source": "vpic"
+        },
+        "s4": {
+          "name": "S4",
+          "year_min": 2000,
+          "year_max": 2026,
+          "labels": [
+            "S4"
+          ],
+          "source": "vpic"
+        },
+        "s8": {
+          "name": "S8",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "S8"
+          ],
+          "source": "vpic"
+        },
+        "a3": {
+          "name": "A3",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "A3"
+          ],
+          "source": "vpic"
+        },
+        "q7": {
+          "name": "Q7",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Q7"
+          ],
+          "source": "vpic"
+        },
+        "a5": {
+          "name": "A5",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "A5"
+          ],
+          "source": "vpic"
+        },
+        "s5": {
+          "name": "S5",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "S5"
+          ],
+          "source": "vpic"
+        },
+        "r8": {
+          "name": "R8",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "R8"
+          ],
+          "source": "vpic"
+        },
+        "tts": {
+          "name": "TTS",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "TTS"
+          ],
+          "source": "vpic"
+        },
+        "q5": {
+          "name": "Q5",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "Q5"
+          ],
+          "source": "vpic"
+        },
+        "rs5": {
+          "name": "RS 5",
+          "year_min": 2012,
+          "year_max": 2026,
+          "labels": [
+            "RS 5"
+          ],
+          "source": "vpic"
+        },
+        "a7": {
+          "name": "A7",
+          "year_min": 2012,
+          "year_max": 2026,
+          "labels": [
+            "A7"
+          ],
+          "source": "vpic"
+        },
+        "ttrs": {
+          "name": "TT RS",
+          "year_min": 2012,
+          "year_max": 2022,
+          "labels": [
+            "TT RS"
+          ],
+          "source": "vpic"
+        },
+        "s7": {
+          "name": "S7",
+          "year_min": 2012,
+          "year_max": 2026,
+          "labels": [
+            "S7"
+          ],
+          "source": "vpic"
+        },
+        "a4allroad": {
+          "name": "A4 allroad",
+          "year_min": 2012,
+          "year_max": 2026,
+          "labels": [
+            "A4 allroad"
+          ],
+          "source": "vpic"
+        },
+        "q3": {
+          "name": "Q3",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "Q3"
+          ],
+          "source": "vpic"
+        },
+        "sq5": {
+          "name": "SQ5",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "SQ5"
+          ],
+          "source": "vpic"
+        },
+        "s3": {
+          "name": "S3",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "S3"
+          ],
+          "source": "vpic"
+        },
+        "rs7": {
+          "name": "RS 7",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "RS 7"
+          ],
+          "source": "vpic"
+        },
+        "rs3": {
+          "name": "RS 3",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "RS 3"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "chevrolet": {
+      "name": "Chevrolet",
+      "models": {
+        "camaro": {
+          "name": "Camaro",
+          "year_min": 1995,
+          "year_max": 2024,
+          "labels": [
+            "Camaro"
+          ],
+          "source": "vpic"
+        },
+        "corvette": {
+          "name": "Corvette",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Corvette"
+          ],
+          "source": "vpic"
+        },
+        "suburban": {
+          "name": "Suburban",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Suburban"
+          ],
+          "source": "vpic"
+        },
+        "tahoe": {
+          "name": "Tahoe",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Tahoe"
+          ],
+          "source": "vpic"
+        },
+        "tracker": {
+          "name": "Tracker",
+          "year_min": 1995,
+          "year_max": 2020,
+          "labels": [
+            "Tracker"
+          ],
+          "source": "vpic"
+        },
+        "malibu": {
+          "name": "Malibu",
+          "year_min": 1996,
+          "year_max": 2026,
+          "labels": [
+            "Malibu"
+          ],
+          "source": "vpic"
+        },
+        "express": {
+          "name": "Express",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "Express"
+          ],
+          "source": "vpic"
+        },
+        "silverado": {
+          "name": "Silverado",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "Silverado"
+          ],
+          "source": "vpic"
+        },
+        "impala": {
+          "name": "Impala",
+          "year_min": 2000,
+          "year_max": 2020,
+          "labels": [
+            "Impala"
+          ],
+          "source": "vpic"
+        },
+        "aveo": {
+          "name": "Aveo",
+          "year_min": 2004,
+          "year_max": 2020,
+          "labels": [
+            "Aveo"
+          ],
+          "source": "vpic"
+        },
+        "equinox": {
+          "name": "Equinox",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Equinox"
+          ],
+          "source": "vpic"
+        },
+        "colorado": {
+          "name": "Colorado",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Colorado"
+          ],
+          "source": "vpic"
+        },
+        "cruze": {
+          "name": "Cruze",
+          "year_min": 2010,
+          "year_max": 2020,
+          "labels": [
+            "Cruze"
+          ],
+          "source": "vpic"
+        },
+        "spark": {
+          "name": "Spark",
+          "year_min": 2010,
+          "year_max": 2022,
+          "labels": [
+            "Spark"
+          ],
+          "source": "vpic"
+        },
+        "volt": {
+          "name": "Volt",
+          "year_min": 2010,
+          "year_max": 2020,
+          "labels": [
+            "Volt"
+          ],
+          "source": "vpic"
+        },
+        "traverse": {
+          "name": "Traverse",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "Traverse"
+          ],
+          "source": "vpic"
+        },
+        "sonic": {
+          "name": "Sonic",
+          "year_min": 2012,
+          "year_max": 2020,
+          "labels": [
+            "Sonic"
+          ],
+          "source": "vpic"
+        },
+        "trax": {
+          "name": "Trax",
+          "year_min": 2012,
+          "year_max": 2027,
+          "labels": [
+            "Trax"
+          ],
+          "source": "vpic"
+        },
+        "cityexpress": {
+          "name": "City Express",
+          "year_min": 2014,
+          "year_max": 2018,
+          "labels": [
+            "City Express"
+          ],
+          "source": "vpic"
+        },
+        "boltev": {
+          "name": "Bolt EV",
+          "year_min": 2016,
+          "year_max": 2024,
+          "labels": [
+            "Bolt EV"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "jeep": {
+      "name": "Jeep",
+      "models": {
+        "wrangler": {
+          "name": "Wrangler",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Wrangler"
+          ],
+          "source": "vpic"
+        },
+        "cherokee": {
+          "name": "Cherokee",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Cherokee"
+          ],
+          "source": "vpic"
+        },
+        "grandcherokee": {
+          "name": "Grand Cherokee",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Grand Cherokee"
+          ],
+          "source": "vpic"
+        },
+        "compass": {
+          "name": "Compass",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Compass"
+          ],
+          "source": "vpic"
+        },
+        "patriot": {
+          "name": "Patriot",
+          "year_min": 2006,
+          "year_max": 2018,
+          "labels": [
+            "Patriot"
+          ],
+          "source": "vpic"
+        },
+        "renegade": {
+          "name": "Renegade",
+          "year_min": 2014,
+          "year_max": 2024,
+          "labels": [
+            "Renegade"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "volvo": {
+      "name": "Volvo",
+      "models": {
+        "caboverengineht": {
+          "name": "Cab Over Engine HT",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Cab Over Engine HT"
+          ],
+          "source": "vpic"
+        },
+        "caboverenginelt": {
+          "name": "Cab Over Engine LT",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Cab Over Engine LT"
+          ],
+          "source": "vpic"
+        },
+        "f12wf7cab": {
+          "name": "F12 w/F7 Cab",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "F12 w/F7 Cab"
+          ],
+          "source": "vpic"
+        },
+        "f6wf7cab": {
+          "name": "F6 w/F7 Cab",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "F6 w/F7 Cab"
+          ],
+          "source": "vpic"
+        },
+        "cabbehindengine": {
+          "name": "Cab Behind Engine",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Cab Behind Engine"
+          ],
+          "source": "vpic"
+        },
+        "vnm": {
+          "name": "VNM",
+          "year_min": 1996,
+          "year_max": 2024,
+          "labels": [
+            "VNM"
+          ],
+          "source": "vpic"
+        },
+        "vnl": {
+          "name": "VNL",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "VNL"
+          ],
+          "source": "vpic"
+        },
+        "s60": {
+          "name": "S60",
+          "year_min": 2000,
+          "year_max": 2026,
+          "labels": [
+            "S60"
+          ],
+          "source": "vpic"
+        },
+        "vhd": {
+          "name": "VHD",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "VHD"
+          ],
+          "source": "vpic"
+        },
+        "xc90": {
+          "name": "XC90",
+          "year_min": 2002,
+          "year_max": 2027,
+          "labels": [
+            "XC90"
+          ],
+          "source": "vpic"
+        },
+        "xc60": {
+          "name": "XC60",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "XC60"
+          ],
+          "source": "vpic"
+        },
+        "vah": {
+          "name": "VAH",
+          "year_min": 2012,
+          "year_max": 2027,
+          "labels": [
+            "VAH"
+          ],
+          "source": "vpic"
+        },
+        "vnx": {
+          "name": "VNX",
+          "year_min": 2012,
+          "year_max": 2024,
+          "labels": [
+            "VNX"
+          ],
+          "source": "vpic"
+        },
+        "vnr": {
+          "name": "VNR",
+          "year_min": 2012,
+          "year_max": 2027,
+          "labels": [
+            "VNR"
+          ],
+          "source": "vpic"
+        },
+        "v60": {
+          "name": "V60",
+          "year_min": 2014,
+          "year_max": 2026,
+          "labels": [
+            "V60"
+          ],
+          "source": "vpic"
+        },
+        "v60cc": {
+          "name": "V60CC",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "V60CC"
+          ],
+          "source": "vpic"
+        },
+        "s60crosscountry": {
+          "name": "S60 Cross Country",
+          "year_min": 2016,
+          "year_max": 2018,
+          "labels": [
+            "S60 Cross Country"
+          ],
+          "source": "vpic"
+        },
+        "s90": {
+          "name": "S90",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "S90"
+          ],
+          "source": "vpic"
+        },
+        "v90": {
+          "name": "V90",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "V90"
+          ],
+          "source": "vpic"
+        },
+        "v90cc": {
+          "name": "V90CC",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "V90CC"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "subaru": {
+      "name": "Subaru",
+      "models": {
+        "legacy": {
+          "name": "Legacy",
+          "year_min": 1995,
+          "year_max": 2026,
+          "labels": [
+            "Legacy"
+          ],
+          "source": "vpic"
+        },
+        "impreza": {
+          "name": "Impreza",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Impreza"
+          ],
+          "source": "vpic"
+        },
+        "forester": {
+          "name": "Forester",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "Forester"
+          ],
+          "source": "vpic"
+        },
+        "outback": {
+          "name": "Outback",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Outback"
+          ],
+          "source": "vpic"
+        },
+        "brz": {
+          "name": "BRZ",
+          "year_min": 2012,
+          "year_max": 2027,
+          "labels": [
+            "BRZ"
+          ],
+          "source": "vpic"
+        },
+        "wrx": {
+          "name": "WRX",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "WRX"
+          ],
+          "source": "vpic"
+        },
+        "crosstrek": {
+          "name": "Crosstrek",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Crosstrek"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "isuzu": {
+      "name": "Isuzu",
+      "models": {
+        "trooper": {
+          "name": "Trooper",
+          "year_min": 1995,
+          "year_max": 2002,
+          "labels": [
+            "Trooper"
+          ],
+          "source": "vpic"
+        },
+        "rodeo": {
+          "name": "Rodeo",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "Rodeo"
+          ],
+          "source": "vpic"
+        },
+        "pickup": {
+          "name": "Pickup",
+          "year_min": 1995,
+          "year_max": 1996,
+          "labels": [
+            "Pickup"
+          ],
+          "source": "vpic"
+        },
+        "frr": {
+          "name": "FRR",
+          "year_min": 1995,
+          "year_max": 2004,
+          "labels": [
+            "FRR"
+          ],
+          "source": "vpic"
+        },
+        "npr": {
+          "name": "NPR",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "NPR"
+          ],
+          "source": "vpic+ng"
+        },
+        "fsr": {
+          "name": "FSR",
+          "year_min": 1995,
+          "year_max": 1996,
+          "labels": [
+            "FSR"
+          ],
+          "source": "vpic"
+        },
+        "ftrfvrevr": {
+          "name": "FTR/FVR/EVR",
+          "year_min": 1995,
+          "year_max": 1996,
+          "labels": [
+            "FTR/FVR/EVR"
+          ],
+          "source": "vpic"
+        },
+        "oasis": {
+          "name": "Oasis",
+          "year_min": 1996,
+          "year_max": 2000,
+          "labels": [
+            "Oasis"
+          ],
+          "source": "vpic"
+        },
+        "hombre": {
+          "name": "Hombre",
+          "year_min": 1996,
+          "year_max": 2000,
+          "labels": [
+            "Hombre"
+          ],
+          "source": "vpic"
+        },
+        "f6": {
+          "name": "F6",
+          "year_min": 1996,
+          "year_max": 2002,
+          "labels": [
+            "F6"
+          ],
+          "source": "vpic"
+        },
+        "f7": {
+          "name": "F7",
+          "year_min": 1996,
+          "year_max": 2002,
+          "labels": [
+            "F7"
+          ],
+          "source": "vpic"
+        },
+        "vehicross": {
+          "name": "VehiCross",
+          "year_min": 1998,
+          "year_max": 2002,
+          "labels": [
+            "VehiCross"
+          ],
+          "source": "vpic"
+        },
+        "rodeoamigo": {
+          "name": "Rodeo/Amigo",
+          "year_min": 1998,
+          "year_max": 2000,
+          "labels": [
+            "Rodeo/Amigo"
+          ],
+          "source": "vpic"
+        },
+        "nqr": {
+          "name": "NQR",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "NQR"
+          ],
+          "source": "vpic+ng"
+        },
+        "nprnprhd": {
+          "name": "NPR/NPR-HD",
+          "year_min": 2000,
+          "year_max": 2027,
+          "labels": [
+            "NPR/NPR-HD"
+          ],
+          "source": "vpic"
+        },
+        "ascender": {
+          "name": "Ascender",
+          "year_min": 2002,
+          "year_max": 2008,
+          "labels": [
+            "Ascender"
+          ],
+          "source": "vpic"
+        },
+        "axiom": {
+          "name": "Axiom",
+          "year_min": 2002,
+          "year_max": 2004,
+          "labels": [
+            "Axiom"
+          ],
+          "source": "vpic"
+        },
+        "t6f": {
+          "name": "T6F",
+          "year_min": 2002,
+          "year_max": 2010,
+          "labels": [
+            "T6F"
+          ],
+          "source": "vpic"
+        },
+        "t7f": {
+          "name": "T7F",
+          "year_min": 2002,
+          "year_max": 2010,
+          "labels": [
+            "T7F"
+          ],
+          "source": "vpic"
+        },
+        "t8f": {
+          "name": "T8F",
+          "year_min": 2002,
+          "year_max": 2010,
+          "labels": [
+            "T8F"
+          ],
+          "source": "vpic"
+        },
+        "nqrnrr": {
+          "name": "NQR/NRR",
+          "year_min": 2004,
+          "year_max": 2016,
+          "labels": [
+            "NQR/NRR"
+          ],
+          "source": "vpic"
+        },
+        "hseries": {
+          "name": "H-Series",
+          "year_min": 2004,
+          "year_max": 2008,
+          "labels": [
+            "H-Series"
+          ],
+          "source": "vpic"
+        },
+        "i290": {
+          "name": "i-290",
+          "year_min": 2006,
+          "year_max": 2008,
+          "labels": [
+            "i-290"
+          ],
+          "source": "vpic"
+        },
+        "i370": {
+          "name": "i-370",
+          "year_min": 2006,
+          "year_max": 2008,
+          "labels": [
+            "i-370"
+          ],
+          "source": "vpic"
+        },
+        "nrr": {
+          "name": "NRR",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "NRR"
+          ],
+          "source": "vpic"
+        },
+        "ftr": {
+          "name": "FTR",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "FTR"
+          ],
+          "source": "vpic"
+        },
+        "nprhd": {
+          "name": "NPR-HD",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "NPR-HD"
+          ],
+          "source": "vpic"
+        },
+        "nprxd": {
+          "name": "NPR-XD",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "NPR-XD"
+          ],
+          "source": "vpic"
+        },
+        "reach": {
+          "name": "REACH",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "REACH"
+          ],
+          "source": "vpic"
+        },
+        "fvr": {
+          "name": "FVR",
+          "year_min": 2020,
+          "year_max": 2027,
+          "labels": [
+            "FVR"
+          ],
+          "source": "vpic"
+        },
+        "dmax": {
+          "name": "D-Max",
+          "year_min": 2002,
+          "year_max": 2027,
+          "labels": [
+            "D-Max",
+            "DMax"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "daihatsu": {
+      "name": "Daihatsu",
+      "models": {
+        "lowspeedvehicle": {
+          "name": "Low Speed Vehicle",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "Low Speed Vehicle"
+          ],
+          "source": "vpic"
+        },
+        "hijet": {
+          "name": "Hijet",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Hijet"
+          ],
+          "source": "ng"
+        },
+        "terios": {
+          "name": "Terios",
+          "year_min": 1997,
+          "year_max": 2027,
+          "labels": [
+            "Terios"
+          ],
+          "source": "ng"
+        },
+        "himax": {
+          "name": "HiMax",
+          "year_min": 2017,
+          "year_max": 2027,
+          "labels": [
+            "HiMax"
+          ],
+          "source": "ng"
+        }
+      }
+    },
+    "chrysler": {
+      "name": "Chrysler",
+      "models": {
+        "300": {
+          "name": "300",
+          "year_min": 1998,
+          "year_max": 2024,
+          "labels": [
+            "300"
+          ],
+          "source": "vpic"
+        },
+        "pacifica": {
+          "name": "Pacifica",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Pacifica"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "dodge": {
+      "name": "Dodge",
+      "models": {
+        "durango": {
+          "name": "Durango",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Durango"
+          ],
+          "source": "vpic"
+        },
+        "charger": {
+          "name": "Charger",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Charger"
+          ],
+          "source": "vpic"
+        },
+        "challenger": {
+          "name": "Challenger",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "Challenger"
+          ],
+          "source": "vpic"
+        },
+        "journey": {
+          "name": "Journey",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "Journey"
+          ],
+          "source": "vpic"
+        },
+        "grandcaravan": {
+          "name": "Grand Caravan",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "Grand Caravan"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "gmc": {
+      "name": "GMC",
+      "models": {
+        "sierra": {
+          "name": "Sierra",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Sierra"
+          ],
+          "source": "vpic"
+        },
+        "yukon": {
+          "name": "Yukon",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Yukon"
+          ],
+          "source": "vpic"
+        },
+        "yukonxl": {
+          "name": "Yukon XL",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Yukon XL"
+          ],
+          "source": "vpic"
+        },
+        "savana": {
+          "name": "Savana",
+          "year_min": 1996,
+          "year_max": 2027,
+          "labels": [
+            "Savana"
+          ],
+          "source": "vpic"
+        },
+        "acadia": {
+          "name": "Acadia",
+          "year_min": 2006,
+          "year_max": 2027,
+          "labels": [
+            "Acadia"
+          ],
+          "source": "vpic"
+        },
+        "canyon": {
+          "name": "Canyon",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Canyon"
+          ],
+          "source": "vpic"
+        },
+        "terrain": {
+          "name": "Terrain",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "Terrain"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "cadillac": {
+      "name": "Cadillac",
+      "models": {
+        "cts": {
+          "name": "CTS",
+          "year_min": 2002,
+          "year_max": 2020,
+          "labels": [
+            "CTS"
+          ],
+          "source": "vpic"
+        },
+        "escalade": {
+          "name": "Escalade",
+          "year_min": 1998,
+          "year_max": 2027,
+          "labels": [
+            "Escalade"
+          ],
+          "source": "vpic"
+        },
+        "ats": {
+          "name": "ATS",
+          "year_min": 2012,
+          "year_max": 2020,
+          "labels": [
+            "ATS"
+          ],
+          "source": "vpic"
+        },
+        "xts": {
+          "name": "XTS",
+          "year_min": 2012,
+          "year_max": 2020,
+          "labels": [
+            "XTS"
+          ],
+          "source": "vpic"
+        },
+        "escaladeesv": {
+          "name": "Escalade ESV",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "Escalade ESV"
+          ],
+          "source": "vpic"
+        },
+        "ct6": {
+          "name": "CT6",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "CT6"
+          ],
+          "source": "vpic"
+        },
+        "xt5": {
+          "name": "XT5",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "XT5"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "jaguar": {
+      "name": "Jaguar",
+      "models": {
+        "xj": {
+          "name": "XJ",
+          "year_min": 2002,
+          "year_max": 2020,
+          "labels": [
+            "XJ"
+          ],
+          "source": "vpic"
+        },
+        "xf": {
+          "name": "XF",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "XF"
+          ],
+          "source": "vpic"
+        },
+        "ftype": {
+          "name": "F-TYPE",
+          "year_min": 2014,
+          "year_max": 2024,
+          "labels": [
+            "F-TYPE"
+          ],
+          "source": "vpic"
+        },
+        "xe": {
+          "name": "XE",
+          "year_min": 2016,
+          "year_max": 2022,
+          "labels": [
+            "XE"
+          ],
+          "source": "vpic"
+        },
+        "fpace": {
+          "name": "F-PACE",
+          "year_min": 2016,
+          "year_max": 2027,
+          "labels": [
+            "F-PACE"
+          ],
+          "source": "vpic"
+        },
+        "epace": {
+          "name": "E-PACE",
+          "year_min": 2018,
+          "year_max": 2024,
+          "labels": [
+            "E-PACE"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "porsche": {
+      "name": "Porsche",
+      "models": {
+        "911": {
+          "name": "911",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "911"
+          ],
+          "source": "vpic"
+        },
+        "cayenne": {
+          "name": "Cayenne",
+          "year_min": 2002,
+          "year_max": 2027,
+          "labels": [
+            "Cayenne"
+          ],
+          "source": "vpic"
+        },
+        "panamera": {
+          "name": "Panamera",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "Panamera"
+          ],
+          "source": "vpic"
+        },
+        "macan": {
+          "name": "Macan",
+          "year_min": 2014,
+          "year_max": 2027,
+          "labels": [
+            "Macan"
+          ],
+          "source": "vpic"
+        },
+        "718boxster": {
+          "name": "718 Boxster",
+          "year_min": 2016,
+          "year_max": 2026,
+          "labels": [
+            "718 Boxster"
+          ],
+          "source": "vpic"
+        },
+        "718cayman": {
+          "name": "718 Cayman",
+          "year_min": 2016,
+          "year_max": 2026,
+          "labels": [
+            "718 Cayman"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "mini": {
+      "name": "Mini",
+      "models": {
+        "pete": {
+          "name": "Pete",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Pete"
+          ],
+          "source": "vpic"
+        },
+        "kw": {
+          "name": "KW",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "KW"
+          ],
+          "source": "vpic"
+        },
+        "fl": {
+          "name": "FL",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "FL"
+          ],
+          "source": "vpic"
+        },
+        "mack": {
+          "name": "Mack",
+          "year_min": 1995,
+          "year_max": 2027,
+          "labels": [
+            "Mack"
+          ],
+          "source": "vpic"
+        },
+        "cooperconvertible": {
+          "name": "Cooper Convertible",
+          "year_min": 2004,
+          "year_max": 2027,
+          "labels": [
+            "Cooper Convertible"
+          ],
+          "source": "vpic"
+        },
+        "clubman": {
+          "name": "Clubman",
+          "year_min": 2008,
+          "year_max": 2024,
+          "labels": [
+            "Clubman"
+          ],
+          "source": "vpic"
+        },
+        "hardtop": {
+          "name": "Hardtop",
+          "year_min": 2008,
+          "year_max": 2027,
+          "labels": [
+            "Hardtop"
+          ],
+          "source": "vpic"
+        },
+        "countryman": {
+          "name": "Countryman",
+          "year_min": 2010,
+          "year_max": 2027,
+          "labels": [
+            "Countryman"
+          ],
+          "source": "vpic"
+        },
+        "paceman": {
+          "name": "Paceman",
+          "year_min": 2012,
+          "year_max": 2020,
+          "labels": [
+            "Paceman"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "fiat": {
+      "name": "Fiat",
+      "models": {
+        "500": {
+          "name": "500",
+          "year_min": 2012,
+          "year_max": 2020,
+          "labels": [
+            "500"
+          ],
+          "source": "vpic"
+        },
+        "500l": {
+          "name": "500L",
+          "year_min": 2014,
+          "year_max": 2020,
+          "labels": [
+            "500L"
+          ],
+          "source": "vpic"
+        },
+        "500x": {
+          "name": "500X",
+          "year_min": 2016,
+          "year_max": 2024,
+          "labels": [
+            "500X"
+          ],
+          "source": "vpic"
+        },
+        "124spider": {
+          "name": "124 Spider",
+          "year_min": 2016,
+          "year_max": 2020,
+          "labels": [
+            "124 Spider"
+          ],
+          "source": "vpic"
+        }
+      }
+    },
+    "innoson": {
+      "name": "Innoson",
+      "models": {
+        "ivmg5": {
+          "name": "IVM G5",
+          "year_min": 2015,
+          "year_max": 2027,
+          "labels": [
+            "IVM G5",
+            "G5"
+          ],
+          "source": "ng"
+        },
+        "ivmfox": {
+          "name": "IVM Fox",
+          "year_min": 2015,
+          "year_max": 2027,
+          "labels": [
+            "IVM Fox",
+            "Fox"
+          ],
+          "source": "ng"
+        },
+        "ivmcarrier": {
+          "name": "IVM Carrier",
+          "year_min": 2015,
+          "year_max": 2027,
+          "labels": [
+            "IVM Carrier",
+            "Carrier"
+          ],
+          "source": "ng"
+        },
+        "ivmumu": {
+          "name": "IVM Umu",
+          "year_min": 2015,
+          "year_max": 2027,
+          "labels": [
+            "IVM Umu",
+            "Umu"
+          ],
+          "source": "ng"
+        }
+      }
+    }
+  }
+}

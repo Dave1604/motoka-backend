@@ -133,8 +133,4 @@ const destination = isDevelopment
 
 export const logger = pino(pinoConfig, destination);
 
-export const safeLogData = (data) => {
-  return redactSensitiveData(data);
-};
-
 export default logger;

@@ -410,7 +410,11 @@ export class MonicreditAdapter {
       paymentScheduleIds.includes(item.id)
     );
     
-    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE || 'REV68dff2878cb81';
+    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE;
+    if (!revenueHeadCode) {
+      // Never fall back to a hardcoded account: this is where the money goes.
+      throw new MonicreditError('MONICREDIT_REVENUE_HEAD_CODE not configured', 500, 'CONFIG_ERROR');
+    }
     
     // Skip items with zero cost — Monicredit rejects line items with unit_cost = 0
     const items = selectedItems
@@ -442,7 +446,11 @@ export class MonicreditAdapter {
    * @returns {Array}
    */
   static _buildPlateNumberItem(plateType, subType, amountKobo) {
-    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE || 'REV68dff2878cb81';
+    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE;
+    if (!revenueHeadCode) {
+      // Never fall back to a hardcoded account: this is where the money goes.
+      throw new MonicreditError('MONICREDIT_REVENUE_HEAD_CODE not configured', 500, 'CONFIG_ERROR');
+    }
     const label = subType && subType !== plateType
       ? `${plateType} Plate Number (${subType})`
       : `${plateType || 'Plate'} Number Application`;
@@ -461,7 +469,11 @@ export class MonicreditAdapter {
    * @returns {Array}
    */
   static _buildDriverLicenseItem(licenseType, amountKobo) {
-    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE || 'REV68dff2878cb81';
+    const revenueHeadCode = process.env.MONICREDIT_REVENUE_HEAD_CODE;
+    if (!revenueHeadCode) {
+      // Never fall back to a hardcoded account: this is where the money goes.
+      throw new MonicreditError('MONICREDIT_REVENUE_HEAD_CODE not configured', 500, 'CONFIG_ERROR');
+    }
     const label = licenseType === 'renew'
       ? "Driver's License Renewal"
       : "New Driver's License Application";

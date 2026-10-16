@@ -6,8 +6,7 @@ import {
   PaystackError
 } from '../paystack.service.js';
 import { validateInitResponse, validateVerifyResponse, validateWebhookPayload } from '../validation/response.validator.js';
-import { buildPaymentMetadata } from '../../../utils/paymentHelpers.js';
-import { logError, logDebug } from '../../../utils/logger.js';
+import { logError } from '../../../utils/logger.js';
 
 /**
  * Paystack Gateway Adapter

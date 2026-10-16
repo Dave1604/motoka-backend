@@ -75,6 +75,28 @@ export const handleCallback = async (req, res) => {
       .eq('id', user.id)
       .single();
     
+    // Google has verified the address, so mark the profile verified on first sight.
+    
+    if (profile && !profile.email_verified_at) {
+    
+      const verifiedAt = new Date().toISOString();
+    
+      await supabaseAdmin
+    
+        .from('profiles')
+    
+        .update({ email_verified_at: verifiedAt, updated_at: verifiedAt })
+    
+        .eq('id', user.id)
+    
+        .is('email_verified_at', null);
+    
+      profile = { ...profile, email_verified_at: verifiedAt };
+    
+    }
+    
+    
+    
     // If profile doesn't exist (first time Google login), it should have been created by the trigger
     // But let's check suspension/deletion status
     if (profile?.is_suspended) {
