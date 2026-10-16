@@ -84,7 +84,7 @@ export class PaymentSuccessService {
           orderNumber: order?.order_number,
           customerName: [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || 'Unknown customer',
           customerEmail: profile?.email || 'unknown',
-          amountNaira: transaction.amount,
+          amountNaira: transaction.amount / 100,
           reference: transaction.reference,
           paymentType,
           plateNumber: car?.plate_number,
