@@ -495,7 +495,7 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
 
   const { data: order, error } = await supabase
     .from('guest_renewal_orders')
-    .select('id, payment_status, guest_email, guest_name, guest_phone, plate_number, total_amount, delivery_fee, selected_items, receipt_token')
+    .select('id, payment_status, guest_email, guest_name, guest_phone, plate_number, total_amount, delivery_fee, selected_items, receipt_token, expiry_date')
     .eq('payment_reference', paymentReference)
     .maybeSingle();
 
