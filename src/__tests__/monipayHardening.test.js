@@ -75,7 +75,11 @@ describe('markGuestOrderPaid gateway confirmation', () => {
   };
 
   const loadWithOrder = async () => {
-    const updateSpy = jest.fn(() => ({ eq: () => ({ error: null }) }));
+    const updateSpy = jest.fn(() => ({
+      eq: () => ({
+        neq: () => ({ select: () => ({ maybeSingle: async () => ({ data: { id: orderRow.id }, error: null }) }) }),
+      }),
+    }));
     jest.unstable_mockModule('../config/supabase.js', () => ({
       getSupabaseAdmin: () => ({
         from: () => ({
@@ -185,7 +189,13 @@ describe('verifyGuestPayment failed-order recovery', () => {
       guest_name: 'Guest',
       selected_items: [],
     };
-    const updateSpy = jest.fn(() => ({ eq: () => ({ eq: () => ({ error: null }), error: null }) }));
+    const updateSpy = jest.fn(() => ({
+      eq: () => ({
+        eq: () => ({ error: null }),
+        neq: () => ({ select: () => ({ maybeSingle: async () => ({ data: { id: 77 }, error: null }) }) }),
+        error: null,
+      }),
+    }));
     jest.unstable_mockModule('../config/supabase.js', () => ({
       getSupabaseAdmin: () => ({
         from: () => ({
