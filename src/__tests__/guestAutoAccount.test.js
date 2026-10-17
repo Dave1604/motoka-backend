@@ -51,6 +51,7 @@ function fakeSupabase({ maybeSingleValues = [], insertError = null, insertErrors
   const chain = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
+    is: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn(async () => ({ data: maybeSingleValues[state.maybeCalls++] ?? null, error: null })),
     insert: jest.fn(async () => {
       const err = state.inserts < insertErrors.length ? insertErrors[state.inserts] : insertError;
@@ -196,6 +197,9 @@ describe('guestSignup claim on auto-created accounts', () => {
     );
 
     expect(fake.state.updatedPasswords).toContainEqual({ id: 'auth-user-1', attrs: { password: 'Secret123' } });
+    // The receipt token proves the address; without this the session returned
+    // below is refused by authenticate on its first use.
+    expect(fake.state.updates).toContainEqual(expect.objectContaining({ email_verified_at: expect.any(String) }));
     expect(r.status).toHaveBeenCalledWith(201);
     expect(r.json.mock.calls[0][0].data.session).toEqual({ access_token: 'sess' });
   });
@@ -217,5 +221,6 @@ describe('guestSignup claim on auto-created accounts', () => {
 
     expect(r.status).toHaveBeenCalledWith(409);
     expect(fake.state.updatedPasswords).toHaveLength(0);
+    expect(fake.state.updates).toHaveLength(0);
   });
 });

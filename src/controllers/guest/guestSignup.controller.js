@@ -10,6 +10,7 @@
  */
 
 import { getSupabase, getSupabaseAdmin } from '../../config/supabase.js';
+import { invalidateProfileCache } from '../../middleware/authenticate.js';
 import * as response from '../../utils/responses.js';
 import { logError, logInfo } from '../../utils/logger.js';
 
@@ -85,6 +86,21 @@ export const guestSignup = async (req, res) => {
         logError('[GuestSignup] Set-password on auto-created account failed', pwError);
         return response.serverError(res, 'Account claim failed. Please try again or log in with OTP.');
       }
+
+      // The auto-created profile has no email_verified_at, and authenticate
+      // refuses any session without it — so the sign-in below would hand
+      // back a token that every later request rejects. The receipt token
+      // arrived by email, which is the proof the gate asks for.
+      const { error: verifyError } = await supabaseAdmin
+        .from('profiles')
+        .update({ email_verified_at: new Date().toISOString(), updated_at: new Date().toISOString() })
+        .eq('id', linkedProfile.id)
+        .is('email_verified_at', null);
+      if (verifyError) {
+        logError('[GuestSignup] Could not mark claimed account verified', verifyError);
+        return response.serverError(res, 'Account claim failed. Please try again or log in with OTP.');
+      }
+      invalidateProfileCache(linkedProfile.id);
 
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
         email,
