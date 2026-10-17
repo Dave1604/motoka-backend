@@ -550,14 +550,27 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
     return order;
   }
 
-  const { error: updateError } = await supabase
+  // The gateway webhook and the receipt page's verify call race each other on
+  // every guest payment. Both read the row above before either has written
+  // it, so the check alone let both through: on 2026-10-13 one customer got
+  // two receipts and ops two alerts for one order. The UPDATE is the claim —
+  // only the caller whose write actually flips the row owns the side effects.
+  const { data: claimed, error: updateError } = await supabase
     .from('guest_renewal_orders')
     .update({ payment_status: 'payment_success', updated_at: new Date().toISOString() })
-    .eq('id', order.id);
+    .eq('id', order.id)
+    .neq('payment_status', 'payment_success')
+    .select('id')
+    .maybeSingle();
 
   if (updateError) {
     logError('[GuestRenewal] Failed to mark order paid', updateError);
     return null;
+  }
+
+  if (!claimed) {
+    logDebug('[GuestRenewal] Lost the mark-paid race, skipping side effects', { orderId: order.id });
+    return order;
   }
 
   logInfo('[GuestRenewal] Order marked as payment_success', { orderId: order.id, reference: paymentReference });
@@ -637,8 +650,8 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
 
   // Ops alert — kept independent of the customer email above, because a
   // bounced customer address is precisely when ops needs to hear about the
-  // order. Reached once per order: the already-paid guard returns earlier on
-  // repeat webhook/verify calls. Scheduled orders are deliberately NOT
+  // order. Reached once per order: only the caller that won the UPDATE above
+  // gets here. Scheduled orders are deliberately NOT
   // alerted here — the sweeper alerts when the window opens, so early
   // payments never rot in the inbox for months.
   if (guestScheduledFor) {
