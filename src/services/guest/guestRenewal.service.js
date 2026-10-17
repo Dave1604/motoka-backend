@@ -477,6 +477,38 @@ export async function autoCreateGuestAccount(supabase, order) {
 }
 
 /**
+ * Attach a paid guest order to an account: link it when the guest email
+ * already belongs to a registered user, otherwise auto-create a passwordless
+ * account the guest can claim with OTP login or by setting a password on the
+ * receipt page. Never throws — returns { userId, created }, both falsy when
+ * nothing could be done. Shared by the payment path and the backfill script
+ * for orders paid before auto-creation existed.
+ */
+export async function linkOrCreateGuestAccount(supabase, order) {
+  try {
+    // profiles.id = auth.users.id; query by email is fast and avoids non-existent getUserByEmail
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', order.guest_email.toLowerCase())
+      .maybeSingle();
+    if (existingProfile?.id) {
+      await supabase
+        .from('guest_renewal_orders')
+        .update({ linked_user_id: existingProfile.id, updated_at: new Date().toISOString() })
+        .eq('id', order.id);
+      logInfo('[GuestRenewal] Auto-linked order to existing account', { orderId: order.id, userId: existingProfile.id });
+      return { userId: existingProfile.id, created: false };
+    }
+    const newUserId = await autoCreateGuestAccount(supabase, order);
+    return { userId: newUserId, created: !!newUserId };
+  } catch (linkErr) {
+    logError('[GuestRenewal] Auto-link check failed (non-fatal)', { error: linkErr.message, orderId: order.id });
+    return { userId: null, created: false };
+  }
+}
+
+/**
  * Called from the webhook handler when payment for a guest reference succeeds.
  * Marks the guest_renewal_order as payment_success.
  */
@@ -575,32 +607,8 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
 
   logInfo('[GuestRenewal] Order marked as payment_success', { orderId: order.id, reference: paymentReference });
 
-  // Auto-link to existing account if the guest email belongs to a registered user.
-  // Otherwise auto-create a passwordless account the guest can claim with OTP
-  // login or by setting a password on the receipt page. Done silently — a
-  // failure here must never block payment confirmation.
-  let accountCreated = false;
-  try {
-    // profiles.id = auth.users.id; query by email is fast and avoids non-existent getUserByEmail
-    const { data: existingProfile } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('email', order.guest_email.toLowerCase())
-      .maybeSingle();
-    const existingUser = existingProfile ? { id: existingProfile.id } : null;
-    if (existingUser?.id) {
-      await supabase
-        .from('guest_renewal_orders')
-        .update({ linked_user_id: existingUser.id, updated_at: new Date().toISOString() })
-        .eq('id', order.id);
-      logInfo('[GuestRenewal] Auto-linked order to existing account', { orderId: order.id, userId: existingUser.id });
-    } else {
-      const newUserId = await autoCreateGuestAccount(supabase, order);
-      accountCreated = !!newUserId;
-    }
-  } catch (linkErr) {
-    logError('[GuestRenewal] Auto-link check failed (non-fatal)', { error: linkErr.message, orderId: order.id });
-  }
+  // Done silently — a failure here must never block payment confirmation.
+  const { created: accountCreated } = await linkOrCreateGuestAccount(supabase, order);
 
   // Scheduled hold: renewals paid more than the window before expiry wait
   // for the window instead of landing on ops' desk months early. Unclaimed
