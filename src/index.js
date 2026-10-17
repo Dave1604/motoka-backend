@@ -30,6 +30,9 @@ import referralRoutes from './routes/referral.routes.js';
 // validation is skippable only via WHATSAPP_SKIP_WEBHOOK_VALIDATION, which is
 // refused in production at boot below.
 import whatsappRoutes from './routes/whatsapp.routes.js';
+// Facebook / Instagram Messenger webhook. Mounted behind express.raw() so
+// signature verification sees the exact bytes Meta signed.
+import facebookRoutes from './routes/facebook.routes.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import { getCorsConfig } from './config/cors.config.js';
 import { getSupabaseAdmin } from './config/supabase.js';
@@ -47,6 +50,18 @@ const requiredEnvVars = ['SUPABASE_URL', 'SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_
 
 if (!process.env.OPENAI_API_KEY) {
   console.warn('⚠️  OPENAI_API_KEY is not set — Mo (AI chat) will return errors at runtime');
+}
+
+// Facebook / Instagram bot — off unless every var is present. The webhook
+// route still mounts (so Meta's verification handshake can be configured),
+// but inbound messages will be rejected on missing credentials.
+const facebookEnvReady =
+  process.env.FACEBOOK_PAGE_ACCESS_TOKEN &&
+  process.env.FACEBOOK_VERIFY_TOKEN &&
+  process.env.FACEBOOK_APP_SECRET;
+
+if (!facebookEnvReady) {
+  console.warn('⚠️  FACEBOOK_* env vars incomplete — Facebook/Instagram DM bot is disabled');
 }
 
 const productionRequiredEnvVars = [
@@ -165,6 +180,9 @@ app.use(cors(getCorsConfig()));
 app.use('/api/webhooks/paystack', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monipay', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monicredit', express.raw({ type: 'application/json', limit: '2mb' }));
+// Meta signs the raw request body with the app secret — express.json() would
+// have already parsed (and mutated) req.body by the time verification runs.
+app.use('/api/v1/facebook/webhook', express.raw({ type: 'application/json', limit: '1mb' }));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -230,6 +248,11 @@ app.use('/api', referralRoutes);
 // Sandbox mode: no signature validation (dev/testing)
 // Production mode: Twilio request signature validated inside whatsapp.routes.js
 app.use('/api/v1/whatsapp', whatsappRoutes);
+
+// Facebook / Instagram Messenger webhook — Mo answers DMs from ads and
+// escalates to a human when it cannot. Signature verified inside the
+// controller against the raw body preserved by the express.raw() mount above.
+app.use('/api/v1/facebook', facebookRoutes);
 
 app.get('/api/docs', (req, res) => {
   const baseUrl = `${req.protocol}://${req.get('host')}/api`;
