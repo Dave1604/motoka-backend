@@ -153,9 +153,23 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
 export const listUsers = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, limit = 20, search, status, sort = 'recently_added' } = req.query;
+    const { page = 1, limit = 20, search, status, sort = 'recently_added', date_from, date_to } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // Normalize a date filter value to an ISO timestamp. A bare YYYY-MM-DD
+    // end date is treated as inclusive of that entire day.
+    const parseDateBound = (value, isEnd) => {
+      if (!value) return null;
+      const iso = /^\d{4}-\d{2}-\d{2}$/.test(value)
+        ? `${value}T${isEnd ? '23:59:59.999' : '00:00:00.000'}Z`
+        : value;
+      const date = new Date(iso);
+      return Number.isNaN(date.getTime()) ? null : date.toISOString();
+    };
+
+    const dateFrom = parseDateBound(date_from, false);
+    const dateTo = parseDateBound(date_to, true);
 
     // sort: recently_added (default) | a_z (by first_name asc)
     const sortAscending = sort === 'a_z';
@@ -179,7 +193,14 @@ export const listUsers = async (req, res) => {
     } else if (status === 'deleted') {
       query = query.not('deleted_at', 'is', null);
     }
-    
+
+    if (dateFrom) {
+      query = query.gte('created_at', dateFrom);
+    }
+    if (dateTo) {
+      query = query.lte('created_at', dateTo);
+    }
+
     const { data: profiles, count, error } = await query;
     
     if (error) {
@@ -3648,5 +3669,193 @@ export const updateRenewalItemPrice = async (req, res) => {
   } catch (err) {
     logError('[Admin] updateRenewalItemPrice error', err);
     return response.serverError(res, 'Failed to update renewal item price');
+  }
+};
+
+// ─── Plate Number Pricing ────────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/plate-prices
+ * Returns all plate number price rows (including inactive) for admin management.
+ * Prices are stored in Naira (whole integers), unlike renewal_items which use kobo.
+ */
+export const getPlateNumberPricesAdmin = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+
+    const { data, error } = await supabase
+      .from('plate_number_prices')
+      .select('id, plate_type, sub_type, price, description, is_active')
+      .order('plate_type', { ascending: true })
+      .order('sub_type', { ascending: true, nullsFirst: true });
+
+    if (error) {
+      logError('[Admin] getPlateNumberPricesAdmin error', error);
+      return response.serverError(res, 'Failed to retrieve plate number prices');
+    }
+
+    return response.success(res, data || [], 'Plate number prices retrieved');
+  } catch (err) {
+    logError('[Admin] getPlateNumberPricesAdmin error', err);
+    return response.serverError(res, 'Failed to retrieve plate number prices');
+  }
+};
+
+/**
+ * PUT /api/admin/plate-prices/:id
+ * Update the price (and optionally description/is_active) of a plate number row.
+ * Price is in Naira (whole integer).
+ */
+export const updatePlateNumberPrice = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { price, description, is_active } = req.body;
+    const supabase = getSupabaseAdmin();
+
+    if (price === undefined && description === undefined && is_active === undefined) {
+      return res.status(400).json({ status: false, message: 'At least one of price, description, or is_active must be provided' });
+    }
+
+    if (price !== undefined) {
+      const parsed = Number(price);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return res.status(400).json({ status: false, message: 'price must be a non-negative integer (in Naira)' });
+      }
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('plate_number_prices')
+      .select('id, plate_type, sub_type, price')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ status: false, message: 'Plate number price not found' });
+    }
+
+    const updatePayload = { updated_at: new Date().toISOString() };
+    if (price !== undefined) updatePayload.price = Number(price);
+    if (description !== undefined) updatePayload.description = String(description).trim();
+    if (is_active !== undefined) updatePayload.is_active = Boolean(is_active);
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('plate_number_prices')
+      .update(updatePayload)
+      .eq('id', id)
+      .select('id, plate_type, sub_type, price, description, is_active')
+      .single();
+
+    if (updateErr) {
+      logError('[Admin] updatePlateNumberPrice update error', updateErr);
+      return response.serverError(res, 'Failed to update plate number price');
+    }
+
+    logInfo('[Admin] Plate number price updated', {
+      id,
+      plateType: existing.plate_type,
+      subType: existing.sub_type,
+      previousPrice: existing.price,
+      newPrice: updated.price,
+      adminId: req.admin?.id,
+    });
+
+    return response.success(res, updated, 'Plate number price updated successfully');
+  } catch (err) {
+    logError('[Admin] updatePlateNumberPrice error', err);
+    return response.serverError(res, 'Failed to update plate number price');
+  }
+};
+
+// ─── Driver License Pricing ──────────────────────────────────────────────────
+
+/**
+ * GET /api/admin/driver-license-prices
+ * Returns all driver license price rows (including inactive) for admin management.
+ * Prices are stored in Naira (whole integers).
+ */
+export const getDriverLicensePricesAdmin = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+
+    const { data, error } = await supabase
+      .from('driver_license_prices')
+      .select('id, license_type, duration, price, description, is_active')
+      .order('license_type', { ascending: true })
+      .order('duration', { ascending: true });
+
+    if (error) {
+      logError('[Admin] getDriverLicensePricesAdmin error', error);
+      return response.serverError(res, 'Failed to retrieve driver license prices');
+    }
+
+    return response.success(res, data || [], 'Driver license prices retrieved');
+  } catch (err) {
+    logError('[Admin] getDriverLicensePricesAdmin error', err);
+    return response.serverError(res, 'Failed to retrieve driver license prices');
+  }
+};
+
+/**
+ * PUT /api/admin/driver-license-prices/:id
+ * Update the price (and optionally description/active) of a driver license row.
+ * Price is in Naira (whole integer).
+ */
+export const updateDriverLicensePrice = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { price, description, is_active } = req.body;
+    const supabase = getSupabaseAdmin();
+
+    if (price === undefined && description === undefined && is_active === undefined) {
+      return res.status(400).json({ status: false, message: 'At least one of price, description, or is_active must be provided' });
+    }
+
+    if (price !== undefined) {
+      const parsed = Number(price);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return res.status(400).json({ status: false, message: 'price must be a non-negative integer (in Naira)' });
+      }
+    }
+
+    const { data: existing, error: fetchErr } = await supabase
+      .from('driver_license_prices')
+      .select('id, license_type, duration, price')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (fetchErr || !existing) {
+      return res.status(404).json({ status: false, message: 'Driver license price not found' });
+    }
+
+    const updatePayload = { updated_at: new Date().toISOString() };
+    if (price !== undefined) updatePayload.price = Number(price);
+    if (description !== undefined) updatePayload.description = String(description).trim();
+    if (is_active !== undefined) updatePayload.is_active = Boolean(is_active);
+
+    const { data: updated, error: updateErr } = await supabase
+      .from('driver_license_prices')
+      .update(updatePayload)
+      .eq('id', id)
+      .select('id, license_type, duration, price, description, is_active')
+      .single();
+
+    if (updateErr) {
+      logError('[Admin] updateDriverLicensePrice update error', updateErr);
+      return response.serverError(res, 'Failed to update driver license price');
+    }
+
+    logInfo('[Admin] Driver license price updated', {
+      id,
+      licenseType: existing.license_type,
+      duration: existing.duration,
+      previousPrice: existing.price,
+      newPrice: updated.price,
+      adminId: req.admin?.id,
+    });
+
+    return response.success(res, updated, 'Driver license price updated successfully');
+  } catch (err) {
+    logError('[Admin] updateDriverLicensePrice error', err);
+    return response.serverError(res, 'Failed to update driver license price');
   }
 };
