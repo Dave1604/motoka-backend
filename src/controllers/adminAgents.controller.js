@@ -24,7 +24,7 @@ export async function listAgents(req, res) {
       .order('created_at', { ascending: false });
 
     if (error) return response.serverError(res, 'Failed to load agents');
-    return response.success(res, { data });
+    return response.success(res, data);
   } catch (err) {
     logError('[AdminAgents] listAgents error', err);
     return response.serverError(res, 'Failed to load agents');
@@ -105,7 +105,7 @@ export async function listAgentCosts(req, res) {
       .order('service_key', { ascending: true });
 
     if (error) return response.serverError(res, 'Failed to load cost table');
-    return response.success(res, { data });
+    return response.success(res, data);
   } catch (err) {
     logError('[AdminAgents] listAgentCosts error', err);
     return response.serverError(res, 'Failed to load cost table');
