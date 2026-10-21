@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
+import * as agents from '../controllers/adminAgents.controller.js';
 import { getTrafficReportHandler } from '../controllers/admin-analytics.controller.js';
 import { rollOrderToNextCycle, rollGuestOrder } from '../controllers/admin-order-ops.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
@@ -174,5 +175,17 @@ router.get('/plate-prices', authenticateAdmin, admin.getPlateNumberPricesAdmin);
 router.put('/plate-prices/:id', authenticateAdmin, admin.updatePlateNumberPrice);
 router.get('/driver-license-prices', authenticateAdmin, admin.getDriverLicensePricesAdmin);
 router.put('/driver-license-prices/:id', authenticateAdmin, admin.updateDriverLicensePrice);
+
+// ─── Agent fulfilment pipeline (migration 107) ─────────────────────────────
+router.get('/agents', authenticateAdmin, agents.listAgents);
+router.post('/agents', authenticateAdmin, agents.createAgent);
+router.put('/agents/:id', authenticateAdmin, agents.updateAgent);
+router.get('/agent-costs', authenticateAdmin, agents.listAgentCosts);
+router.put('/agent-costs', authenticateAdmin, agents.upsertAgentCost);
+router.get('/payouts', authenticateAdmin, agents.listPayouts);
+router.post('/payouts/:id/retry', authenticateAdmin, agents.retryPayoutHandler);
+router.post('/payouts/:id/mark-paid', authenticateAdmin, agents.markPayoutPaidManuallyHandler);
+router.post('/payouts/:id/reconcile', authenticateAdmin, agents.reconcilePayoutHandler);
+router.post('/orders/assign-agent', authenticateAdmin, agents.assignAgentToOrderHandler);
 
 export default router;
