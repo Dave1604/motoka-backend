@@ -16,7 +16,7 @@ import { logError, logInfo, logDebug } from '../../utils/logger.js';
 import { getRenewalItems, validateRenewalItemsSelection } from '../payment/renewalItems.service.js';
 import { quoteFromDeliveryFields, DeliveryQuoteError } from '../courier/deliveryQuote.service.js';
 import { TerminalError } from '../courier/terminal.service.js';
-import { generatePaymentReference } from '../../utils/paymentHelpers.js';
+import { generatePaymentReference, sanitizeAttribution } from '../../utils/paymentHelpers.js';
 import { verifyTransaction as monicreditVerify } from '../payment/monicredit/monicredit.service.js';
 import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify } from '../payment/paystack.service.js';
 import { initializeTransaction as monipayInit, verifyTransaction as monipayVerify } from '../payment/monipay/monipay.service.js';
@@ -59,6 +59,7 @@ function splitName(fullName = '') {
  * @param {string} params.deliveryDetails.contact
  * @param {string} params.paymentGateway  - "monipay" | "paystack"
  * @param {string} params.frontendBaseUrl - Used to build callback URL
+ * @param {Object} [params.attribution] - Marketing attribution { source, campaign }
  * @returns {Promise<Object>} { orderId, paymentReference, paymentUrl, expiresAt, gateway }
  */
 export async function initiateGuestRenewal({
@@ -72,7 +73,8 @@ export async function initiateGuestRenewal({
   deliveryDetails,
   paymentGateway = PAYMENT_GATEWAY.MONIPAY,
   frontendBaseUrl,
-  renewalState = null
+  renewalState = null,
+  attribution = null
 }) {
   if (paymentGateway === PAYMENT_GATEWAY.MONICREDIT) {
     paymentGateway = PAYMENT_GATEWAY.MONIPAY;
@@ -154,6 +156,7 @@ export async function initiateGuestRenewal({
   // ── 4. Create guest_renewal_order in pending_payment ──────────────────────
   const paymentReference = generatePaymentReference();
   const receiptToken = generateReceiptToken();
+  const cleanAttribution = sanitizeAttribution(attribution);
 
   const { data: order, error: orderError } = await supabase
     .from('guest_renewal_orders')
@@ -172,6 +175,8 @@ export async function initiateGuestRenewal({
       renewal_state: renewalState || null,
       payment_gateway: paymentGateway,
       payment_reference: paymentReference,
+      attribution_source: cleanAttribution?.source || null,
+      attribution_campaign: cleanAttribution?.campaign || null,
       payment_status: 'pending_payment',
       receipt_token: receiptToken,
       expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
@@ -202,7 +207,8 @@ export async function initiateGuestRenewal({
       name,
       plateNumber,
       selectedItems,
-      deliveryDetails: resolvedDelivery
+      deliveryDetails: resolvedDelivery,
+      attribution: cleanAttribution
     });
   } else {
     gatewayResult = await _initMonipay({
@@ -250,16 +256,19 @@ export async function initiateGuestRenewal({
 
 // ─── Gateway initialisation helpers (direct API calls, no auth-user lookup) ──
 
-async function _initPaystack({ email, amount, reference, callbackUrl, name, plateNumber, selectedItems, deliveryDetails }) {
+async function _initPaystack({ email, amount, reference, callbackUrl, name, plateNumber, selectedItems, deliveryDetails, attribution = null }) {
   const metadata = {
     is_guest: true,
     guest_name: name,
     guest_plate: plateNumber,
     selected_items: selectedItems,
     delivery_details: deliveryDetails,
+    ...(attribution ? { attribution } : {}),
     custom_fields: [
       { display_name: 'Plate Number', variable_name: 'plate_number', value: plateNumber },
-      { display_name: 'Customer', variable_name: 'customer', value: name }
+      { display_name: 'Customer', variable_name: 'customer', value: name },
+      ...(attribution?.source ? [{ display_name: 'Source', variable_name: 'attribution_source', value: attribution.source }] : []),
+      ...(attribution?.campaign ? [{ display_name: 'Campaign', variable_name: 'attribution_campaign', value: attribution.campaign }] : [])
     ]
   };
 
@@ -469,6 +478,38 @@ export async function autoCreateGuestAccount(supabase, order) {
 }
 
 /**
+ * Attach a paid guest order to an account: link it when the guest email
+ * already belongs to a registered user, otherwise auto-create a passwordless
+ * account the guest can claim with OTP login or by setting a password on the
+ * receipt page. Never throws — returns { userId, created }, both falsy when
+ * nothing could be done. Shared by the payment path and the backfill script
+ * for orders paid before auto-creation existed.
+ */
+export async function linkOrCreateGuestAccount(supabase, order) {
+  try {
+    // profiles.id = auth.users.id; query by email is fast and avoids non-existent getUserByEmail
+    const { data: existingProfile } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', order.guest_email.toLowerCase())
+      .maybeSingle();
+    if (existingProfile?.id) {
+      await supabase
+        .from('guest_renewal_orders')
+        .update({ linked_user_id: existingProfile.id, updated_at: new Date().toISOString() })
+        .eq('id', order.id);
+      logInfo('[GuestRenewal] Auto-linked order to existing account', { orderId: order.id, userId: existingProfile.id });
+      return { userId: existingProfile.id, created: false };
+    }
+    const newUserId = await autoCreateGuestAccount(supabase, order);
+    return { userId: newUserId, created: !!newUserId };
+  } catch (linkErr) {
+    logError('[GuestRenewal] Auto-link check failed (non-fatal)', { error: linkErr.message, orderId: order.id });
+    return { userId: null, created: false };
+  }
+}
+
+/**
  * Called from the webhook handler when payment for a guest reference succeeds.
  * Marks the guest_renewal_order as payment_success.
  */
@@ -487,7 +528,7 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
 
   const { data: order, error } = await supabase
     .from('guest_renewal_orders')
-    .select('id, payment_status, guest_email, guest_name, guest_phone, plate_number, total_amount, delivery_fee, selected_items, receipt_token')
+    .select('id, payment_status, guest_email, guest_name, guest_phone, plate_number, total_amount, delivery_fee, selected_items, receipt_token, expiry_date')
     .eq('payment_reference', paymentReference)
     .maybeSingle();
 
@@ -542,44 +583,33 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
     return order;
   }
 
-  const { error: updateError } = await supabase
+  // The gateway webhook and the receipt page's verify call race each other on
+  // every guest payment. Both read the row above before either has written
+  // it, so the check alone let both through: on 2026-10-13 one customer got
+  // two receipts and ops two alerts for one order. The UPDATE is the claim —
+  // only the caller whose write actually flips the row owns the side effects.
+  const { data: claimed, error: updateError } = await supabase
     .from('guest_renewal_orders')
     .update({ payment_status: 'payment_success', updated_at: new Date().toISOString() })
-    .eq('id', order.id);
+    .eq('id', order.id)
+    .neq('payment_status', 'payment_success')
+    .select('id')
+    .maybeSingle();
 
   if (updateError) {
     logError('[GuestRenewal] Failed to mark order paid', updateError);
     return null;
   }
 
+  if (!claimed) {
+    logDebug('[GuestRenewal] Lost the mark-paid race, skipping side effects', { orderId: order.id });
+    return order;
+  }
+
   logInfo('[GuestRenewal] Order marked as payment_success', { orderId: order.id, reference: paymentReference });
 
-  // Auto-link to existing account if the guest email belongs to a registered user.
-  // Otherwise auto-create a passwordless account the guest can claim with OTP
-  // login or by setting a password on the receipt page. Done silently — a
-  // failure here must never block payment confirmation.
-  let accountCreated = false;
-  try {
-    // profiles.id = auth.users.id; query by email is fast and avoids non-existent getUserByEmail
-    const { data: existingProfile } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('email', order.guest_email.toLowerCase())
-      .maybeSingle();
-    const existingUser = existingProfile ? { id: existingProfile.id } : null;
-    if (existingUser?.id) {
-      await supabase
-        .from('guest_renewal_orders')
-        .update({ linked_user_id: existingUser.id, updated_at: new Date().toISOString() })
-        .eq('id', order.id);
-      logInfo('[GuestRenewal] Auto-linked order to existing account', { orderId: order.id, userId: existingUser.id });
-    } else {
-      const newUserId = await autoCreateGuestAccount(supabase, order);
-      accountCreated = !!newUserId;
-    }
-  } catch (linkErr) {
-    logError('[GuestRenewal] Auto-link check failed (non-fatal)', { error: linkErr.message, orderId: order.id });
-  }
+  // Done silently — a failure here must never block payment confirmation.
+  const { created: accountCreated } = await linkOrCreateGuestAccount(supabase, order);
 
   // Scheduled hold: renewals paid more than the window before expiry wait
   // for the window instead of landing on ops' desk months early. Unclaimed
@@ -639,8 +669,8 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
 
   // Ops alert — kept independent of the customer email above, because a
   // bounced customer address is precisely when ops needs to hear about the
-  // order. Reached once per order: the already-paid guard returns earlier on
-  // repeat webhook/verify calls. Scheduled orders are deliberately NOT
+  // order. Reached once per order: only the caller that won the UPDATE above
+  // gets here. Scheduled orders are deliberately NOT
   // alerted here — the sweeper alerts when the window opens, so early
   // payments never rot in the inbox for months.
   if (guestScheduledFor) {

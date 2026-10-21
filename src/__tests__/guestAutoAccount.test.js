@@ -51,6 +51,7 @@ function fakeSupabase({ maybeSingleValues = [], insertError = null, insertErrors
   const chain = {
     select: jest.fn().mockReturnThis(),
     eq: jest.fn().mockReturnThis(),
+    is: jest.fn().mockReturnThis(),
     maybeSingle: jest.fn(async () => ({ data: maybeSingleValues[state.maybeCalls++] ?? null, error: null })),
     insert: jest.fn(async () => {
       const err = state.inserts < insertErrors.length ? insertErrors[state.inserts] : insertError;
@@ -150,6 +151,40 @@ describe('autoCreateGuestAccount', () => {
   });
 });
 
+describe('linkOrCreateGuestAccount', () => {
+  let linkOrCreateGuestAccount;
+
+  beforeEach(async () => {
+    ({ linkOrCreateGuestAccount } = await import('../services/guest/guestRenewal.service.js'));
+  });
+
+  it('links to an existing profile with the same email and creates nothing', async () => {
+    const fake = fakeSupabase({ maybeSingleValues: [{ id: 'existing-1' }] });
+
+    const result = await linkOrCreateGuestAccount(fake.client, order());
+
+    expect(result).toEqual({ userId: 'existing-1', created: false });
+    expect(fake.client.auth.admin.createUser).not.toHaveBeenCalled();
+    expect(fake.state.updates).toContainEqual(expect.objectContaining({ linked_user_id: 'existing-1' }));
+  });
+
+  it('auto-creates an account when no profile has the email', async () => {
+    const fake = fakeSupabase({ maybeSingleValues: [null, null, null] });
+
+    const result = await linkOrCreateGuestAccount(fake.client, order());
+
+    expect(result).toEqual({ userId: 'auth-user-1', created: true });
+    expect(fake.client.auth.admin.createUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('never throws: a lookup failure reports nothing done', async () => {
+    const fake = fakeSupabase();
+    fake.client.from = jest.fn(() => { throw new Error('db down'); });
+
+    await expect(linkOrCreateGuestAccount(fake.client, order())).resolves.toEqual({ userId: null, created: false });
+  });
+});
+
 describe('guestSignup claim on auto-created accounts', () => {
   let guestSignup;
   let mockGetSupabaseAdmin;
@@ -196,6 +231,9 @@ describe('guestSignup claim on auto-created accounts', () => {
     );
 
     expect(fake.state.updatedPasswords).toContainEqual({ id: 'auth-user-1', attrs: { password: 'Secret123' } });
+    // The receipt token proves the address; without this the session returned
+    // below is refused by authenticate on its first use.
+    expect(fake.state.updates).toContainEqual(expect.objectContaining({ email_verified_at: expect.any(String) }));
     expect(r.status).toHaveBeenCalledWith(201);
     expect(r.json.mock.calls[0][0].data.session).toEqual({ access_token: 'sess' });
   });
@@ -217,5 +255,6 @@ describe('guestSignup claim on auto-created accounts', () => {
 
     expect(r.status).toHaveBeenCalledWith(409);
     expect(fake.state.updatedPasswords).toHaveLength(0);
+    expect(fake.state.updates).toHaveLength(0);
   });
 });

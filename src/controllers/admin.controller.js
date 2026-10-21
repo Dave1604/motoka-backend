@@ -1,4 +1,5 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
+import { checkFulfillmentLag } from '../services/payment/fulfillment-lag.service.js';
 import * as response from '../utils/responses.js';
 import { parse as csvParse } from 'csv-parse/sync';
 import { sanitizeCarInput } from '../utils/carSanitization.js';
@@ -153,23 +154,9 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
 export const listUsers = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, limit = 20, search, status, sort = 'recently_added', date_from, date_to } = req.query;
+    const { page = 1, limit = 20, search, status, sort = 'recently_added' } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
-
-    // Normalize a date filter value to an ISO timestamp. A bare YYYY-MM-DD
-    // end date is treated as inclusive of that entire day.
-    const parseDateBound = (value, isEnd) => {
-      if (!value) return null;
-      const iso = /^\d{4}-\d{2}-\d{2}$/.test(value)
-        ? `${value}T${isEnd ? '23:59:59.999' : '00:00:00.000'}Z`
-        : value;
-      const date = new Date(iso);
-      return Number.isNaN(date.getTime()) ? null : date.toISOString();
-    };
-
-    const dateFrom = parseDateBound(date_from, false);
-    const dateTo = parseDateBound(date_to, true);
 
     // sort: recently_added (default) | a_z (by first_name asc)
     const sortAscending = sort === 'a_z';
@@ -193,14 +180,7 @@ export const listUsers = async (req, res) => {
     } else if (status === 'deleted') {
       query = query.not('deleted_at', 'is', null);
     }
-
-    if (dateFrom) {
-      query = query.gte('created_at', dateFrom);
-    }
-    if (dateTo) {
-      query = query.lte('created_at', dateTo);
-    }
-
+    
     const { data: profiles, count, error } = await query;
     
     if (error) {
@@ -891,15 +871,21 @@ export const getDashboardStats = async (req, res) => {
 
     const now = new Date();
     const monthStart = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`;
+    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 3600 * 1000).toISOString();
 
     const settled = await Promise.allSettled([
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }),
       supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null),
       supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false),
-      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful'),
+      // Revenue excludes flagged test rows and duplicate charges (money we owe
+      // back, not money we earned).
+      supabaseAdmin.from('payment_transactions').select('amount').eq('status', 'successful').eq('is_test', false)
+        .or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_charge'),
       loadRenewalsSummary(supabaseAdmin),
-      supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success'),
+      supabaseAdmin.from('guest_renewal_orders').select('total_amount').eq('payment_status', 'payment_success').eq('is_test', false),
       supabaseAdmin.from('renewal_orders').select('id', { count: 'exact', head: true }).eq('status', 'scheduled'),
+      supabaseAdmin.from('profiles').select('id', { count: 'exact', head: true }).is('deleted_at', null).eq('is_admin', false).gte('created_at', sevenDaysAgo),
+      supabaseAdmin.from('cars').select('id', { count: 'exact', head: true }).is('deleted_at', null).gte('created_at', sevenDaysAgo),
     ]);
 
     const pick = (index) => {
@@ -914,6 +900,10 @@ export const getDashboardStats = async (req, res) => {
     const totalOrders = pick(0).count;
     const totalCars = pick(1).count;
     const totalUsers = pick(2).count;
+    // Indexes 5 and 6 are guest revenue and scheduled orders; the 7-day
+    // counts were appended after them.
+    const usersLast7Days = pick(7).count || 0;
+    const carsLast7Days = pick(8).count || 0;
     const amountData = pick(3).data;
     const renewalsSummary = settled[4].status === 'fulfilled' ? settled[4].value : null;
     const expiredThisMonth = renewalsSummary?.expired_this_month || 0;
@@ -936,6 +926,8 @@ export const getDashboardStats = async (req, res) => {
         total_agents: 0,
         total_cars: totalCars || 0,
         total_users: totalUsers || 0,
+        users_last_7_days: usersLast7Days,
+        cars_last_7_days: carsLast7Days,
         expired_cars_this_month: expiredThisMonth || 0,
         expired_cars_total: expiredTotal || 0,
         expired_month: renewalsSummary?.expired_month || monthStart.slice(0, 7),
@@ -1536,7 +1528,11 @@ export const listTransactions = async (req, res) => {
     if (dbStatus) query = query.eq('status', dbStatus);
     if (dbGateway) query = query.eq('payment_gateway', dbGateway);
     if (search) query = query.ilike('reference', `%${search}%`);
-    if (hideDuplicates) query = query.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init');
+    if (hideDuplicates) {
+      query = query
+        .or('cancellation_reason.is.null,cancellation_reason.not.in.(duplicate_init,duplicate_charge)')
+        .eq('is_test', false);
+    }
 
     // Summary: HEAD-only count queries (no row transfer) + targeted sums on the
     // smaller `successful` / `pending` subsets. The previous implementation
@@ -1553,7 +1549,9 @@ export const listTransactions = async (req, res) => {
     // request used to make three sequential round trips to Supabase (rows →
     // user details → summary); overlapping these two removes one of them.
     const applyDupFilter = (q) =>
-      hideDuplicates ? q.or('cancellation_reason.is.null,cancellation_reason.neq.duplicate_init') : q;
+      hideDuplicates
+        ? q.or('cancellation_reason.is.null,cancellation_reason.not.in.(duplicate_init,duplicate_charge)').eq('is_test', false)
+        : q;
     const headCount = (filterFn) => {
       let q = supabaseAdmin.from('payment_transactions').select('id', { count: 'exact', head: true });
       q = applyDupFilter(q);
@@ -2641,7 +2639,7 @@ export const listGuestOrders = async (req, res) => {
 
     let query = supabase
       .from('guest_renewal_orders')
-      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, fulfillment_status, processing_started_at, completed_at, payment_gateway, total_amount, created_at, linked_user_id, car_id, payment_reference, delivery_fee, delivery_details, selected_items, scheduled_for, expiry_date', { count: 'exact' })
+      .select('id, guest_name, guest_email, guest_phone, plate_number, payment_status, fulfillment_status, processing_started_at, completed_at, payment_gateway, total_amount, created_at, linked_user_id, car_id, payment_reference, delivery_fee, delivery_details, selected_items, scheduled_for, expiry_date, attribution_source, attribution_campaign', { count: 'exact' })
       .order('created_at', { ascending: false })
       .range(from, to);
 
@@ -2671,6 +2669,86 @@ export const listGuestOrders = async (req, res) => {
   } catch (err) {
     logError('[Admin] listGuestOrders error', err);
     return response.serverError(res, 'Failed to retrieve guest orders');
+  }
+};
+
+/**
+ * GET /api/admin/mo-conversations
+ *
+ * Marketing-intelligence read over the Mo conversation log: what visitors
+ * and users ask Mo, newest first. Filters: source (chat|public), search
+ * (matches question text), unanswered (answer IS NULL — demand Mo failed on).
+ */
+export const listMoConversations = async (req, res) => {
+  try {
+    const supabase = getSupabaseAdmin();
+    const page = Math.max(1, parseInt(req.query.page) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 20));
+    const from = (page - 1) * limit;
+    const to = from + limit - 1;
+    const { source, search, unanswered } = req.query;
+
+    let query = supabase
+      .from('mo_conversations')
+      .select('id, user_id, source, question, answer, action_type, has_ladipo_search, model, created_at', { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (source === 'chat' || source === 'public') query = query.eq('source', source);
+    if (search) query = query.ilike('question', `%${search}%`);
+    if (unanswered === 'true' || unanswered === '1') query = query.is('answer', null);
+
+    const { data: conversations, count, error } = await query;
+    if (error) {
+      logError('[Admin] listMoConversations query error', error);
+      return response.serverError(res, 'Failed to retrieve Mo conversations');
+    }
+
+    return response.success(res, {
+      conversations: conversations || [],
+      pagination: {
+        current_page: page,
+        limit,
+        total: count || 0,
+        total_pages: Math.ceil((count || 0) / limit),
+        has_next: page < Math.ceil((count || 0) / limit),
+        has_prev: page > 1
+      }
+    }, 'Mo conversations retrieved');
+  } catch (err) {
+    logError('[Admin] listMoConversations error', err);
+    return response.serverError(res, 'Failed to retrieve Mo conversations');
+  }
+};
+
+/**
+ * GET /api/admin/fulfillment-lag
+ *
+ * Fulfillment-lag watch: paid money and orders stuck between payment and
+ * processing. Query params (all optional): orphan_grace_minutes (default
+ * 30), pending_order_hours (24), processing_order_hours (48),
+ * guest_stale_hours (24), reconcile=true to also sweep Paystack for ghost
+ * money (our-prefix successes with no local row), recon_days (7).
+ */
+export const listFulfillmentLag = async (req, res) => {
+  try {
+    const num = (v, fallback, min, max) => {
+      const n = Number(v);
+      if (!Number.isFinite(n)) return fallback;
+      return Math.min(max, Math.max(min, n));
+    };
+    const result = await checkFulfillmentLag({
+      orphanGraceMinutes: num(req.query.orphan_grace_minutes, 30, 0, 1440),
+      pendingOrderHours: num(req.query.pending_order_hours, 24, 1, 720),
+      processingOrderHours: num(req.query.processing_order_hours, 48, 1, 1440),
+      guestStaleHours: num(req.query.guest_stale_hours, 24, 1, 720),
+      reconcile: req.query.reconcile === 'true' || req.query.reconcile === '1',
+      reconDays: num(req.query.recon_days, 7, 1, 90),
+    });
+    return response.success(res, result, 'Fulfillment lag checked');
+  } catch (err) {
+    logError('[Admin] listFulfillmentLag error', err);
+    return response.serverError(res, 'Failed to check fulfillment lag');
   }
 };
 
@@ -3669,193 +3747,5 @@ export const updateRenewalItemPrice = async (req, res) => {
   } catch (err) {
     logError('[Admin] updateRenewalItemPrice error', err);
     return response.serverError(res, 'Failed to update renewal item price');
-  }
-};
-
-// ─── Plate Number Pricing ────────────────────────────────────────────────────
-
-/**
- * GET /api/admin/plate-prices
- * Returns all plate number price rows (including inactive) for admin management.
- * Prices are stored in Naira (whole integers), unlike renewal_items which use kobo.
- */
-export const getPlateNumberPricesAdmin = async (req, res) => {
-  try {
-    const supabase = getSupabaseAdmin();
-
-    const { data, error } = await supabase
-      .from('plate_number_prices')
-      .select('id, plate_type, sub_type, price, description, is_active')
-      .order('plate_type', { ascending: true })
-      .order('sub_type', { ascending: true, nullsFirst: true });
-
-    if (error) {
-      logError('[Admin] getPlateNumberPricesAdmin error', error);
-      return response.serverError(res, 'Failed to retrieve plate number prices');
-    }
-
-    return response.success(res, data || [], 'Plate number prices retrieved');
-  } catch (err) {
-    logError('[Admin] getPlateNumberPricesAdmin error', err);
-    return response.serverError(res, 'Failed to retrieve plate number prices');
-  }
-};
-
-/**
- * PUT /api/admin/plate-prices/:id
- * Update the price (and optionally description/is_active) of a plate number row.
- * Price is in Naira (whole integer).
- */
-export const updatePlateNumberPrice = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { price, description, is_active } = req.body;
-    const supabase = getSupabaseAdmin();
-
-    if (price === undefined && description === undefined && is_active === undefined) {
-      return res.status(400).json({ status: false, message: 'At least one of price, description, or is_active must be provided' });
-    }
-
-    if (price !== undefined) {
-      const parsed = Number(price);
-      if (!Number.isInteger(parsed) || parsed < 0) {
-        return res.status(400).json({ status: false, message: 'price must be a non-negative integer (in Naira)' });
-      }
-    }
-
-    const { data: existing, error: fetchErr } = await supabase
-      .from('plate_number_prices')
-      .select('id, plate_type, sub_type, price')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (fetchErr || !existing) {
-      return res.status(404).json({ status: false, message: 'Plate number price not found' });
-    }
-
-    const updatePayload = { updated_at: new Date().toISOString() };
-    if (price !== undefined) updatePayload.price = Number(price);
-    if (description !== undefined) updatePayload.description = String(description).trim();
-    if (is_active !== undefined) updatePayload.is_active = Boolean(is_active);
-
-    const { data: updated, error: updateErr } = await supabase
-      .from('plate_number_prices')
-      .update(updatePayload)
-      .eq('id', id)
-      .select('id, plate_type, sub_type, price, description, is_active')
-      .single();
-
-    if (updateErr) {
-      logError('[Admin] updatePlateNumberPrice update error', updateErr);
-      return response.serverError(res, 'Failed to update plate number price');
-    }
-
-    logInfo('[Admin] Plate number price updated', {
-      id,
-      plateType: existing.plate_type,
-      subType: existing.sub_type,
-      previousPrice: existing.price,
-      newPrice: updated.price,
-      adminId: req.admin?.id,
-    });
-
-    return response.success(res, updated, 'Plate number price updated successfully');
-  } catch (err) {
-    logError('[Admin] updatePlateNumberPrice error', err);
-    return response.serverError(res, 'Failed to update plate number price');
-  }
-};
-
-// ─── Driver License Pricing ──────────────────────────────────────────────────
-
-/**
- * GET /api/admin/driver-license-prices
- * Returns all driver license price rows (including inactive) for admin management.
- * Prices are stored in Naira (whole integers).
- */
-export const getDriverLicensePricesAdmin = async (req, res) => {
-  try {
-    const supabase = getSupabaseAdmin();
-
-    const { data, error } = await supabase
-      .from('driver_license_prices')
-      .select('id, license_type, duration, price, description, is_active')
-      .order('license_type', { ascending: true })
-      .order('duration', { ascending: true });
-
-    if (error) {
-      logError('[Admin] getDriverLicensePricesAdmin error', error);
-      return response.serverError(res, 'Failed to retrieve driver license prices');
-    }
-
-    return response.success(res, data || [], 'Driver license prices retrieved');
-  } catch (err) {
-    logError('[Admin] getDriverLicensePricesAdmin error', err);
-    return response.serverError(res, 'Failed to retrieve driver license prices');
-  }
-};
-
-/**
- * PUT /api/admin/driver-license-prices/:id
- * Update the price (and optionally description/active) of a driver license row.
- * Price is in Naira (whole integer).
- */
-export const updateDriverLicensePrice = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { price, description, is_active } = req.body;
-    const supabase = getSupabaseAdmin();
-
-    if (price === undefined && description === undefined && is_active === undefined) {
-      return res.status(400).json({ status: false, message: 'At least one of price, description, or is_active must be provided' });
-    }
-
-    if (price !== undefined) {
-      const parsed = Number(price);
-      if (!Number.isInteger(parsed) || parsed < 0) {
-        return res.status(400).json({ status: false, message: 'price must be a non-negative integer (in Naira)' });
-      }
-    }
-
-    const { data: existing, error: fetchErr } = await supabase
-      .from('driver_license_prices')
-      .select('id, license_type, duration, price')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (fetchErr || !existing) {
-      return res.status(404).json({ status: false, message: 'Driver license price not found' });
-    }
-
-    const updatePayload = { updated_at: new Date().toISOString() };
-    if (price !== undefined) updatePayload.price = Number(price);
-    if (description !== undefined) updatePayload.description = String(description).trim();
-    if (is_active !== undefined) updatePayload.is_active = Boolean(is_active);
-
-    const { data: updated, error: updateErr } = await supabase
-      .from('driver_license_prices')
-      .update(updatePayload)
-      .eq('id', id)
-      .select('id, license_type, duration, price, description, is_active')
-      .single();
-
-    if (updateErr) {
-      logError('[Admin] updateDriverLicensePrice update error', updateErr);
-      return response.serverError(res, 'Failed to update driver license price');
-    }
-
-    logInfo('[Admin] Driver license price updated', {
-      id,
-      licenseType: existing.license_type,
-      duration: existing.duration,
-      previousPrice: existing.price,
-      newPrice: updated.price,
-      adminId: req.admin?.id,
-    });
-
-    return response.success(res, updated, 'Driver license price updated successfully');
-  } catch (err) {
-    logError('[Admin] updateDriverLicensePrice error', err);
-    return response.serverError(res, 'Failed to update driver license price');
   }
 };
