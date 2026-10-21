@@ -107,7 +107,11 @@ export function buildUpdateData(sanitizedBody, existingCar) {
     company_name,
     company_address,
     company_phone,
-    cac_number
+    cac_number,
+    mvaa_checked_at,
+    mvaa_checked_by,
+    mvaa_vehicle_licence_expiry,
+    mvaa_road_worthiness_expiry
   } = sanitizedBody;
   
   const updateData = {};
@@ -198,6 +202,18 @@ export function buildUpdateData(sanitizedBody, existingCar) {
   }
   if (cac_number !== undefined) {
     updateData.cac_number = normalizeOptional(cac_number);
+  }
+  if (mvaa_checked_at !== undefined) {
+    updateData.mvaa_checked_at = normalizeOptional(mvaa_checked_at);
+  }
+  if (mvaa_checked_by !== undefined) {
+    updateData.mvaa_checked_by = normalizeOptional(mvaa_checked_by);
+  }
+  if (mvaa_vehicle_licence_expiry !== undefined) {
+    updateData.mvaa_vehicle_licence_expiry = normalizeOptional(mvaa_vehicle_licence_expiry);
+  }
+  if (mvaa_road_worthiness_expiry !== undefined) {
+    updateData.mvaa_road_worthiness_expiry = normalizeOptional(mvaa_road_worthiness_expiry);
   }
   
   return updateData;
