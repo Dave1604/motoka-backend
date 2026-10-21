@@ -151,6 +151,40 @@ describe('autoCreateGuestAccount', () => {
   });
 });
 
+describe('linkOrCreateGuestAccount', () => {
+  let linkOrCreateGuestAccount;
+
+  beforeEach(async () => {
+    ({ linkOrCreateGuestAccount } = await import('../services/guest/guestRenewal.service.js'));
+  });
+
+  it('links to an existing profile with the same email and creates nothing', async () => {
+    const fake = fakeSupabase({ maybeSingleValues: [{ id: 'existing-1' }] });
+
+    const result = await linkOrCreateGuestAccount(fake.client, order());
+
+    expect(result).toEqual({ userId: 'existing-1', created: false });
+    expect(fake.client.auth.admin.createUser).not.toHaveBeenCalled();
+    expect(fake.state.updates).toContainEqual(expect.objectContaining({ linked_user_id: 'existing-1' }));
+  });
+
+  it('auto-creates an account when no profile has the email', async () => {
+    const fake = fakeSupabase({ maybeSingleValues: [null, null, null] });
+
+    const result = await linkOrCreateGuestAccount(fake.client, order());
+
+    expect(result).toEqual({ userId: 'auth-user-1', created: true });
+    expect(fake.client.auth.admin.createUser).toHaveBeenCalledTimes(1);
+  });
+
+  it('never throws: a lookup failure reports nothing done', async () => {
+    const fake = fakeSupabase();
+    fake.client.from = jest.fn(() => { throw new Error('db down'); });
+
+    await expect(linkOrCreateGuestAccount(fake.client, order())).resolves.toEqual({ userId: null, created: false });
+  });
+});
+
 describe('guestSignup claim on auto-created accounts', () => {
   let guestSignup;
   let mockGetSupabaseAdmin;
