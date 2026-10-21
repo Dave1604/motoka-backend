@@ -43,6 +43,8 @@ import { generateMonicreditEventId } from '../../services/payment/monicredit/mon
 import { MonicreditAdapter } from '../../services/payment/monicredit/index.js';
 import { logPaymentAudit } from '../../services/payment/audit.service.js';
 import { markGuestOrderPaid, markGuestOrderFailed } from '../../services/guest/guestRenewal.service.js';
+import { parseTransferEvent } from '../../services/agents/monipayTransfer.service.js';
+import { markSuccess as markPayoutSuccess, markFailedByReference as markPayoutFailedByRef } from '../../services/agents/agentPayout.service.js';
 import {
   verifyAndFulfillOrder as fulfillLadipoOrder,
   markLadipoOrderPaymentFailed,
@@ -94,6 +96,10 @@ export const handleMonipayWebhook = async (req, res) => {
       await handleMonipayChargeSuccess(data, eventId);
     } else if (evt === MONIPAY_EVENTS.CHARGE_FAILED || evt === 'payment.failed') {
       await handleMonipayChargeFailed(data, eventId);
+    } else if (evt.includes('transfer')) {
+      // Agent payout settlement (see agentPayout.service.js). Unrecognised
+      // transfer sub-types return null and are ignored rather than 500ing.
+      handleMonipayTransferEvent(req.body);
     } else {
       logInfo('[Monipay Webhook] Unhandled event', { event });
     }
@@ -352,6 +358,28 @@ async function handleMonipayChargeFailed(data, eventId) {
     } catch (error) {
       logError('[Monipay Webhook] Failed to store failed-event ID', { error, reference, eventId });
     }
+  }
+}
+
+// Agent payout settlement (transfer.* events on the Monipay webhook). Kept
+// fire-and-forget: a payout bookkeeping failure must never 500 the webhook,
+// or the provider will retry and the customer's charge handler gets re-run.
+function handleMonipayTransferEvent(body) {
+  try {
+    const parsed = parseTransferEvent(body);
+    if (!parsed) return;
+
+    if (parsed.outcome === 'success') {
+      markPayoutSuccess({ providerReference: parsed.providerReference, raw: parsed.raw });
+    } else {
+      markPayoutFailedByRef({
+        providerReference: parsed.providerReference,
+        reason: parsed.reason || 'provider_reported_failed',
+        raw: parsed.raw,
+      });
+    }
+  } catch (err) {
+    logError('[Monipay Webhook] Transfer event handling failed (non-fatal)', { error: err.message });
   }
 }
 

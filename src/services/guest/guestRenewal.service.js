@@ -23,6 +23,7 @@ import { initializeTransaction as monipayInit, verifyTransaction as monipayVerif
 import { PAYMENT_GATEWAY } from '../../constants/payment.constants.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';
 import { sendAdminGuestOrderAlert } from '../email/adminOrderAlert.service.js';
+import { runAgentPipeline } from '../agents/agentPipeline.service.js';
 import { computeSchedule } from '../payment/scheduling.util.js';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -628,6 +629,16 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
     }
   } catch (schedErr) {
     logError('[GuestRenewal] Schedule hold failed (non-fatal) — order stays actionable', { error: schedErr.message, orderId: order.id });
+  }
+
+  // Assign a fulfilment agent + open the payout ledger row. Side effect only —
+  // never throws, never blocks payment confirmation. Runs for every paid guest
+  // order regardless of the schedule hold, because the agent still has to do
+  // the work; the hold only controls when ops starts chasing it.
+  try {
+    await runAgentPipeline({ orderType: 'guest', order: { ...order, assigned_agent_id: order.assigned_agent_id } });
+  } catch (agentErr) {
+    logError('[GuestRenewal] Agent pipeline failed (non-fatal)', { error: agentErr.message, orderId: order.id });
   }
 
   // Send confirmation email — fire-and-forget so a mail failure never blocks the payment flow
