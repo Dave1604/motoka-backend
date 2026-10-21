@@ -175,4 +175,10 @@ router.get('/renewals', authenticateAdmin, renewals.listRenewals);
 router.get('/vehicle-doc-prices', authenticateAdmin, admin.getRenewalItemPrices);
 router.put('/vehicle-doc-prices/:itemKey', authenticateAdmin, admin.updateRenewalItemPrice);
 
+// ── Plate number & driver license pricing ─────────────────────────────────────
+router.get('/plate-prices', authenticateAdmin, admin.getPlateNumberPricesAdmin);
+router.put('/plate-prices/:id', authenticateAdmin, admin.updatePlateNumberPrice);
+router.get('/driver-license-prices', authenticateAdmin, admin.getDriverLicensePricesAdmin);
+router.put('/driver-license-prices/:id', authenticateAdmin, admin.updateDriverLicensePrice);
+
 export default router;
