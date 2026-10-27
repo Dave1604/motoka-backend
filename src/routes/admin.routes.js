@@ -6,6 +6,7 @@ import { getTrafficReportHandler } from '../controllers/admin-analytics.controll
 import { rollOrderToNextCycle, rollGuestOrder } from '../controllers/admin-order-ops.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
 import * as renewals from '../controllers/adminRenewals.controller.js';
+import * as plateVerification from '../controllers/admin/plateVerification.controller.js';
 import { adminCreateShipmentHandler, adminTrackShipmentHandler } from '../controllers/delivery.controller.js';
 
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
@@ -193,5 +194,11 @@ router.post('/payouts/:id/retry', authenticateAdmin, agents.retryPayoutHandler);
 router.post('/payouts/:id/mark-paid', authenticateAdmin, agents.markPayoutPaidManuallyHandler);
 router.post('/payouts/:id/reconcile', authenticateAdmin, agents.reconcilePayoutHandler);
 router.post('/orders/assign-agent', authenticateAdmin, agents.assignAgentToOrderHandler);
+
+// ── Plate verification queue (signup bonus gate) ───────────────────────────
+router.get('/plate-verifications', authenticateAdmin, plateVerification.listPlateVerifications);
+router.get('/plate-verifications/verify-url', authenticateAdmin, plateVerification.getVerifyUrl);
+router.post('/plate-verifications/:userId/verify', authenticateAdmin, plateVerification.verifyPlate);
+router.post('/plate-verifications/:userId/reject', authenticateAdmin, plateVerification.rejectPlate);
 
 export default router;
