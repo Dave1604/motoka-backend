@@ -199,7 +199,7 @@ export const payWithWallet = async (req, res) => {
       licenseType = String(license_type).toLowerCase();
       licenseDuration = normDuration;
     } else {
-      const validation = await validateRenewalItemsSelection(payment_schedule_id);
+      const validation = await validateRenewalItemsSelection(payment_schedule_id, renewal_state);
       if (!validation.valid) return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
 
       const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];

@@ -53,7 +53,7 @@ import { logPaymentAudit } from '../../services/payment/audit.service.js';
 export const getRenewalItems = async (req, res) => {
   try {
     const { getRenewalItems: getRenewalItemsFromDb } = await import('../../services/payment/renewalItems.service.js');
-    const items = await getRenewalItemsFromDb();
+    const items = await getRenewalItemsFromDb({ state: req.query.state || null });
     
     const transformedItems = items.map((item) => ({
       id: item.id,
@@ -77,7 +77,7 @@ export const getRenewalItems = async (req, res) => {
 export const getPaymentHeads = async (req, res) => {
   try {
     const { getRenewalItems: getRenewalItemsFromDb } = await import('../../services/payment/renewalItems.service.js');
-    const items = await getRenewalItemsFromDb();
+    const items = await getRenewalItemsFromDb({ state: req.query.state || null });
     
     const paymentHeads = items.map((item) => ({
       id: item.id,
@@ -408,7 +408,7 @@ export const initializePayment = async (req, res) => {
       });
     } else {
       // Renewal: price determined by selected payment schedule items
-      const validation = await validateRenewalItemsSelection(payment_schedule_id);
+      const validation = await validateRenewalItemsSelection(payment_schedule_id, renewal_state);
       if (!validation.valid) {
         return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
       }
