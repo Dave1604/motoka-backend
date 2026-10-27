@@ -10,7 +10,7 @@ const VERIFY_URL = 'https://verify.autoreg.ng/';
 
 /**
  * GET /admin/plate-verifications?status=&page=&limit=&search=
- * List users awaiting plate verification.
+ * List users in the plate verification queue.
  */
 export const listPlateVerifications = async (req, res) => {
   try {
@@ -23,7 +23,7 @@ export const listPlateVerifications = async (req, res) => {
 
     let query = supabase
       .from('profiles')
-      .select('id, user_id, first_name, last_name, phone_number, email, plate_number, plate_verification_status, plate_verification_note, plate_verified_at, plate_bonus_credited, created_at', { count: 'exact' })
+      .select('id, user_id, first_name, last_name, phone_number, email, plate_number, plate_verification_status, plate_verification_note, plate_verified_at, plate_bonus_credited, chassis_number, car_color, car_brand, car_model, car_year, created_at', { count: 'exact' })
       .not('plate_number', 'is', null)
       .order('created_at', { ascending: false });
 
@@ -55,18 +55,20 @@ export const listPlateVerifications = async (req, res) => {
 
 /**
  * POST /admin/plate-verifications/:userId/verify
- * Mark a user's plate as verified and credit ₦2,000 to their wallet.
- * Body: { note?: string }
+ * Mark a user's plate as verified. Optionally capture car details seen on
+ * autoreg.ng so the add-car flow can be pre-filled later.
+ * Body: { note?: string, chassis_number?, car_color?, car_brand?, car_model?, car_year? }
+ * No money movement here — the ₦2,000 was already credited at signup.
  */
 export const verifyPlate = async (req, res) => {
   const supabase = getSupabaseAdmin();
   const { userId } = req.params;
-  const { note } = req.body;
+  const { note, chassis_number, car_color, car_brand, car_model, car_year } = req.body;
 
   try {
     const { data: profile, error: fetchErr } = await supabase
       .from('profiles')
-      .select('id, user_id, first_name, last_name, phone_number, email, plate_number, plate_verification_status, plate_bonus_credited')
+      .select('id, plate_number, plate_verification_status, plate_bonus_credited')
       .eq('id', userId)
       .maybeSingle();
 
@@ -82,60 +84,39 @@ export const verifyPlate = async (req, res) => {
       return response.error(res, 'Plate already verified', 400);
     }
 
-    if (profile.plate_bonus_credited) {
-      return response.error(res, 'Bonus already credited for this user', 400);
-    }
+    const updatePayload = {
+      plate_verification_status: 'verified',
+      plate_verified_at: new Date().toISOString(),
+      plate_verification_note: note || null,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Capture car details observed on autoreg.ng for pre-filling add-car later
+    if (chassis_number != null) updatePayload.chassis_number = String(chassis_number).trim().toUpperCase();
+    if (car_color != null) updatePayload.car_color = String(car_color).trim();
+    if (car_brand != null) updatePayload.car_brand = String(car_brand).trim();
+    if (car_model != null) updatePayload.car_model = String(car_model).trim();
+    if (car_year != null) updatePayload.car_year = Number(car_year);
 
     const { error: updateErr } = await supabase
       .from('profiles')
-      .update({
-        plate_verification_status: 'verified',
-        plate_verified_at: new Date().toISOString(),
-        plate_verification_note: note || null,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', userId);
 
     if (updateErr) throw updateErr;
 
-    const reference = `PLATE_VERIFY_${randomUUID()}`;
-    const result = await adminAdjustWallet({
-      userId: profile.id,
-      direction: 'credit',
-      amountKobo: BONUS_KOBO,
-      adminId: req.admin.id,
-      note: `₦${BONUS_NAIRA} signup bonus — plate ${profile.plate_number} verified. ${note || ''}`.trim(),
-      reference,
-    });
-
-    const { error: creditErr } = await supabase
-      .from('profiles')
-      .update({ plate_bonus_credited: true })
-      .eq('id', userId);
-
-    if (creditErr) {
-      logError('[Admin PlateVerification] Bonus credited but flag update failed', {
-        userId,
-        error: creditErr.message,
-      });
-    }
-
-    logInfo('[Admin PlateVerification] Verified + bonus credited', {
+    logInfo('[Admin PlateVerification] Verified', {
       userId,
       plateNumber: profile.plate_number,
-      amountKobo: BONUS_KOBO,
       adminId: req.admin.id,
-      reference,
+      hasCarDetails: Boolean(chassis_number || car_brand || car_model),
     });
 
     return response.success(res, {
       user_id: profile.user_id,
       plate_number: profile.plate_number,
       status: 'verified',
-      amount_naira: BONUS_NAIRA,
-      amount_kobo: BONUS_KOBO,
-      balance_after: result.balanceAfter,
-    }, `Plate verified — ₦${BONUS_NAIRA} credited to wallet`);
+    }, 'Plate verified');
   } catch (error) {
     logError('[Admin PlateVerification] verify error', { userId, error: error.message });
     return response.serverError(res, 'Failed to verify plate');
@@ -144,7 +125,8 @@ export const verifyPlate = async (req, res) => {
 
 /**
  * POST /admin/plate-verifications/:userId/reject
- * Mark a user's plate as rejected. Body: { note: string (required) }
+ * Mark a user's plate as rejected and claw back the ₦2,000 signup bonus.
+ * Body: { note: string (required) }
  */
 export const rejectPlate = async (req, res) => {
   const supabase = getSupabaseAdmin();
@@ -158,7 +140,7 @@ export const rejectPlate = async (req, res) => {
 
     const { data: profile, error: fetchErr } = await supabase
       .from('profiles')
-      .select('id, plate_number, plate_verification_status')
+      .select('id, plate_number, plate_verification_status, plate_bonus_credited')
       .eq('id', userId)
       .maybeSingle();
 
@@ -168,6 +150,34 @@ export const rejectPlate = async (req, res) => {
 
     if (profile.plate_verification_status !== 'pending') {
       return response.error(res, `Plate already ${profile.plate_verification_status}`, 400);
+    }
+
+    // Claw back the ₦2,000 bonus if it was credited
+    if (profile.plate_bonus_credited) {
+      const clawbackRef = `PLATE_CLAWBACK_${randomUUID()}`;
+      try {
+        await adminAdjustWallet({
+          userId: profile.id,
+          direction: 'debit',
+          amountKobo: BONUS_KOBO,
+          adminId: req.admin.id,
+          note: `₦${BONUS_NAIRA} signup bonus clawed back — plate ${profile.plate_number} rejected. ${note.trim()}`.slice(0, 500),
+          reference: clawbackRef,
+        });
+      } catch (walletErr) {
+        // If wallet doesn't have enough balance, still mark rejected but log
+        logError('[Admin PlateVerification] Clawback wallet debit failed', {
+          userId,
+          error: walletErr.message,
+        });
+      }
+
+      const { error: flagErr } = await supabase
+        .from('profiles')
+        .update({ plate_bonus_credited: false })
+        .eq('id', userId);
+
+      if (flagErr) logError('[Admin PlateVerification] Bonus flag reset failed', { userId, error: flagErr.message });
     }
 
     const { error: updateErr } = await supabase
@@ -181,7 +191,7 @@ export const rejectPlate = async (req, res) => {
 
     if (updateErr) throw updateErr;
 
-    logInfo('[Admin PlateVerification] Rejected', {
+    logInfo('[Admin PlateVerification] Rejected + clawback', {
       userId,
       plateNumber: profile.plate_number,
       reason: note,
@@ -192,7 +202,8 @@ export const rejectPlate = async (req, res) => {
       user_id: profile.user_id,
       plate_number: profile.plate_number,
       status: 'rejected',
-    }, 'Plate verification rejected');
+      clawedBack: profile.plate_bonus_credited,
+    }, 'Plate rejected — bonus clawed back');
   } catch (error) {
     logError('[Admin PlateVerification] reject error', { userId, error: error.message });
     return response.serverError(res, 'Failed to reject plate');
@@ -201,7 +212,7 @@ export const rejectPlate = async (req, res) => {
 
 /**
  * GET /admin/plate-verifications/verify-url
- * Returns the external verification URL so the frontend can open it.
+ * Returns the external verification URL.
  */
 export const getVerifyUrl = async (_req, res) => {
   return response.success(res, { url: VERIFY_URL }, 'Verification portal URL');
