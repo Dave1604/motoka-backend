@@ -154,9 +154,16 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
 export const listUsers = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, limit = 20, search, status, sort = 'recently_added' } = req.query;
+    const { page = 1, limit = 20, search, status, sort = 'recently_added', cars = 'all' } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // cars: all (default) | any (has at least one car) | none (0 cars —
+    // signed up but never registered a vehicle; the re-engagement segment).
+    // Backed by profiles.has_car (migration 113) so count/pagination stay exact.
+    if (!['all', 'any', 'none'].includes(cars)) {
+      return res.status(400).json({ status: false, message: `Invalid cars filter: ${cars}` });
+    }
 
     // sort: recently_added (default) | a_z (by first_name asc)
     const sortAscending = sort === 'a_z';
@@ -180,7 +187,13 @@ export const listUsers = async (req, res) => {
     } else if (status === 'deleted') {
       query = query.not('deleted_at', 'is', null);
     }
-    
+
+    if (cars === 'any') {
+      query = query.eq('has_car', true);
+    } else if (cars === 'none') {
+      query = query.eq('has_car', false);
+    }
+
     const { data: profiles, count, error } = await query;
     
     if (error) {

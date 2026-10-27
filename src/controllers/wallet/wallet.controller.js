@@ -47,6 +47,8 @@ export const getWalletBalance = async (req, res) => {
     return paymentResponse.success(res, {
       balance_kobo: wallet.balance_kobo,
       balance_naira: wallet.balance_kobo / 100,
+      bonus_balance_kobo: Number(wallet.bonus_balance_kobo || 0),
+      bonus_expires_at: wallet.bonus_expires_at || null,
       status: wallet.status,
       currency: wallet.currency
     }, 'Wallet retrieved');
