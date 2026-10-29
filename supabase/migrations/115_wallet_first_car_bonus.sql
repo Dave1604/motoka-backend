@@ -1,5 +1,5 @@
 -- ============================================================
--- MIGRATION 114 – Welcome bonus for adding your first car (restricted)
+-- MIGRATION 115 – Welcome bonus for adding your first car (restricted)
 -- ============================================================
 -- A user who adds their FIRST car to Motoka gets a one-time ₦2,000
 -- (200,000 kobo) wallet credit. It is RESTRICTED money:
