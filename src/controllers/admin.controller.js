@@ -1136,7 +1136,7 @@ export const listOrders = async (req, res) => {
       if (!VALID_PAYMENT_STATUSES.includes(payment)) {
         return res.status(400).json({ status: false, message: `Invalid payment filter: ${payment}` });
       }
-      paymentSelect = 'payment_transactions!inner:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
+      paymentSelect = 'payment_transactions:transaction_id!inner ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
       paymentFilter = payment;
     }
 
