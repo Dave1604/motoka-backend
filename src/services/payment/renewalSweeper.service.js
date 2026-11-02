@@ -9,6 +9,7 @@ import { sendAdminGuestOrderAlert } from '../email/adminOrderAlert.service.js';
 import { sendOrderInProgressEmail } from '../email/paymentEmail.service.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';
 import { getRenewalItems } from './renewalItems.service.js';
+import { runAgentPipeline } from '../agents/agentPipeline.service.js';
 
 const isoDay = (d) => d.toISOString().slice(0, 10);
 const todayIso = () => isoDay(new Date());
@@ -125,6 +126,10 @@ class RenewalSweeper {
     if (flipError) throw flipError;
     this.stats.released++;
 
+    // Held orders skip the agent step at payment, so the window opening is when
+    // they get an agent. Side effect only: runAgentPipeline never throws.
+    await runAgentPipeline({ orderType: 'regular', order });
+
     const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('email, first_name, last_name')
@@ -225,6 +230,8 @@ class RenewalSweeper {
 
     if (flipError) throw flipError;
     this.stats.guestReleased++;
+
+    await runAgentPipeline({ orderType: 'guest', order });
 
     const { data: items } = await supabaseAdmin.from('renewal_items').select('id, name');
     const itemMap = new Map((items || []).map((i) => [i.id, i]));

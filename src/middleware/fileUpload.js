@@ -210,6 +210,12 @@ const documentUpload = multer({
 
 export const handleDocumentUpload = documentUpload.single('file');
 
+// Leaves JSON requests untouched, so an agent update without new files still works.
+export const handleAgentNinUpload = documentUpload.fields([
+  { name: 'nin_front', maxCount: 1 },
+  { name: 'nin_back', maxCount: 1 },
+]);
+
 const ladipoProductImageUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_IMAGE_SIZE },

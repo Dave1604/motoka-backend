@@ -12,6 +12,10 @@ jest.unstable_mockModule('../services/email/paymentEmail.service.js', () => ({
   sendOrderInProgressEmail: jest.fn(async () => ({})),
   sendGuestPaymentConfirmationEmail: jest.fn(async () => ({})),
 }));
+const mockRunAgentPipeline = jest.fn(async () => ({}));
+jest.unstable_mockModule('../services/agents/agentPipeline.service.js', () => ({
+  runAgentPipeline: mockRunAgentPipeline,
+}));
 jest.unstable_mockModule('../services/payment/renewalItems.service.js', () => ({
   getRenewalItems: jest.fn(async () => []),
 }));
@@ -171,6 +175,7 @@ describe('renewalSweeper', () => {
     const { sendOrderInProgressEmail } = await import('../services/email/paymentEmail.service.js');
     expect(sendAdminOrderAlert).toHaveBeenCalledWith(expect.objectContaining({ orderNumber: 'ORD-1' }));
     expect(sendOrderInProgressEmail).toHaveBeenCalledWith(expect.objectContaining({ orderNumber: 'ORD-1' }));
+    expect(mockRunAgentPipeline).toHaveBeenCalledWith(expect.objectContaining({ orderType: 'regular' }));
   });
 
   it('pushes the hold out when the car expiry moved', async () => {
@@ -214,6 +219,7 @@ describe('renewalSweeper', () => {
     expect(sendGuestPaymentConfirmationEmail).toHaveBeenCalledTimes(1);
     const metaUpdate = fake.updates.find((u) => u.table === 'guest_renewal_orders' && u.row.metadata);
     expect(metaUpdate.row.metadata.claim_reminded_at).toBeTruthy();
+    expect(mockRunAgentPipeline).not.toHaveBeenCalled();
   });
 });
 
@@ -299,6 +305,11 @@ describe('rollover endpoints', () => {
     expect(r.json).toHaveBeenCalledWith(
       expect.objectContaining({ status: true })
     );
+    expect(mockRunAgentPipeline).not.toHaveBeenCalled();
+
+    await ops.rollGuestOrder({ params: { id: 'g9' }, body: { scheduled_for: null } }, res());
+
+    expect(mockRunAgentPipeline).toHaveBeenCalledWith({ orderType: 'guest', order: { id: 'g9' } });
   });
 });
 

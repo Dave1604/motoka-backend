@@ -632,9 +632,9 @@ export async function markGuestOrderPaid(paymentReference, { verifyWithGateway }
   }
 
   // Assign a fulfilment agent + open the payout ledger row. Side effect only —
-  // never throws, never blocks payment confirmation. Runs for every paid guest
-  // order regardless of the schedule hold, because the agent still has to do
-  // the work; the hold only controls when ops starts chasing it.
+  // never throws, never blocks payment confirmation. A held order is skipped
+  // here and assigned by the sweeper when its window opens, so no agent is paid
+  // months before the work can start.
   try {
     await runAgentPipeline({ orderType: 'guest', order: { ...order, assigned_agent_id: order.assigned_agent_id } });
   } catch (agentErr) {
