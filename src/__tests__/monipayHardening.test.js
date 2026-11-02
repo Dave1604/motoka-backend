@@ -16,6 +16,28 @@ afterEach(() => {
   jest.resetModules();
 });
 
+describe('gatewayFailureDetails', () => {
+  const load = async () => {
+    const mod = await import('../controllers/payment/payment-init.controller.js');
+    return mod.gatewayFailureDetails;
+  };
+
+  it('gives the checkout the amount when only the gateway failed', async () => {
+    const gatewayFailureDetails = await load();
+    const error = Object.assign(new Error('Invalid callback URL'), { gatewayFailedAmount: 3700000 });
+
+    expect(gatewayFailureDetails(error)).toEqual({ gateway_failed: true, amount: 3700000 });
+  });
+
+  it('stays out of every other failure', async () => {
+    const gatewayFailureDetails = await load();
+
+    expect(gatewayFailureDetails(new Error('renewal_state is required'))).toBeNull();
+    expect(gatewayFailureDetails(Object.assign(new Error('x'), { gatewayFailedAmount: 0 }))).toBeNull();
+    expect(gatewayFailureDetails(null)).toBeNull();
+  });
+});
+
 describe('buildCallbackUrl origin matching', () => {
   beforeEach(() => {
     process.env.ALLOWED_ORIGINS = 'https://www.motokaapp.ng,https://motoka.ng';
