@@ -93,4 +93,10 @@ describe('process_payment_success RPC migration guard', () => {
     expect(def.sql).toMatch(/p_previous_expiry_override\s+DATE\s+DEFAULT\s+NULL/i);
     expect(def.sql).toMatch(/CASE\s+WHEN\s+p_scheduled_for\s+IS\s+NULL\s+THEN\s+'pending'\s+ELSE\s+'scheduled'\s+END/i);
   });
+
+  it('casts the order status to its enum (migration 120)', () => {
+    // Without the cast, INSERT ... SELECT types the CASE as text and Postgres
+    // refuses to assign it, so every payment fails to create an order.
+    expect(def.sql).toMatch(/END\s*\)\s*::\s*(public\.)?order_status/i);
+  });
 });
