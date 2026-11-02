@@ -2,6 +2,8 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 import { logError, logInfo } from '../../utils/logger.js';
 import { createTransfer, verifyTransfer, payoutsEnabled, autoPayoutLimitKobo } from './monipayTransfer.service.js';
 import { sendPayoutAlert } from './agentAlert.service.js';
+import { computeOrderCost } from './agentCost.service.js';
+import { ORDER_TABLES, isOrderCancelled, isOrderOnHold, orderRefColumns } from './agentWork.service.js';
 
 /**
  * THE LEDGER.
@@ -43,19 +45,16 @@ export async function createPayout({ orderType, orderId, agent, cost }) {
 
   // Nothing to pay (fully complimentary order) — still record the assignment so
   // the operator can see the order was worked, with a zero amount.
-  const withholdReason = withholdReasonFor({ amountKobo, missing });
+  const withholdReason = withholdReasonFor({ amountKobo, missing, profitKobo: cost.profitKobo });
 
   const { data: payout, error } = await supabase
     .from('agent_payouts')
     .insert({
-      order_type: orderType,
-      regular_order_id: orderType === 'regular' ? orderId : null,
-      guest_order_id: orderType === 'guest' ? orderId : null,
+      ...orderRefColumns({ orderType, orderId }),
       agent_id: agent.id,
-      amount_kobo: amountKobo,
+      ...costColumns(cost),
       status: withholdReason ? 'manual_review' : 'pending',
       provider: 'monipay',
-      missing_costs: missing,
       failure_reason: withholdReason,
     })
     .select('*')
@@ -89,11 +88,25 @@ export async function createPayout({ orderType, orderId, agent, cost }) {
   return attemptTransfer(payout, agent);
 }
 
-function withholdReasonFor({ amountKobo, missing }) {
+/** The cost and profit figures saved on a payout row. */
+function costColumns(cost) {
+  return {
+    amount_kobo: cost.totalKobo,
+    missing_costs: cost.missing || [],
+    state: cost.state ?? null,
+    customer_amount_kobo: cost.customerAmountKobo ?? null,
+    profit_kobo: cost.profitKobo ?? null,
+    breakdown: cost.costs || [],
+  };
+}
+
+export function withholdReasonFor({ amountKobo, missing, profitKobo = null }) {
   if (missing.length > 0) {
     return `missing_costs:${missing.map((m) => `${m.service_type}:${m.service_key}`).join(',')}`;
   }
   if (amountKobo <= 0) return 'zero_amount';
+  // Paying this would cost Motoka money, so a person looks at it first.
+  if (profitKobo !== null && profitKobo <= 0) return `no_profit:${profitKobo}`;
   if (amountKobo > autoPayoutLimitKobo()) {
     return `over_limit:${amountKobo}>${autoPayoutLimitKobo()}`;
   }
@@ -248,8 +261,10 @@ async function markManualReview(payout, reason) {
 }
 
 /**
- * Operator action: retry a failed or held payout. Creates a NEW row (the old
- * one keeps its failure reason) and attempts the transfer.
+ * Operator action: retry a failed or held payout. Creates a NEW row and cancels
+ * the old one, which keeps its failure reason. Cost and profit are worked out
+ * again, because the usual reason for a retry is that a missing cost has since
+ * been set, and the old row's total would underpay the agent.
  */
 export async function retryPayout(payoutId) {
   const supabase = getSupabaseAdmin();
@@ -262,17 +277,28 @@ export async function retryPayout(payoutId) {
   const agent = old.agents;
   if (!agent || agent.status !== 'active') return { error: 'agent_inactive' };
 
+  const orderId = old.order_type === 'regular' ? old.regular_order_id : old.guest_order_id;
+  const { data: order } = await supabase.from(ORDER_TABLES[old.order_type]).select('*').eq('id', orderId).maybeSingle();
+  if (!order) return { error: 'order_not_found' };
+  if (isOrderOnHold({ orderType: old.order_type, order })) return { error: 'order_on_hold' };
+  if (isOrderCancelled({ orderType: old.order_type, order })) return { error: 'order_cancelled' };
+
+  const cost = await computeOrderCost({ orderType: old.order_type, order });
+  const withholdReason = withholdReasonFor({
+    amountKobo: cost.totalKobo,
+    missing: cost.missing,
+    profitKobo: cost.profitKobo,
+  });
+
   const { data: fresh, error } = await supabase
     .from('agent_payouts')
     .insert({
-      order_type: old.order_type,
-      regular_order_id: old.regular_order_id,
-      guest_order_id: old.guest_order_id,
+      ...orderRefColumns({ orderType: old.order_type, orderId }),
       agent_id: old.agent_id,
-      amount_kobo: old.amount_kobo,
-      status: 'pending',
+      ...costColumns(cost),
+      status: withholdReason ? 'manual_review' : 'pending',
       provider: old.provider,
-      missing_costs: old.missing_costs,
+      failure_reason: withholdReason,
     })
     .select('*')
     .single();
@@ -282,8 +308,25 @@ export async function retryPayout(payoutId) {
     return { error: error.message };
   }
 
+  await cancelPayouts([old.id]);
+
+  if (withholdReason) return { payout: fresh };
   const payout = await attemptTransfer(fresh, agent);
   return { payout };
+}
+
+/**
+ * Retire rows nothing was sent for. Only failed and held rows qualify, so a row
+ * that reached the provider or was already paid can never be cancelled.
+ */
+export async function cancelPayouts(payoutIds) {
+  if (payoutIds.length === 0) return;
+  const { error } = await getSupabaseAdmin()
+    .from('agent_payouts')
+    .update({ status: 'cancelled', updated_at: new Date().toISOString() })
+    .in('id', payoutIds)
+    .in('status', ['failed', 'manual_review']);
+  if (error) logError('[AgentPayout] Failed to cancel payouts', { payoutIds, error: error.message });
 }
 
 /**
@@ -294,6 +337,14 @@ export async function retryPayout(payoutId) {
  */
 export async function markPaidManually(payoutId, note) {
   const supabase = getSupabaseAdmin();
+
+  // The total on this row leaves out the missing items, so recording it as paid
+  // would make the ledger say the order is settled when it is not.
+  const { data: current } = await supabase.from('agent_payouts').select('missing_costs').eq('id', payoutId).maybeSingle();
+  if ((current?.missing_costs || []).length > 0) {
+    return { error: 'This order has missing costs. Set them, then click Retry to refresh the amount.' };
+  }
+
   const { data: payout, error } = await supabase
     .from('agent_payouts')
     .update({

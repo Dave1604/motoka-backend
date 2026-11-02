@@ -27,6 +27,7 @@ const esc = (v) =>
 const TITLES = {
   manual_review: 'Agent payout held — needs you',
   failed: 'Agent payout FAILED',
+  cancelled_paid: 'Cancelled order: agent payment needs checking',
 };
 
 const KIND_COPY = {
@@ -34,11 +35,19 @@ const KIND_COPY = {
     'A paid order was assigned to an agent, but the automatic transfer was withheld. It is sitting in the Payouts queue as <strong>Manual review</strong>.',
   failed:
     'An automatic agent payout failed after the transfer was attempted. It is sitting in the Payouts queue as <strong>Failed</strong> and can be retried.',
+  cancelled_paid:
+    'This order was cancelled, but its agent has been paid or a payment is on its way. Check with the agent whether the money should come back.',
+};
+
+const NEXT_STEP = {
+  manual_review: 'Open the Payouts queue in the admin to set the missing costs and pay.',
+  failed: 'Open the Payouts queue in the admin to retry or mark as paid.',
+  cancelled_paid: 'The order stays on the agent\'s page until this is sorted out. Reopen the order if the work should go ahead.',
 };
 
 /**
  * @param {Object} opts
- * @param {'manual_review'|'failed'} opts.kind
+ * @param {'manual_review'|'failed'|'cancelled_paid'} opts.kind
  * @param {Object} opts.payout - agent_payouts row
  * @param {Object} [opts.agent] - agents row (optional; read from payout if absent)
  * @param {Object} [opts.cost]  - computeOrderCost result, for the line breakdown
@@ -77,7 +86,7 @@ export async function sendPayoutAlert({ kind, payout, agent, cost }) {
     </table>
     ${costRows ? `<p style="margin:20px 0 4px;font-size:13px;color:#56687f;">Priced items</p><ul style="margin:0;padding-left:18px;font-size:13px;color:#0a1a2b;">${costRows}</ul>` : ''}
     ${missingRows ? `<p style="margin:16px 0 4px;font-size:13px;color:#b42318;">Missing costs</p><ul style="margin:0;padding-left:18px;font-size:13px;">${missingRows}</ul>` : ''}
-    <p style="margin:24px 0 0;font-size:13px;color:#56687f;">Open the Payouts queue in the admin to ${kind === 'failed' ? 'retry or mark as paid' : 'set the missing costs and pay' }.</p>
+    <p style="margin:24px 0 0;font-size:13px;color:#56687f;">${NEXT_STEP[kind]}</p>
   </div>
 </body></html>`;
 
@@ -90,6 +99,41 @@ export async function sendPayoutAlert({ kind, payout, agent, cost }) {
     return { sent: true };
   } catch (err) {
     logError('[AgentPayoutAlert] Failed to send', { kind, payoutId: payout?.id, error: err.message });
+    return { error: err.message };
+  }
+}
+
+/**
+ * A paid order that no agent could be picked for: it has no state, or nobody
+ * covers its state. No payout row exists yet, so it would otherwise go unnoticed.
+ */
+export async function sendUnassignedAlert({ orderType, orderId, state, reason }) {
+  const to = recipients();
+  if (to.length === 0) {
+    logInfo('[AgentPayoutAlert] No recipients configured — skipping', { kind: 'unassigned', orderId });
+    return { skipped: true };
+  }
+
+  try {
+    const orderRef = orderType === 'regular' ? `ORD id ${orderId}` : `Guest order ${orderId}`;
+    const html = `<!doctype html>
+<html><body style="margin:0;padding:24px;background:#f1f4fb;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px;">
+    <h1 style="margin:0 0 4px;font-size:18px;color:#0a1a2b;">Paid order has no agent</h1>
+    <p style="margin:0 0 20px;font-size:14px;color:#56687f;">Assign an agent to this order from its details page in the admin.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <tr><td style="padding:8px 0;color:#56687f;width:150px;">Order</td><td style="color:#0a1a2b;font-weight:600;">${esc(orderRef)}</td></tr>
+      <tr><td style="padding:8px 0;color:#56687f;">State</td><td style="color:#0a1a2b;font-weight:600;">${esc(state || 'Not recorded')}</td></tr>
+      <tr><td style="padding:8px 0;color:#56687f;">Reason</td><td style="color:#b42318;font-weight:600;">${esc(reason)}</td></tr>
+    </table>
+  </div>
+</body></html>`;
+
+    await sendEmail({ to, subject: `Paid order has no agent — ${orderRef}`, html });
+    logInfo('[AgentPayoutAlert] Sent', { kind: 'unassigned', orderType, orderId });
+    return { sent: true };
+  } catch (err) {
+    logError('[AgentPayoutAlert] Failed to send', { kind: 'unassigned', orderId, error: err.message });
     return { error: err.message };
   }
 }

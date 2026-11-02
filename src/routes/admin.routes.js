@@ -2,6 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import * as admin from '../controllers/admin.controller.js';
 import * as agents from '../controllers/adminAgents.controller.js';
+import { resolveBankAccount } from '../controllers/payment/paymentMethods.controller.js';
 import { getTrafficReportHandler } from '../controllers/admin-analytics.controller.js';
 import { rollOrderToNextCycle, rollGuestOrder } from '../controllers/admin-order-ops.controller.js';
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
@@ -10,7 +11,7 @@ import * as plateVerification from '../controllers/admin/plateVerification.contr
 import { adminCreateShipmentHandler, adminTrackShipmentHandler } from '../controllers/delivery.controller.js';
 
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
-import { handleDocumentUpload, handleLadipoProductImageUpload } from '../middleware/fileUpload.js';
+import { handleDocumentUpload, handleAgentNinUpload, handleLadipoProductImageUpload } from '../middleware/fileUpload.js';
 import { suspendUserValidation, validate } from '../utils/validators.js';
 import {
   listLadipoOrders,
@@ -185,8 +186,11 @@ router.put('/driver-license-prices/:id', authenticateAdmin, admin.updateDriverLi
 
 // ─── Agent fulfilment pipeline (migration 111) ─────────────────────────────
 router.get('/agents', authenticateAdmin, agents.listAgents);
-router.post('/agents', authenticateAdmin, agents.createAgent);
-router.put('/agents/:id', authenticateAdmin, agents.updateAgent);
+router.post('/agents', authenticateAdmin, handleAgentNinUpload, agents.createAgent);
+router.put('/agents/:id', authenticateAdmin, handleAgentNinUpload, agents.updateAgent);
+router.get('/agents/:id/nin/:side', authenticateAdmin, agents.getAgentNinUrl);
+router.get('/agents/:id/orders', authenticateAdmin, agents.getAgentOrders);
+router.get('/banks/resolve', authenticateAdmin, resolveBankAccount);
 router.get('/agent-costs', authenticateAdmin, agents.listAgentCosts);
 router.put('/agent-costs', authenticateAdmin, agents.upsertAgentCost);
 router.get('/payouts', authenticateAdmin, agents.listPayouts);
@@ -194,6 +198,10 @@ router.post('/payouts/:id/retry', authenticateAdmin, agents.retryPayoutHandler);
 router.post('/payouts/:id/mark-paid', authenticateAdmin, agents.markPayoutPaidManuallyHandler);
 router.post('/payouts/:id/reconcile', authenticateAdmin, agents.reconcilePayoutHandler);
 router.post('/orders/assign-agent', authenticateAdmin, agents.assignAgentToOrderHandler);
+router.get('/agent-reports', authenticateAdmin, agents.agentReportHandler);
+router.get('/agent-orders/:type/:id', authenticateAdmin, agents.getOrderAgentHandler);
+router.patch('/agent-orders/:type/:id/status', authenticateAdmin, agents.updateOrderAgentStatusHandler);
+router.post('/agent-orders/:type/:id/reassign', authenticateAdmin, agents.reassignOrderHandler);
 
 // ── Plate verification queue (signup bonus gate) ───────────────────────────
 router.get('/plate-verifications', authenticateAdmin, plateVerification.listPlateVerifications);

@@ -1,6 +1,7 @@
 import { getSupabaseAdmin } from '../config/supabase.js';
 import { logError, logInfo } from '../utils/logger.js';
 import { RENEWAL_WINDOW_DAYS, daysUntil } from '../services/payment/scheduling.util.js';
+import { runAgentPipeline } from '../services/agents/agentPipeline.service.js';
 
 const isoDay = (d) => d.toISOString().slice(0, 10);
 
@@ -67,6 +68,9 @@ export const rollOrderToNextCycle = async (req, res) => {
       return res.status(500).json({ status: false, message: 'Could not roll over order' });
     }
 
+    // Back in the window: an order that was on hold needs its agent now.
+    if (inWindow) await runAgentPipeline({ orderType: 'regular', order: { id: order.id } });
+
     logInfo('[Admin] Order rolled to next cycle', { orderNumber, newExpiry, nextStatus });
     return res.json({ status: true, data: updated });
   } catch (error) {
@@ -125,6 +129,9 @@ export const rollGuestOrder = async (req, res) => {
       logError('[Admin] Guest rollover failed', { id, error: error.message });
       return res.status(500).json({ status: false, message: 'Could not roll over guest order' });
     }
+
+    // Released now rather than held to a later date: it needs its agent today.
+    if (!nextScheduledFor) await runAgentPipeline({ orderType: 'guest', order: { id } });
 
     logInfo('[Admin] Guest order rolled over', { id, nextScheduledFor });
     return res.json({ status: true, data: updated });
