@@ -138,8 +138,10 @@ function regularLines(order) {
     return lines;
   }
 
-  // Renewal: one line per selected item_key.
-  const items = Array.isArray(meta.selected_items) ? meta.selected_items : [];
+  // Renewal: one line per selected item_key. The order's own column is the record:
+  // payments write metadata.selected_items empty and keep the keys in the column.
+  const items = [order.selected_items, meta.selected_items, meta.paymentScheduleId]
+    .find((list) => Array.isArray(list) && list.length > 0) || [];
   for (const key of items) {
     if (typeof key === 'string' && key.trim()) {
       lines.push({ service_type: 'renewal_item', service_key: key.trim() });
