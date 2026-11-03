@@ -192,6 +192,40 @@ describe('computeOrderCost', () => {
   });
 });
 
+describe('computeOrderCost on regular orders', () => {
+  beforeEach(() => {
+    db.agent_service_costs = [cost('insurance', 'default', 1000000), cost('road_worthiness', 'default', 800000)];
+  });
+
+  // The shape real payments write: the column holds the keys, metadata's list is empty.
+  it('reads documents from the order column', async () => {
+    const order = {
+      selected_items: ['insurance', 'road_worthiness'],
+      metadata: { selected_items: [], paymentScheduleId: ['insurance', 'road_worthiness'] },
+      renewal_state: 'Ogun', renewal_amount: 2750000, amount_paid: 2750000, delivery_fee: 0,
+    };
+
+    const result = await computeOrderCost({ orderType: 'regular', order });
+
+    expect(result.totalKobo).toBe(1800000);
+    expect(result.profitKobo).toBe(950000);
+    expect(result.missing).toEqual([]);
+  });
+
+  it('falls back to the schedule list in metadata', async () => {
+    const order = { selected_items: [], metadata: { selected_items: [], paymentScheduleId: ['insurance'] } };
+
+    expect((await computeOrderCost({ orderType: 'regular', order })).totalKobo).toBe(1000000);
+  });
+
+  it('prices a plate order by its metadata, whatever the column holds', async () => {
+    db.agent_service_costs = [{ service_type: 'plate_number', service_key: 'Normal', state: 'default', cost_kobo: 5000, active: true }];
+    const order = { selected_items: [], metadata: { plate_type: 'Normal' } };
+
+    expect((await computeOrderCost({ orderType: 'regular', order })).totalKobo).toBe(5000);
+  });
+});
+
 describe('withholdReasonFor', () => {
   it('holds a payout that would leave Motoka no profit', () => {
     process.env.AGENT_PAYOUTS_ENABLED = 'true';
