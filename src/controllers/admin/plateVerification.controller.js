@@ -1,11 +1,11 @@
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import { adminAdjustWallet } from '../../services/wallet/wallet.service.js';
-import { randomUUID } from 'crypto';
+import { grantWalletBonus } from '../../services/wallet/wallet.service.js';
 import * as response from '../../utils/responses.js';
 import { logError, logInfo } from '../../utils/logger.js';
 
 const BONUS_NAIRA = 2000;
 const BONUS_KOBO = BONUS_NAIRA * 100;
+const BONUS_EXPIRY_DAYS = 356;
 const VERIFY_URL = 'https://verify.autoreg.ng/';
 
 /**
@@ -58,7 +58,8 @@ export const listPlateVerifications = async (req, res) => {
  * Mark a user's plate as verified. Optionally capture car details seen on
  * autoreg.ng so the add-car flow can be pre-filled later.
  * Body: { note?: string, chassis_number?, car_color?, car_brand?, car_model?, car_year? }
- * No money movement here — the ₦2,000 was already credited at signup.
+ * This is where the ₦2,000 is granted — as restricted bonus money (migration
+ * 114): spendable on renewals, never withdrawable, expiring in 356 days.
  */
 export const verifyPlate = async (req, res) => {
   const supabase = getSupabaseAdmin();
@@ -68,7 +69,7 @@ export const verifyPlate = async (req, res) => {
   try {
     const { data: profile, error: fetchErr } = await supabase
       .from('profiles')
-      .select('id, plate_number, plate_verification_status, plate_bonus_credited')
+      .select('id, user_id, plate_number, plate_verification_status, plate_bonus_credited')
       .eq('id', userId)
       .maybeSingle();
 
@@ -80,7 +81,10 @@ export const verifyPlate = async (req, res) => {
       return response.error(res, 'User has no plate number on file', 400);
     }
 
-    if (profile.plate_verification_status === 'verified') {
+    // A profile that is verified AND already paid is done. One that is verified
+    // but un-granted (the grant below failed last time) may be re-submitted so
+    // the admin can retry the credit — wallet_grant_bonus is idempotent.
+    if (profile.plate_verification_status === 'verified' && profile.plate_bonus_credited) {
       return response.error(res, 'Plate already verified', 400);
     }
 
@@ -105,18 +109,49 @@ export const verifyPlate = async (req, res) => {
 
     if (updateErr) throw updateErr;
 
+    // Grant the ₦2,000 now that a human has confirmed the plate on autoreg.ng.
+    // Idempotent on the reference, so a retry cannot double-pay.
+    let bonusGranted = Boolean(profile.plate_bonus_credited);
+    let bonusError = null;
+    if (!bonusGranted) {
+      try {
+        await grantWalletBonus({
+          userId: profile.id,
+          amountKobo: BONUS_KOBO,
+          expiresAt: new Date(Date.now() + BONUS_EXPIRY_DAYS * 86400000).toISOString(),
+          reference: `PLATE_BONUS_${profile.id}`,
+        });
+        const { error: flagErr } = await supabase
+          .from('profiles')
+          .update({ plate_bonus_credited: true })
+          .eq('id', userId);
+        if (flagErr) logError('[Admin PlateVerification] Bonus flag set failed', { userId, error: flagErr.message });
+        bonusGranted = true;
+      } catch (walletErr) {
+        // The plate stays verified — only the credit failed. Re-submitting the
+        // same verify call retries just the grant.
+        bonusError = walletErr.message;
+        logError('[Admin PlateVerification] Bonus grant failed', { userId, error: walletErr.message });
+      }
+    }
+
     logInfo('[Admin PlateVerification] Verified', {
       userId,
       plateNumber: profile.plate_number,
       adminId: req.admin.id,
       hasCarDetails: Boolean(chassis_number || car_brand || car_model),
+      bonusGranted,
     });
 
     return response.success(res, {
       user_id: profile.user_id,
       plate_number: profile.plate_number,
       status: 'verified',
-    }, 'Plate verified');
+      bonus_granted: bonusGranted,
+      bonus_error: bonusError,
+    }, bonusGranted
+      ? `Plate verified — ₦${BONUS_NAIRA} bonus credited`
+      : 'Plate verified — bonus credit FAILED, re-run verify to retry');
   } catch (error) {
     logError('[Admin PlateVerification] verify error', { userId, error: error.message });
     return response.serverError(res, 'Failed to verify plate');
@@ -125,7 +160,8 @@ export const verifyPlate = async (req, res) => {
 
 /**
  * POST /admin/plate-verifications/:userId/reject
- * Mark a user's plate as rejected and claw back the ₦2,000 signup bonus.
+ * Mark a user's plate as rejected. No money moves: nothing was granted at
+ * signup, so there is nothing to claw back.
  * Body: { note: string (required) }
  */
 export const rejectPlate = async (req, res) => {
@@ -140,7 +176,7 @@ export const rejectPlate = async (req, res) => {
 
     const { data: profile, error: fetchErr } = await supabase
       .from('profiles')
-      .select('id, plate_number, plate_verification_status, plate_bonus_credited')
+      .select('id, user_id, plate_number, plate_verification_status, plate_bonus_credited')
       .eq('id', userId)
       .maybeSingle();
 
@@ -150,34 +186,6 @@ export const rejectPlate = async (req, res) => {
 
     if (profile.plate_verification_status !== 'pending') {
       return response.error(res, `Plate already ${profile.plate_verification_status}`, 400);
-    }
-
-    // Claw back the ₦2,000 bonus if it was credited
-    if (profile.plate_bonus_credited) {
-      const clawbackRef = `PLATE_CLAWBACK_${randomUUID()}`;
-      try {
-        await adminAdjustWallet({
-          userId: profile.id,
-          direction: 'debit',
-          amountKobo: BONUS_KOBO,
-          adminId: req.admin.id,
-          note: `₦${BONUS_NAIRA} signup bonus clawed back — plate ${profile.plate_number} rejected. ${note.trim()}`.slice(0, 500),
-          reference: clawbackRef,
-        });
-      } catch (walletErr) {
-        // If wallet doesn't have enough balance, still mark rejected but log
-        logError('[Admin PlateVerification] Clawback wallet debit failed', {
-          userId,
-          error: walletErr.message,
-        });
-      }
-
-      const { error: flagErr } = await supabase
-        .from('profiles')
-        .update({ plate_bonus_credited: false })
-        .eq('id', userId);
-
-      if (flagErr) logError('[Admin PlateVerification] Bonus flag reset failed', { userId, error: flagErr.message });
     }
 
     const { error: updateErr } = await supabase
@@ -191,7 +199,7 @@ export const rejectPlate = async (req, res) => {
 
     if (updateErr) throw updateErr;
 
-    logInfo('[Admin PlateVerification] Rejected + clawback', {
+    logInfo('[Admin PlateVerification] Rejected', {
       userId,
       plateNumber: profile.plate_number,
       reason: note,
@@ -202,8 +210,7 @@ export const rejectPlate = async (req, res) => {
       user_id: profile.user_id,
       plate_number: profile.plate_number,
       status: 'rejected',
-      clawedBack: profile.plate_bonus_credited,
-    }, 'Plate rejected — bonus clawed back');
+    }, 'Plate rejected');
   } catch (error) {
     logError('[Admin PlateVerification] reject error', { userId, error: error.message });
     return response.serverError(res, 'Failed to reject plate');

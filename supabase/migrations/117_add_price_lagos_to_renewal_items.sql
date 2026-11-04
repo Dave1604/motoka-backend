@@ -1,5 +1,5 @@
 -- =============================================
--- MIGRATION 112 – Lagos-specific renewal price override
+-- MIGRATION 117 – Lagos-specific renewal price override
 -- =============================================
 -- Road worthiness renewals in Lagos require a VIO inspection and carry a
 -- one-time 30-day referral window (referral becomes invalid after inspection).

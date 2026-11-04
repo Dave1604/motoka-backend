@@ -166,6 +166,21 @@ export async function adminAdjustWallet({ userId, direction, amountKobo, adminId
   return { walletId: row?.out_wallet_id, ledgerId: row?.out_ledger_id, balanceAfter: row?.out_balance_after };
 }
 
+// Grant restricted bonus money (migration 114). Unlike adminAdjustWallet this
+// credits the bonus slice: spendable only through wallet payments, never
+// withdrawable, and expiring on p_expires_at. Idempotent on `reference` — a
+// repeat call for the same reference is a no-op, so retries are safe.
+export async function grantWalletBonus({ userId, amountKobo, expiresAt, reference }) {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.rpc('wallet_grant_bonus', {
+    p_user_id: userId,
+    p_amount_kobo: amountKobo,
+    p_expires_at: expiresAt,
+    p_reference: reference,
+  });
+  if (error) throw new WalletError(`wallet_grant_bonus failed: ${error.message}`);
+}
+
 // Admin: reconciliation — verify the wallet ledger is internally consistent and
 // that every funding credit maps to a real Paystack payment (and vice-versa).
 // Read-only. Uses only our own data (wallets, wallet_ledger, payment_transactions).
