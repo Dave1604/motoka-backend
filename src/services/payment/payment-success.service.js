@@ -6,6 +6,7 @@ import { createInAppNotification } from '../../services/notification.service.js'
 import { sendPaymentSuccessEmail } from '../../services/email/paymentEmail.service.js';
 import { qualifyAndRewardOnFirstPurchase } from '../referral/referral.service.js';
 import { sendAdminOrderAlert } from '../../services/email/adminOrderAlert.service.js';
+import { runAgentPipeline } from '../agents/agentPipeline.service.js';
 
 export class PaymentSuccessService {
   static async processPaymentSuccessSideEffects({ transaction, gatewayData, order }) {
@@ -40,6 +41,17 @@ export class PaymentSuccessService {
       if (order?.order_number) {
         logInfo('[Payment Success] Order created', { orderNumber: order.order_number });
         await this._startProcessing(order, transaction.reference);
+        // Assign a fulfilment agent + open the payout ledger row. Side effect
+        // only — runAgentPipeline never throws and must not delay the webhook.
+        try {
+          await runAgentPipeline({ orderType: 'regular', order });
+        } catch (agentErr) {
+          logError('Agent pipeline failed (non-fatal)', {
+            error: agentErr.message,
+            orderNumber: order.order_number,
+            reference: transaction.reference,
+          });
+        }
       } else {
         logError('No order found for transaction', { reference: transaction.reference });
       }

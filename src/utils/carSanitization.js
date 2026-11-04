@@ -61,7 +61,12 @@ export const sanitizeCarInput = (body) => {
     'company_name',
     'company_address',
     'company_phone',
-    'cac_number'
+    'cac_number',
+    // What the admin read off the MVAA portal (migration 112)
+    'mvaa_checked_at',
+    'mvaa_checked_by',
+    'mvaa_vehicle_licence_expiry',
+    'mvaa_road_worthiness_expiry'
   ];
 
   const sanitized = {};
