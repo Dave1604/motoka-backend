@@ -30,7 +30,7 @@ function escapeHtml(value) {
  */
 export const listRenewalItems = async (req, res) => {
   try {
-    const items = await getRenewalItems();
+    const items = await getRenewalItems({ state: req.query.state || null });
     return response.success(res, items, 'Renewal items retrieved');
   } catch (error) {
     logError('[Public] listRenewalItems error', error);

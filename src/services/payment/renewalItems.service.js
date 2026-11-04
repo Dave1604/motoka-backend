@@ -23,7 +23,7 @@ export class RenewalItemsError extends Error {
   }
 }
 
-export async function getRenewalItems({ includeInactive = false } = {}) {
+export async function getRenewalItems({ includeInactive = false, state = null } = {}) {
   // Only cache the default (active-only) query — admin calls with includeInactive bypass cache
   const canUseCache = !includeInactive;
   if (canUseCache && _itemsCache && (Date.now() - _itemsCacheAt) < ITEMS_CACHE_TTL) {
@@ -34,7 +34,7 @@ export async function getRenewalItems({ includeInactive = false } = {}) {
 
   let query = supabaseAdmin
     .from('renewal_items')
-    .select('item_key, name, price, required, active')
+    .select('item_key, name, price, price_lagos, required, active')
     .order('required', { ascending: false })
     .order('name', { ascending: true });
 
@@ -52,7 +52,7 @@ export async function getRenewalItems({ includeInactive = false } = {}) {
   const result = (items || []).map((item) => ({
     id: item.item_key,
     name: item.name,
-    price: item.price,
+    price: state === 'Lagos' && item.price_lagos != null ? Number(item.price_lagos) : Number(item.price),
     required: item.required
   }));
 
@@ -64,12 +64,12 @@ export async function getRenewalItems({ includeInactive = false } = {}) {
   return result;
 }
 
-export async function validateRenewalItemsSelection(selectedItemIds = []) {
+export async function validateRenewalItemsSelection(selectedItemIds = [], state = null) {
   if (!Array.isArray(selectedItemIds) || selectedItemIds.length === 0) {
     return { valid: false, error: 'At least one renewal item must be selected' };
   }
 
-  const items = await getRenewalItems();
+  const items = await getRenewalItems({ state });
   const itemMap = new Map(items.map((item) => [item.id, item]));
 
   for (const itemId of selectedItemIds) {

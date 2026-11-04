@@ -154,9 +154,16 @@ function formatOrder(order, profile, userEmail, stateName, lgaName) {
 export const listUsers = async (req, res) => {
   try {
     const supabaseAdmin = getSupabaseAdmin();
-    const { page = 1, limit = 20, search, status, sort = 'recently_added', date_from, date_to } = req.query;
+    const { page = 1, limit = 20, search, status, sort = 'recently_added', cars = 'all', date_from, date_to } = req.query;
 
     const offset = (parseInt(page) - 1) * parseInt(limit);
+
+    // cars: all (default) | any (has at least one car) | none (0 cars —
+    // signed up but never registered a vehicle; the re-engagement segment).
+    // Backed by profiles.has_car (migration 113) so count/pagination stay exact.
+    if (!['all', 'any', 'none'].includes(cars)) {
+      return res.status(400).json({ status: false, message: `Invalid cars filter: ${cars}` });
+    }
 
     // Normalize a date filter value to an ISO timestamp. A bare YYYY-MM-DD
     // end date is treated as inclusive of that entire day.
@@ -193,6 +200,12 @@ export const listUsers = async (req, res) => {
       query = query.eq('is_suspended', false);
     } else if (status === 'deleted') {
       query = query.not('deleted_at', 'is', null);
+    }
+
+    if (cars === 'any') {
+      query = query.eq('has_car', true);
+    } else if (cars === 'none') {
+      query = query.eq('has_car', false);
     }
 
     if (dateFrom) {
@@ -3691,7 +3704,7 @@ export const getRenewalItemPrices = async (req, res) => {
 
     const { data, error } = await supabase
       .from('renewal_items')
-      .select('item_key, name, price, required, active')
+      .select('item_key, name, price, price_lagos, required, active')
       .order('required', { ascending: false })
       .order('name', { ascending: true });
 
@@ -3715,11 +3728,11 @@ export const getRenewalItemPrices = async (req, res) => {
 export const updateRenewalItemPrice = async (req, res) => {
   try {
     const { itemKey } = req.params;
-    const { price, name, active } = req.body;
+    const { price, price_lagos, name, active } = req.body;
     const supabase = getSupabaseAdmin();
 
-    if (price === undefined && name === undefined && active === undefined) {
-      return res.status(400).json({ status: false, message: 'At least one of price, name, or active must be provided' });
+    if (price === undefined && price_lagos === undefined && name === undefined && active === undefined) {
+      return res.status(400).json({ status: false, message: 'At least one of price, price_lagos, name, or active must be provided' });
     }
 
     if (price !== undefined) {
@@ -3729,10 +3742,17 @@ export const updateRenewalItemPrice = async (req, res) => {
       }
     }
 
+    if (price_lagos !== undefined && price_lagos !== null) {
+      const parsed = Number(price_lagos);
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return res.status(400).json({ status: false, message: 'price_lagos must be a non-negative integer (in kobo) or null' });
+      }
+    }
+
     // Verify the item exists
     const { data: existing, error: fetchErr } = await supabase
       .from('renewal_items')
-      .select('item_key, name, price, required, active')
+      .select('item_key, name, price, price_lagos, required, active')
       .eq('item_key', itemKey)
       .maybeSingle();
 
@@ -3742,6 +3762,7 @@ export const updateRenewalItemPrice = async (req, res) => {
 
     const updatePayload = { updated_at: new Date().toISOString() };
     if (price !== undefined) updatePayload.price = Number(price);
+    if (price_lagos !== undefined) updatePayload.price_lagos = price_lagos === null ? null : Number(price_lagos);
     if (name !== undefined) updatePayload.name = String(name).trim();
     if (active !== undefined) updatePayload.active = Boolean(active);
 
@@ -3749,7 +3770,7 @@ export const updateRenewalItemPrice = async (req, res) => {
       .from('renewal_items')
       .update(updatePayload)
       .eq('item_key', itemKey)
-      .select('item_key, name, price, required, active')
+      .select('item_key, name, price, price_lagos, required, active')
       .single();
 
     if (updateErr) {
@@ -3761,6 +3782,8 @@ export const updateRenewalItemPrice = async (req, res) => {
       itemKey,
       previousPrice: existing.price,
       newPrice: updated.price,
+      previousPriceLagos: existing.price_lagos,
+      newPriceLagos: updated.price_lagos,
       adminId: req.admin?.id,
     });
 

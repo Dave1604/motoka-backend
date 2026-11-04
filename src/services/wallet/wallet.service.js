@@ -14,16 +14,37 @@ export class WalletError extends Error {
 }
 
 // Read a user's wallet. Returns a zeroed shape if they've never funded (no row
-// exists yet) so callers don't special-case first-time users.
+// exists yet) so callers don't special-case first-time users. Applies any due
+// welcome-bonus expiry before returning, so a stale bonus never lingers in the
+// balance the client displays.
 export async function getWallet(userId) {
   const supabase = getSupabaseAdmin();
+  const cols = 'id, balance_kobo, bonus_balance_kobo, bonus_expires_at, status, currency, created_at, updated_at';
   const { data, error } = await supabase
     .from('wallets')
-    .select('id, balance_kobo, status, currency, created_at, updated_at')
+    .select(cols)
     .eq('user_id', userId)
     .maybeSingle();
   if (error) throw new WalletError(`Failed to read wallet: ${error.message}`);
-  return data || { id: null, balance_kobo: 0, status: 'active', currency: 'NGN' };
+
+  if (
+    data &&
+    Number(data.bonus_balance_kobo || 0) > 0 &&
+    data.bonus_expires_at &&
+    new Date(data.bonus_expires_at).getTime() <= Date.now()
+  ) {
+    const { error: expError } = await supabase.rpc('wallet_expire_bonus', { p_user_id: userId });
+    if (expError) throw new WalletError(`wallet_expire_bonus failed: ${expError.message}`);
+    const { data: refreshed, error: reError } = await supabase
+      .from('wallets')
+      .select(cols)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (reError) throw new WalletError(`Failed to read wallet: ${reError.message}`);
+    return refreshed || { id: null, balance_kobo: 0, bonus_balance_kobo: 0, bonus_expires_at: null, status: 'active', currency: 'NGN' };
+  }
+
+  return data || { id: null, balance_kobo: 0, bonus_balance_kobo: 0, bonus_expires_at: null, status: 'active', currency: 'NGN' };
 }
 
 // Paginated ledger for a user's wallet.
@@ -111,7 +132,7 @@ export async function listWalletsForAdmin({ page = 1, limit = 20, search } = {})
   }
   let query = supabase
     .from('wallets')
-    .select('id, user_id, balance_kobo, status, currency, created_at, updated_at', { count: 'exact' })
+    .select('id, user_id, balance_kobo, bonus_balance_kobo, bonus_expires_at, status, currency, created_at, updated_at', { count: 'exact' })
     .order('balance_kobo', { ascending: false })
     .range(from, from + limit - 1);
   if (userIds) query = query.in('user_id', userIds);
@@ -143,6 +164,21 @@ export async function adminAdjustWallet({ userId, direction, amountKobo, adminId
   }
   const row = Array.isArray(data) ? data[0] : data;
   return { walletId: row?.out_wallet_id, ledgerId: row?.out_ledger_id, balanceAfter: row?.out_balance_after };
+}
+
+// Grant restricted bonus money (migration 114). Unlike adminAdjustWallet this
+// credits the bonus slice: spendable only through wallet payments, never
+// withdrawable, and expiring on p_expires_at. Idempotent on `reference` — a
+// repeat call for the same reference is a no-op, so retries are safe.
+export async function grantWalletBonus({ userId, amountKobo, expiresAt, reference }) {
+  const supabase = getSupabaseAdmin();
+  const { error } = await supabase.rpc('wallet_grant_bonus', {
+    p_user_id: userId,
+    p_amount_kobo: amountKobo,
+    p_expires_at: expiresAt,
+    p_reference: reference,
+  });
+  if (error) throw new WalletError(`wallet_grant_bonus failed: ${error.message}`);
 }
 
 // Admin: reconciliation — verify the wallet ledger is internally consistent and

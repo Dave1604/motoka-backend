@@ -47,6 +47,8 @@ export const getWalletBalance = async (req, res) => {
     return paymentResponse.success(res, {
       balance_kobo: wallet.balance_kobo,
       balance_naira: wallet.balance_kobo / 100,
+      bonus_balance_kobo: Number(wallet.bonus_balance_kobo || 0),
+      bonus_expires_at: wallet.bonus_expires_at || null,
       status: wallet.status,
       currency: wallet.currency
     }, 'Wallet retrieved');
@@ -199,7 +201,7 @@ export const payWithWallet = async (req, res) => {
       licenseType = String(license_type).toLowerCase();
       licenseDuration = normDuration;
     } else {
-      const validation = await validateRenewalItemsSelection(payment_schedule_id);
+      const validation = await validateRenewalItemsSelection(payment_schedule_id, renewal_state);
       if (!validation.valid) return paymentResponse.error(res, validation.error, HTTP_STATUS.BAD_REQUEST);
 
       const VALID_RENEWAL_MONTHS = [1, 3, 6, 12, 24];
