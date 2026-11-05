@@ -10,6 +10,7 @@ import { sendOrderInProgressEmail } from '../email/paymentEmail.service.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';
 import { getRenewalItems } from './renewalItems.service.js';
 import { runAgentPipeline } from '../agents/agentPipeline.service.js';
+import { reconcileProcessingPayouts } from '../agents/agentPayout.service.js';
 
 const isoDay = (d) => d.toISOString().slice(0, 10);
 const todayIso = () => isoDay(new Date());
@@ -52,6 +53,10 @@ class RenewalSweeper {
     try {
       await this.sweepSignedInOrders();
       await this.sweepGuestOrders();
+      await reconcileProcessingPayouts().catch((err) => {
+        this.stats.errors++;
+        logError('[Renewal Sweeper] Payout reconcile failed', { error: err.message });
+      });
     } finally {
       this.isTicking = false;
     }

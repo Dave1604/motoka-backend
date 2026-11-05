@@ -80,6 +80,10 @@ export const handlePaystackWebhook = async (req, res) => {
 // POST /api/webhooks/monipay
 export const handleMonipayWebhook = async (req, res) => {
   try {
+    if (!req.body || typeof req.body !== 'object') {
+      return res.status(400).json({ received: false, error: 'Invalid webhook payload' });
+    }
+
     const { event, data, eventId } = parseMonipayWebhookEvent(req.body);
     const evt = String(event || '').toLowerCase();
     const paidHint = evt === MONIPAY_EVENTS.CHARGE_SUCCESS
@@ -92,14 +96,16 @@ export const handleMonipayWebhook = async (req, res) => {
       reference: data?.reference || data?.order_id,
     });
 
-    if (paidHint) {
+    // Checked first: a successful transfer's data.status is "success" too, and must
+    // not be treated as a customer paying.
+    if (evt.startsWith('transfer.')) {
+      // Agent payout settlement (see agentPayout.service.js). Unrecognised
+      // transfer sub-types return null and are ignored rather than 500ing.
+      await handleMonipayTransferEvent(req.body);
+    } else if (paidHint) {
       await handleMonipayChargeSuccess(data, eventId);
     } else if (evt === MONIPAY_EVENTS.CHARGE_FAILED || evt === 'payment.failed') {
       await handleMonipayChargeFailed(data, eventId);
-    } else if (evt.includes('transfer')) {
-      // Agent payout settlement (see agentPayout.service.js). Unrecognised
-      // transfer sub-types return null and are ignored rather than 500ing.
-      handleMonipayTransferEvent(req.body);
     } else {
       logInfo('[Monipay Webhook] Unhandled event', { event });
     }
@@ -361,21 +367,22 @@ async function handleMonipayChargeFailed(data, eventId) {
   }
 }
 
-// Agent payout settlement (transfer.* events on the Monipay webhook). Kept
-// fire-and-forget: a payout bookkeeping failure must never 500 the webhook,
-// or the provider will retry and the customer's charge handler gets re-run.
-function handleMonipayTransferEvent(body) {
+// Agent payout settlement (transfer.* events on the Monipay webhook). A payout
+// bookkeeping failure must never 500 the webhook, or the provider will retry and
+// the customer's charge handler gets re-run.
+async function handleMonipayTransferEvent(body) {
   try {
     const parsed = parseTransferEvent(body);
     if (!parsed) return;
 
     if (parsed.outcome === 'success') {
-      markPayoutSuccess({ providerReference: parsed.providerReference, raw: parsed.raw });
+      await markPayoutSuccess({ references: parsed.references, raw: parsed.raw, amountKobo: parsed.amountKobo });
     } else {
-      markPayoutFailedByRef({
-        providerReference: parsed.providerReference,
+      await markPayoutFailedByRef({
+        references: parsed.references,
         reason: parsed.reason || 'provider_reported_failed',
         raw: parsed.raw,
+        reversed: parsed.outcome === 'reversed',
       });
     }
   } catch (err) {

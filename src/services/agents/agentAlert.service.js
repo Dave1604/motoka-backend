@@ -28,6 +28,8 @@ const TITLES = {
   manual_review: 'Agent payout held — needs you',
   failed: 'Agent payout FAILED',
   cancelled_paid: 'Cancelled order: agent payment needs checking',
+  unconfirmed: 'Agent payment not confirmed',
+  amount_mismatch: 'Agent payment amount does not match',
 };
 
 const KIND_COPY = {
@@ -35,6 +37,10 @@ const KIND_COPY = {
     'A paid order was assigned to an agent, but the automatic transfer was withheld. It is sitting in the Payouts queue as <strong>Manual review</strong>.',
   failed:
     'An automatic agent payout failed after the transfer was attempted. It is sitting in the Payouts queue as <strong>Failed</strong> and can be retried.',
+  amount_mismatch:
+    'Monipay reported a different amount from what was released. The payment was not marked as paid.',
+  unconfirmed:
+    'An agent payment was released, but Monipay has not confirmed it after an hour. Money may have moved, so do not retry it yet.',
   cancelled_paid:
     'This order was cancelled, but its agent has been paid or a payment is on its way. Check with the agent whether the money should come back.',
 };
@@ -42,12 +48,14 @@ const KIND_COPY = {
 const NEXT_STEP = {
   manual_review: 'Open the Payouts queue in the admin to set the missing costs and pay.',
   failed: 'Open the Payouts queue in the admin to retry or mark as paid.',
+  amount_mismatch: 'Check the transfer on the Monipay dashboard before doing anything else.',
+  unconfirmed: 'Check the transfer on the Monipay dashboard, then record the result in the Payouts queue.',
   cancelled_paid: 'The order stays on the agent\'s page until this is sorted out. Reopen the order if the work should go ahead.',
 };
 
 /**
  * @param {Object} opts
- * @param {'manual_review'|'failed'|'cancelled_paid'} opts.kind
+ * @param {'manual_review'|'failed'|'cancelled_paid'|'unconfirmed'} opts.kind
  * @param {Object} opts.payout - agent_payouts row
  * @param {Object} [opts.agent] - agents row (optional; read from payout if absent)
  * @param {Object} [opts.cost]  - computeOrderCost result, for the line breakdown
@@ -134,6 +142,33 @@ export async function sendUnassignedAlert({ orderType, orderId, state, reason })
     return { sent: true };
   } catch (err) {
     logError('[AgentPayoutAlert] Failed to send', { kind: 'unassigned', orderId, error: err.message });
+    return { error: err.message };
+  }
+}
+
+/** Someone set or changed where an agent's money goes. Nobody should be surprised by that. */
+export async function sendAgentBankAlert({ agentName, action, maskedAccount, bankName, actor, cooldownHours }) {
+  const to = recipients();
+  if (to.length === 0) return { skipped: true };
+
+  try {
+    const title = action === 'created' ? 'New agent bank account' : 'Agent bank account changed';
+    const html = `<!doctype html>
+<html><body style="margin:0;padding:24px;background:#f1f4fb;font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;padding:28px;">
+    <h1 style="margin:0 0 4px;font-size:18px;color:#0a1a2b;">${title}</h1>
+    <p style="margin:0 0 20px;font-size:14px;color:#56687f;">Payments to this agent are paused for ${esc(cooldownHours)} hours. If you did not expect this, check it before then.</p>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <tr><td style="padding:8px 0;color:#56687f;width:150px;">Agent</td><td style="color:#0a1a2b;font-weight:600;">${esc(agentName)}</td></tr>
+      <tr><td style="padding:8px 0;color:#56687f;">Account</td><td style="color:#0a1a2b;font-weight:600;">${esc(bankName)} · ${esc(maskedAccount)}</td></tr>
+      <tr><td style="padding:8px 0;color:#56687f;">Changed by</td><td style="color:#0a1a2b;font-weight:600;">${esc(actor)}</td></tr>
+    </table>
+  </div>
+</body></html>`;
+    await sendEmail({ to, subject: `${title} — ${agentName}`, html });
+    return { sent: true };
+  } catch (err) {
+    logError('[AgentPayoutAlert] Failed to send bank alert', { error: err.message });
     return { error: err.message };
   }
 }

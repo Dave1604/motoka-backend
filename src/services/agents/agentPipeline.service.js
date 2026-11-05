@@ -23,11 +23,9 @@ import { ORDER_TABLES, isOrderCancelled, isOrderOnHold, recordAgentEvent } from 
  *   1. pick an agent (least-recently-assigned active agent covering the order's state)
  *   2. stamp assigned_agent_id on the order so the admin UI can show it
  *   3. compute the cost for that state from the agent cost table
- *   4. create the ledger row and attempt the transfer
+ *   4. create the ledger row, ready for an admin to release
  *
- * Steps 1-3 happen even when payouts are disabled, so the ledger is populated
- * and the accounting is correct from day one. Only step 4's network call is
- * gated on AGENT_PAYOUTS_ENABLED.
+ * No money moves here. It only moves when an admin releases the payout.
  */
 export async function runAgentPipeline({ orderType, order: paidOrder }) {
   try {
@@ -216,8 +214,8 @@ export async function assignOrderManually({ orderType, orderId, agentId, actor =
 
 /**
  * Move an order to a different agent. Only allowed while no money could have
- * left: `pending` blocks too, because a pending row may have a transfer in
- * flight. An admin can pick any active agent, including one outside the state.
+ * left, which is until the payout is released. An admin can pick any active
+ * agent, including one outside the state.
  */
 export async function reassignOrder({ orderType, orderId, agentId, note = null, actor = 'admin' }) {
   const supabase = getSupabaseAdmin();
@@ -246,7 +244,7 @@ export async function reassignOrder({ orderType, orderId, agentId, note = null, 
   if (payoutsError) return { error: 'payouts_unavailable' };
 
   const rows = payouts || [];
-  if (rows.some((p) => ['pending', 'processing', 'success'].includes(p.status))) {
+  if (rows.some((p) => ['processing', 'success'].includes(p.status))) {
     return { error: 'payout_already_sent' };
   }
 
@@ -263,7 +261,7 @@ export async function reassignOrder({ orderType, orderId, agentId, note = null, 
   }
   if (!moved) return { error: 'assignment_race' };
 
-  await cancelPayouts(rows.filter((p) => ['failed', 'manual_review'].includes(p.status)).map((p) => p.id));
+  await cancelPayouts(rows.map((p) => p.id));
   await recordAgentEvent({ orderType, orderId, agentId: agent.id, eventType: 'reassigned', note, actor });
 
   const cost = await computeOrderCost({ orderType, order });
@@ -295,7 +293,7 @@ export async function releaseAgentFromCancelledOrder({ orderType, orderId, actor
     if (error) throw error;
 
     const rows = payouts || [];
-    const sent = rows.find((p) => ['pending', 'processing', 'success'].includes(p.status));
+    const sent = rows.find((p) => ['processing', 'success'].includes(p.status));
     if (sent) {
       await recordAgentEvent({ orderType, orderId, agentId: order.assigned_agent_id, eventType: 'cancelled', actor, note: 'Agent has been paid, or a payment is on its way.' });
       await sendPayoutAlert({ kind: 'cancelled_paid', payout: sent });
@@ -303,7 +301,7 @@ export async function releaseAgentFromCancelledOrder({ orderType, orderId, actor
       return { skipped: 'payment_sent' };
     }
 
-    await cancelPayouts(rows.filter((p) => ['failed', 'manual_review'].includes(p.status)).map((p) => p.id));
+    await cancelPayouts(rows.map((p) => p.id));
 
     const { error: clearError } = await supabase
       .from(ORDER_TABLES[orderType])

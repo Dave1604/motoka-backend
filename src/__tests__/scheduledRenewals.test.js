@@ -13,6 +13,9 @@ jest.unstable_mockModule('../services/email/paymentEmail.service.js', () => ({
   sendGuestPaymentConfirmationEmail: jest.fn(async () => ({})),
 }));
 const mockRunAgentPipeline = jest.fn(async () => ({}));
+jest.unstable_mockModule('../services/agents/agentPayout.service.js', () => ({
+  reconcileProcessingPayouts: jest.fn(async () => {}),
+}));
 jest.unstable_mockModule('../services/agents/agentPipeline.service.js', () => ({
   runAgentPipeline: mockRunAgentPipeline,
 }));

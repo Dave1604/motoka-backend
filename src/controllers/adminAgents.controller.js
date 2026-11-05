@@ -2,12 +2,29 @@ import { randomUUID } from 'crypto';
 import { getSupabaseAdmin } from '../config/supabase.js';
 import * as response from '../utils/responses.js';
 import { logError, logInfo } from '../utils/logger.js';
-import { retryPayout, markPaidManually, reconcilePayout } from '../services/agents/agentPayout.service.js';
+import {
+  getReleasePreview,
+  markPaidManually,
+  markUnconfirmedFailed,
+  reconcilePayout,
+  releasePayout,
+  retryPayout,
+} from '../services/agents/agentPayout.service.js';
 import { assignOrderManually, reassignOrder } from '../services/agents/agentPipeline.service.js';
 import { DEFAULT_COST_STATE, orderLines, resolveOrderState } from '../services/agents/agentCost.service.js';
 import { ORDER_TABLES, isOrderCancelled, isOrderOnHold, setAgentWorkStatus } from '../services/agents/agentWork.service.js';
 import { NIN_COLUMNS, removeAgentDocuments, signAgentDocument, uploadAgentNin } from '../services/agents/agentDocuments.service.js';
-import { autoPayoutLimitKobo, payoutsEnabled } from '../services/agents/monipayTransfer.service.js';
+import {
+  autoPayoutLimitKobo,
+  bankChangeCooldownMs,
+  canReleasePayments,
+  dailyPayoutLimitKobo,
+  payoutsEnabled,
+  releaseLoginMaxAgeMs,
+} from '../services/agents/monipayTransfer.service.js';
+import { sendAgentBankAlert } from '../services/agents/agentAlert.service.js';
+import { NIGERIAN_STATES } from '../constants/nigerianStates.js';
+import { validateFileSignature } from '../utils/fileValidator.js';
 
 /**
  * ADMIN — AGENT FULFILMENT PIPELINE
@@ -37,10 +54,50 @@ function parseStates(input) {
     }
   }
   if (!Array.isArray(states) || states.some((s) => typeof s !== 'string')) return null;
-  return [...new Set(states.map((s) => s.trim()).filter(Boolean))];
+  const cleaned = [...new Set(states.map((s) => s.trim()).filter(Boolean))];
+  return cleaned.every((s) => NIGERIAN_STATES.includes(s)) ? cleaned : null;
 }
 
-const accountNumberValid = (value) => !value || /^\d{10}$/.test(String(value).trim());
+const accountNumberValid = (value) => !value || (typeof value === 'string' && /^\d{10}$/.test(value.trim()));
+
+const AGENT_TEXT_FIELDS = ['name', 'phone', 'email', 'bank_name', 'bank_code', 'account_name', 'notes'];
+const MAX_AGENT_TEXT = 500;
+
+/** Names a field that is not plain text of a sensible length, if any. */
+function invalidAgentField(fields) {
+  return AGENT_TEXT_FIELDS.find((key) => {
+    const value = fields[key];
+    return value !== undefined && value !== null && (typeof value !== 'string' || value.length > MAX_AGENT_TEXT);
+  });
+}
+
+const maskAccount = (number) => (number ? `******${String(number).slice(-4)}` : null);
+
+/** Record who set where an agent's money goes, and tell the operators. */
+async function recordBankChange({ agent, action, actor }) {
+  const { error } = await getSupabaseAdmin().from('agent_audit_log').insert({
+    agent_id: agent.id,
+    action,
+    changes: { account: maskAccount(agent.account_number), bank_code: agent.bank_code, bank_name: agent.bank_name, account_name: agent.account_name },
+    actor,
+  });
+  if (error) logError('[AdminAgents] Failed to record bank change', { agentId: agent.id, error: error.message });
+  await sendAgentBankAlert({
+    agentName: agent.name,
+    action,
+    maskedAccount: maskAccount(agent.account_number),
+    bankName: agent.bank_name,
+    actor,
+    cooldownHours: Math.round(bankChangeCooldownMs() / 3600000),
+  });
+}
+
+const hasFileContent = (file) => validateFileSignature(file.buffer, file.mimetype === 'image/jpg' ? 'image/jpeg' : file.mimetype);
+
+/** Files must really be what they claim, because the label comes from the client. */
+function ninFilesValid(files) {
+  return ['nin_front', 'nin_back'].every((field) => !files?.[field]?.[0] || hasFileContent(files[field][0]));
+}
 
 /** Upload whichever NIN sides came with the request. Returns the agent columns to save. */
 async function uploadNinFiles(agentId, files) {
@@ -87,6 +144,9 @@ export async function createAgent(req, res) {
     const coverage = parseStates(states ?? []);
     if (!coverage) return response.error(res, 'states must be a list of state names');
     if (!accountNumberValid(account_number)) return response.error(res, 'account_number must be 10 digits');
+    const badField = invalidAgentField(req.body);
+    if (badField) return response.error(res, `${badField} is not valid`);
+    if (!ninFilesValid(req.files)) return response.error(res, 'NIN files must be real JPG, PNG, WebP or PDF files');
     if (!req.files?.nin_front?.[0]) {
       return response.error(res, 'NIN front is required');
     }
@@ -109,6 +169,7 @@ export async function createAgent(req, res) {
         account_number: account_number ? String(account_number).trim() : null,
         account_name: account_name || null,
         notes: notes || null,
+        bank_changed_at: account_number ? new Date().toISOString() : null,
       })
       .select('*')
       .single();
@@ -117,6 +178,7 @@ export async function createAgent(req, res) {
     if (!(await saveAgentStates(data.id, coverage))) {
       return response.serverError(res, 'Agent created, but saving their states failed. Edit the agent to set them.');
     }
+    if (data.account_number) await recordBankChange({ agent: data, action: 'created', actor: actorOf(req) });
     logInfo('[AdminAgents] Agent created', { agentId: data.id, name: data.name, adminId: req.admin?.id });
     return response.created(res, { ...data, states: coverage }, 'Agent created');
   } catch (err) {
@@ -139,14 +201,25 @@ export async function updateAgent(req, res) {
     const coverage = req.body.states !== undefined ? parseStates(req.body.states) : undefined;
     if (coverage === null) return response.error(res, 'states must be a list of state names');
     if (!accountNumberValid(patch.account_number)) return response.error(res, 'account_number must be 10 digits');
+    const badField = invalidAgentField(patch);
+    if (badField) return response.error(res, `${badField} is not valid`);
+    if (!ninFilesValid(req.files)) return response.error(res, 'NIN files must be real JPG, PNG, WebP or PDF files');
 
     const supabase = getSupabaseAdmin();
     const { data: existing } = await supabase
       .from('agents')
-      .select('id, nin_front_path, nin_back_path')
+      .select('id, nin_front_path, nin_back_path, bank_code, account_number')
       .eq('id', id)
       .maybeSingle();
     if (!existing) return response.notFound(res, 'Agent not found');
+
+    // The recipient belongs to the old account, so the next release must make a new one.
+    const bankChanged = (patch.bank_code !== undefined && patch.bank_code !== existing.bank_code)
+      || (patch.account_number !== undefined && patch.account_number !== existing.account_number);
+    if (bankChanged) {
+      patch.monipay_recipient_code = null;
+      patch.bank_changed_at = new Date().toISOString();
+    }
 
     const ninColumns = await uploadNinFiles(id, req.files);
     const { data, error } = await supabase
@@ -158,6 +231,7 @@ export async function updateAgent(req, res) {
 
     if (error) return response.serverError(res, 'Failed to update agent');
     if (!data) return response.notFound(res, 'Agent not found');
+    if (bankChanged) await recordBankChange({ agent: data, action: 'changed', actor: actorOf(req) });
 
     // The new image is saved, so failing to clear the old one must not fail the update.
     const replaced = Object.keys(ninColumns).map((column) => existing[column]).filter(Boolean);
@@ -258,7 +332,7 @@ export async function getAgentOrders(req, res) {
         .limit(AGENT_ORDER_LIMIT),
       supabase
         .from('agent_payouts')
-        .select('order_type, regular_order_id, guest_order_id, status, amount_kobo, profit_kobo, state, assigned_at, paid_at')
+        .select('id, order_type, regular_order_id, guest_order_id, status, amount_kobo, profit_kobo, state, assigned_at, paid_at')
         .eq('agent_id', id)
         .neq('status', 'cancelled'),
       supabase
@@ -306,6 +380,7 @@ export async function getAgentOrders(req, res) {
         assigned_at: assignedAt.get(key) || payout?.assigned_at || order.created_at,
         last_update_at: lastUpdate.get(key) || payout?.assigned_at || order.created_at,
         completed_at: completedAt.get(key) || null,
+        payout_id: payout?.id || null,
         agent_cost_kobo: payout?.amount_kobo ?? null,
         profit_kobo: payout?.profit_kobo ?? null,
         payout_status: payout?.status || null,
@@ -336,6 +411,7 @@ export async function getAgentOrders(req, res) {
 
     return response.success(res, {
       agent: withStates(agent),
+      can_release: canReleasePayments(req.admin?.email),
       orders,
       summary: summariseAgentOrders(orders),
       truncated: (regular.data || []).length === AGENT_ORDER_LIMIT || (guest.data || []).length === AGENT_ORDER_LIMIT,
@@ -366,6 +442,9 @@ export async function listAgentCosts(req, res) {
   }
 }
 
+const SERVICE_KEY = /^[A-Za-z0-9_:\- ]{1,100}$/;
+const MAX_COST_KOBO = 2147483647; // agent_service_costs.cost_kobo is an INTEGER
+
 export async function upsertAgentCost(req, res) {
   try {
     const { service_type, service_key, cost_kobo, active, state } = req.body || {};
@@ -373,12 +452,16 @@ export async function upsertAgentCost(req, res) {
     if (!validTypes.includes(service_type)) {
       return response.error(res, `service_type must be one of ${validTypes.join(', ')}`);
     }
-    if (!service_key || !String(service_key).trim()) {
-      return response.error(res, 'service_key is required');
+    if (typeof service_key !== 'string' || !SERVICE_KEY.test(service_key.trim())) {
+      return response.error(res, 'service_key is not valid');
     }
     const cost = Number(cost_kobo);
-    if (!Number.isInteger(cost) || cost < 0) {
-      return response.error(res, 'cost_kobo must be a non-negative integer (kobo)');
+    if (!Number.isInteger(cost) || cost < 0 || cost > MAX_COST_KOBO) {
+      return response.error(res, 'cost_kobo must be a whole number of kobo within range');
+    }
+    const costState = state === undefined || state === null || state === '' ? DEFAULT_COST_STATE : String(state).trim();
+    if (costState !== DEFAULT_COST_STATE && !NIGERIAN_STATES.includes(costState)) {
+      return response.error(res, 'state is not valid');
     }
 
     const supabase = getSupabaseAdmin();
@@ -388,7 +471,7 @@ export async function upsertAgentCost(req, res) {
         {
           service_type,
           service_key: String(service_key).trim(),
-          state: String(state || '').trim() || DEFAULT_COST_STATE,
+          state: costState,
           cost_kobo: cost,
           ...(active !== undefined ? { active: Boolean(active) } : {}),
           updated_at: new Date().toISOString(),
@@ -414,7 +497,7 @@ export async function listPayouts(req, res) {
     const supabase = getSupabaseAdmin();
     let query = supabase
       .from('agent_payouts')
-      .select('*, agents(name, bank_name, account_number)')
+      .select('*, agents(name, bank_name, account_number, account_name)')
       .order('assigned_at', { ascending: false })
       .limit(300);
 
@@ -431,8 +514,10 @@ export async function listPayouts(req, res) {
     return response.success(res, {
       data: rows,
       meta: {
-        auto_payouts_enabled: payoutsEnabled(),
-        auto_payout_limit_kobo: autoPayoutLimitKobo(),
+        payments_enabled: payoutsEnabled(),
+        can_release: canReleasePayments(req.admin?.email),
+        payout_limit_kobo: autoPayoutLimitKobo(),
+        daily_limit_kobo: dailyPayoutLimitKobo(),
       },
     });
   } catch (err) {
@@ -476,6 +561,7 @@ async function decoratePayout(payout) {
     agent_name: payout.agents?.name || null,
     agent_bank_name: payout.agents?.bank_name || null,
     agent_account_number: payout.agents?.account_number || null,
+    agent_account_name: payout.agents?.account_name || null,
     order_reference,
     order_status,
     agent_work_status,
@@ -483,13 +569,90 @@ async function decoratePayout(payout) {
   };
 }
 
+/**
+ * Everything about the person, checked fresh each time, because a backend token
+ * can outlive a suspension. Returns the reason they cannot act, if any.
+ */
+async function releaseRefusal(req) {
+  if (!canReleasePayments(req.admin?.email)) return 'You cannot change agent payments.';
+
+  const { data: profile } = await getSupabaseAdmin()
+    .from('profiles')
+    .select('is_admin, is_suspended')
+    .eq('id', req.admin.id)
+    .maybeSingle();
+  if (!profile?.is_admin || profile.is_suspended) return 'Your admin access is not active.';
+
+  if (Date.now() - (req.admin.loggedInAt || 0) > releaseLoginMaxAgeMs()) {
+    return 'For security, log out and log in again before changing agent payments.';
+  }
+  return null;
+}
+
+export async function getReleasePreviewHandler(req, res) {
+  try {
+    const refusal = await releaseRefusal(req);
+    if (refusal) return response.forbidden(res, refusal);
+    const result = await getReleasePreview(req.params.id);
+    if (result.error) return response.notFound(res, result.error);
+    return response.success(res, result.preview);
+  } catch (err) {
+    logError('[AdminAgents] getReleasePreview error', err);
+    return response.serverError(res, 'Failed to load this payment');
+  }
+}
+
+export async function releasePayoutHandler(req, res) {
+  try {
+    const refusal = await releaseRefusal(req);
+    if (refusal) return response.forbidden(res, refusal);
+    const result = await releasePayout({ payoutId: req.params.id, actor: req.admin.email });
+    if (result.error) return response.error(res, result.error);
+    return response.success(
+      res,
+      { payout: result.payout, unconfirmed: Boolean(result.unconfirmed) },
+      result.unconfirmed ? 'Sent to Monipay, but not confirmed yet. Do not retry.' : 'Payment sent to Monipay'
+    );
+  } catch (err) {
+    logError('[AdminAgents] releasePayout error', err);
+    return response.serverError(res, 'Could not confirm whether this payment started. Check Payouts before trying again.');
+  }
+}
+
+export async function markPayoutFailedHandler(req, res) {
+  try {
+    const refusal = await releaseRefusal(req);
+    if (refusal) return response.forbidden(res, refusal);
+    const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, MAX_AGENT_TEXT) : '';
+    const result = await markUnconfirmedFailed({ payoutId: req.params.id, note, actor: req.admin.email });
+    if (result.error) return response.error(res, result.error);
+    return response.success(res, result.payout, 'Marked as failed');
+  } catch (err) {
+    logError('[AdminAgents] markPayoutFailed error', err);
+    return response.serverError(res, 'Failed to update this payout');
+  }
+}
+
+const RETRY_ERRORS = {
+  not_found: 'Payout not found.',
+  cannot_retry_pending: 'This payout is already ready to release.',
+  cannot_retry_processing: 'This payment is being sent. Wait for Monipay, or click Check status.',
+  cannot_retry_success: 'This payout is already paid.',
+  cannot_retry_cancelled: 'This payout was cancelled.',
+  agent_inactive: 'This agent is not active.',
+  order_not_found: 'The order could not be found.',
+  order_on_hold: 'This order is on hold until its renewal window opens.',
+  order_cancelled: 'This order is cancelled.',
+  live_payout_exists: 'This order already has an active payout.',
+};
+
 export async function retryPayoutHandler(req, res) {
   try {
     const { id } = req.params;
     const result = await retryPayout(id);
-    if (result.error) return response.error(res, result.error);
+    if (result.error) return response.error(res, RETRY_ERRORS[result.error] || 'Could not retry this payout.');
     logInfo('[AdminAgents] Payout retried', { payoutId: id, adminId: req.admin?.id });
-    return response.success(res, result.payout, 'Payout retried');
+    return response.success(res, result.payout, 'Ready to release');
   } catch (err) {
     logError('[AdminAgents] retryPayout error', err);
     return response.serverError(res, 'Failed to retry payout');
@@ -499,7 +662,10 @@ export async function retryPayoutHandler(req, res) {
 export async function markPayoutPaidManuallyHandler(req, res) {
   try {
     const { id } = req.params;
-    const result = await markPaidManually(id, req.body?.note);
+    const refusal = await releaseRefusal(req);
+    if (refusal) return response.forbidden(res, refusal);
+    const note = typeof req.body?.note === 'string' ? req.body.note.trim().slice(0, MAX_AGENT_TEXT) : '';
+    const result = await markPaidManually({ payoutId: id, note, actor: actorOf(req) });
     if (result.error) return response.error(res, result.error);
     logInfo('[AdminAgents] Payout marked paid manually', { payoutId: id, adminId: req.admin?.id });
     return response.success(res, result.payout, 'Payout marked as paid');
@@ -576,6 +742,7 @@ export async function getOrderAgentHandler(req, res) {
 
     return response.success(res, {
       state,
+      can_release: canReleasePayments(req.admin?.email),
       on_hold: isOrderOnHold({ orderType: type, order }),
       order_cancelled: isOrderCancelled({ orderType: type, order }),
       scheduled_for: order.scheduled_for || null,

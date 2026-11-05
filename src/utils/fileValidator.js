@@ -40,7 +40,7 @@ const DANGEROUS_EXTENSIONS = [
  * @param {string} mimeType - Expected MIME type
  * @returns {boolean} - True if file type matches
  */
-const validateFileSignature = (buffer, mimeType) => {
+export const validateFileSignature = (buffer, mimeType) => {
   if (!buffer || buffer.length < 4) return false;
 
   // JPEG: FF D8 FF

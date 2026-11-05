@@ -21,9 +21,10 @@ class FakeQuery {
   is(col, val) { this.filters.push((r) => (r[col] ?? null) === val); return this; }
   in(col, vals) { this.filters.push((r) => vals.map(String).includes(String(r[col]))); return this; }
   neq(col, val) { this.filters.push((r) => String(r[col]) !== String(val)); return this; }
-  gte() { return this; }
-  lte() { return this; }
+  gte(col, val) { this.filters.push((r) => r[col] >= val); return this; }
+  lte(col, val) { this.filters.push((r) => r[col] <= val); return this; }
   insert(payload) { this.action = 'insert'; this.payload = payload; return this; }
+  upsert(payload) { this.action = 'insert'; this.payload = payload; return this; }
   update(payload) { this.action = 'update'; this.payload = payload; return this; }
   delete() { this.action = 'delete'; return this; }
   single() { this.single_ = true; return this; }
@@ -80,10 +81,16 @@ jest.unstable_mockModule('../services/email/email.service.js', () => ({
 }));
 
 const { resolveOrderState, orderServiceAmountKobo, computeOrderCost } = await import('../services/agents/agentCost.service.js');
-const { withholdReasonFor, retryPayout, markPaidManually } = await import('../services/agents/agentPayout.service.js');
+const {
+  withholdReasonFor, retryPayout, markPaidManually, releasePayout, getReleasePreview, markSuccess, markFailedByReference,
+  reconcilePayout, reconcileProcessingPayouts, markUnconfirmedFailed, accountNamesMatch,
+} = await import('../services/agents/agentPayout.service.js');
+const { canReleasePayments, parseTransferEvent } = await import('../services/agents/monipayTransfer.service.js');
 const { pickAgent, runAgentPipeline, reassignOrder, assignOrderManually, releaseAgentFromCancelledOrder } = await import('../services/agents/agentPipeline.service.js');
 const { canTransition, setAgentWorkStatus, completeAgentWork, isOrderOnHold } = await import('../services/agents/agentWork.service.js');
-const { summarisePayouts, createAgent, updateAgent, getAgentNinUrl, getAgentOrders, summariseAgentOrders } = await import('../controllers/adminAgents.controller.js');
+const { handleMonipayWebhook } = await import('../controllers/payment/webhook.controller.js');
+const { verifyMonipayWebhook } = await import('../middleware/verifyMonipayWebhook.js');
+const { summarisePayouts, createAgent, updateAgent, upsertAgentCost, getAgentNinUrl, getAgentOrders, summariseAgentOrders, releasePayoutHandler, getReleasePreviewHandler } = await import('../controllers/adminAgents.controller.js');
 
 const { resolveBankAccount } = await import('../controllers/payment/paymentMethods.controller.js');
 
@@ -95,7 +102,11 @@ const fakeRes = () => {
   res.json = jest.fn().mockReturnValue(res);
   return res;
 };
-const ninFile = (mimetype = 'image/jpeg') => [{ buffer: Buffer.from('x'), mimetype, originalname: 'nin.jpg' }];
+const FILE_BYTES = {
+  'image/jpeg': Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0]),
+  'application/pdf': Buffer.from('%PDF-1.7'),
+};
+const ninFile = (mimetype = 'image/jpeg', buffer = FILE_BYTES[mimetype]) => [{ buffer, mimetype, originalname: 'nin.jpg' }];
 
 const agent = (id, extra = {}) => ({
   id, name: id, status: 'active', account_number: '0123456789', bank_code: '058', account_name: id, ...extra,
@@ -238,8 +249,8 @@ describe('withholdReasonFor', () => {
     expect(withholdReasonFor({ amountKobo: 100, missing: [], profitKobo: 50 })).toBeNull();
   });
 
-  it('holds everything while payouts are off', () => {
-    expect(withholdReasonFor({ amountKobo: 100, missing: [], profitKobo: 50 })).toBe('payouts_disabled');
+  it('does not hold a payout just because payments are off', () => {
+    expect(withholdReasonFor({ amountKobo: 100, missing: [], profitKobo: 50 })).toBeNull();
   });
 });
 
@@ -277,7 +288,7 @@ describe('pickAgent', () => {
 });
 
 describe('runAgentPipeline', () => {
-  it('assigns, records profit and holds the payout while payouts are off', async () => {
+  it('assigns, records profit and leaves the payout ready to release', async () => {
     db.guest_renewal_orders = [guestOrder()];
     db.agents = [agent('a1')];
     db.agent_states = [{ agent_id: 'a1', state: 'Lagos' }];
@@ -287,8 +298,8 @@ describe('runAgentPipeline', () => {
 
     expect(db.guest_renewal_orders[0]).toMatchObject({ assigned_agent_id: 'a1', agent_work_status: 'assigned' });
     expect(db.agent_payouts[0]).toMatchObject({
-      status: 'manual_review',
-      failure_reason: 'payouts_disabled',
+      status: 'pending',
+      failure_reason: null,
       state: 'Lagos',
       amount_kobo: 1200000,
       customer_amount_kobo: 2000000,
@@ -356,11 +367,19 @@ describe('reassignOrder', () => {
     expect(result.error).toBeUndefined();
     expect(db.guest_renewal_orders[0]).toMatchObject({ assigned_agent_id: 'a2', agent_work_status: 'assigned' });
     expect(db.agent_payouts.find((p) => p.id === 'p1').status).toBe('cancelled');
-    expect(db.agent_payouts.find((p) => p.id !== 'p1')).toMatchObject({ agent_id: 'a2', status: 'manual_review' });
+    expect(db.agent_payouts.find((p) => p.id !== 'p1')).toMatchObject({ agent_id: 'a2', status: 'pending' });
     expect(db.agent_order_events[0]).toMatchObject({ event_type: 'reassigned', agent_id: 'a2', note: 'a1 is away' });
   });
 
-  it.each(['pending', 'processing', 'success'])('refuses once a payout is %s', async (status) => {
+  it('cancels a payout that is ready but not released', async () => {
+    db.agent_payouts = [held('pending')];
+
+    expect((await reassignOrder({ orderType: 'guest', orderId: 'g1', agentId: 'a2' })).error).toBeUndefined();
+
+    expect(db.agent_payouts.find((p) => p.id === 'p1').status).toBe('cancelled');
+  });
+
+  it.each(['processing', 'success'])('refuses once a payout is %s', async (status) => {
     db.agent_payouts = [held(status)];
 
     const result = await reassignOrder({ orderType: 'guest', orderId: 'g1', agentId: 'a2' });
@@ -389,7 +408,7 @@ describe('retryPayout', () => {
 
     const { payout } = await retryPayout('p1');
 
-    expect(payout).toMatchObject({ amount_kobo: 1200000, profit_kobo: 800000, missing_costs: [], status: 'manual_review' });
+    expect(payout).toMatchObject({ amount_kobo: 1200000, profit_kobo: 800000, missing_costs: [], status: 'pending' });
     expect(db.agent_payouts.find((p) => p.id === 'p1').status).toBe('cancelled');
   });
 });
@@ -398,7 +417,7 @@ describe('markPaidManually', () => {
   it('refuses a row with missing costs, because its amount is incomplete', async () => {
     db.agent_payouts = [{ id: 'p1', status: 'manual_review', missing_costs: [{ service_key: 'x' }] }];
 
-    const result = await markPaidManually('p1');
+    const result = await markPaidManually({ payoutId: 'p1', actor: 'a' });
 
     expect(result.error).toMatch(/missing costs/);
     expect(db.agent_payouts[0].status).toBe('manual_review');
@@ -407,14 +426,14 @@ describe('markPaidManually', () => {
   it('refuses a cancelled row', async () => {
     db.agent_payouts = [{ id: 'p1', status: 'cancelled', missing_costs: [] }];
 
-    expect((await markPaidManually('p1')).error).toBe('not_found_or_final');
+    expect((await markPaidManually({ payoutId: 'p1', actor: 'a' })).error).toMatch(/can no longer be changed/);
     expect(db.agent_payouts[0].status).toBe('cancelled');
   });
 
   it('records a held payout as paid', async () => {
     db.agent_payouts = [{ id: 'p1', status: 'manual_review', missing_costs: [] }];
 
-    const { payout } = await markPaidManually('p1', 'bank app');
+    const { payout } = await markPaidManually({ payoutId: 'p1', note: 'bank app', actor: 'a' });
 
     expect(payout).toMatchObject({ status: 'success', provider: 'manual' });
   });
@@ -804,7 +823,7 @@ describe('cancelled orders', () => {
     db.guest_renewal_orders = [guestOrder({ assigned_agent_id: 'a1', agent_work_status: 'in_progress', fulfillment_status: 'cancelled', payment_status: 'payment_success' })];
   });
 
-  it.each(['manual_review', 'failed'])('cancels a %s payout and takes the order off the agent', async (status) => {
+  it.each(['pending', 'manual_review', 'failed'])('cancels a %s payout and takes the order off the agent', async (status) => {
     db.agent_payouts = [held(status)];
 
     expect(await releaseAgentFromCancelledOrder({ orderType: 'guest', orderId: 'g1', actor: 'a@b.c' })).toEqual({ released: true });
@@ -815,7 +834,7 @@ describe('cancelled orders', () => {
     expect(mockSendEmail).not.toHaveBeenCalled();
   });
 
-  it.each(['pending', 'processing', 'success'])('keeps a %s payout and alerts the admin', async (status) => {
+  it.each(['processing', 'success'])('keeps a %s payout and alerts the admin', async (status) => {
     db.agent_payouts = [held(status)];
 
     expect(await releaseAgentFromCancelledOrder({ orderType: 'guest', orderId: 'g1' })).toEqual({ skipped: 'payment_sent' });
@@ -858,7 +877,7 @@ describe('cancelled orders', () => {
     await reopenGuestOrder({ params: { id: 'g1' }, body: {}, admin: { id: 'x' } }, fakeRes());
 
     expect(db.guest_renewal_orders[0]).toMatchObject({ fulfillment_status: 'pending', assigned_agent_id: 'a1', agent_work_status: 'assigned' });
-    expect(db.agent_payouts.filter((p) => p.status === 'manual_review')).toHaveLength(1);
+    expect(db.agent_payouts.filter((p) => p.status === 'pending')).toHaveLength(1);
   });
 
   it('runs when an admin cancels a signed-in order, and reopening assigns an agent again', async () => {
@@ -890,5 +909,555 @@ describe('cancelled orders', () => {
 
     expect(orders[0].work_status).toBe('cancelled');
     expect(summary).toMatchObject({ working: 0, completed: 0, paid_kobo: 1200000 });
+  });
+});
+
+describe('releasing an agent payment', () => {
+  const realFetch = global.fetch;
+  let calls;
+  let replies;
+
+  const reply = (status, body) => ({ ok: status < 400, status, text: async () => JSON.stringify(body) });
+  const recipientOk = () => reply(200, { status: true, data: { recipient_code: 'RCP_1', details: { account_name: 'ADA LAGOS' } } });
+  const transferOk = (status = 'pending') => reply(200, { status: true, data: { transfer_code: 'TRF_1', status } });
+
+  const ready = (extra = {}) => ({
+    id: '11111111-1111-4111-8111-111111111111', order_type: 'guest', guest_order_id: 'g1', agent_id: 'a1', status: 'pending',
+    amount_kobo: 1200000, customer_amount_kobo: 2000000, profit_kobo: 800000, missing_costs: [], state: 'Lagos', ...extra,
+  });
+  const payoutRow = () => db.agent_payouts[0];
+  const release = () => releasePayout({ payoutId: payoutRow().id, actor: 'boss@motoka.test' });
+
+  beforeEach(() => {
+    process.env.AGENT_PAYOUTS_ENABLED = 'true';
+    process.env.MONIPAY_SECRET_KEY = 'test_key';
+    delete process.env.AGENT_DAILY_PAYOUT_LIMIT_KOBO;
+    delete process.env.AGENT_AUTO_PAYOUT_LIMIT_KOBO;
+    calls = [];
+    replies = { recipient: recipientOk, transfer: transferOk };
+    global.fetch = jest.fn(async (url, options = {}) => {
+      const path = new URL(url).pathname;
+      calls.push({ path, method: options.method, body: options.body ? JSON.parse(options.body) : null });
+      if (path === '/transferrecipient') return replies.recipient();
+      if (path === '/transfer' && options.method === 'POST') return replies.transfer();
+      return replies.lookup(path);
+    });
+    const a = agent('a1', { name: 'Ada', account_name: 'Ada Lagos' });
+    db.agents = [a];
+    db.guest_renewal_orders = [guestOrder({ assigned_agent_id: 'a1', agent_work_status: 'in_progress', payment_gateway: 'monipay', payment_status: 'payment_success' })];
+    db.agent_payouts = [ready({ agents: a })];
+  });
+
+  afterEach(() => {
+    global.fetch = realFetch;
+    delete process.env.MONIPAY_SECRET_KEY;
+  });
+
+  const transfers = () => calls.filter((c) => c.path === '/transfer' && c.method === 'POST');
+
+  it('sends only the agent cost from the balance and records who released it', async () => {
+    const result = await release();
+
+    expect(result.error).toBeUndefined();
+    expect(transfers()[0].body).toEqual({
+      source: 'balance', amount: 1200000, recipient: 'RCP_1', currency: 'NGN',
+      reference: payoutRow().id, reason: `Motoka payout ${payoutRow().id}`,
+    });
+    expect(payoutRow()).toMatchObject({ status: 'processing', provider_reference: 'TRF_1', released_by: 'boss@motoka.test' });
+    expect(payoutRow().released_at).toBeTruthy();
+    expect(db.agents[0].monipay_recipient_code).toBe('RCP_1');
+  });
+
+  it('does not count a queued transfer as paid until Monipay confirms it', async () => {
+    await release();
+    expect(payoutRow().paid_at).toBeUndefined();
+
+    await markSuccess({ references: ['TRF_1'], raw: {} });
+    expect(payoutRow().status).toBe('success');
+    expect(payoutRow().paid_at).toBeTruthy();
+  });
+
+  it('marks it paid at once if Monipay says it already succeeded', async () => {
+    replies.transfer = () => transferOk('success');
+    await release();
+    expect(payoutRow().status).toBe('success');
+  });
+
+  it('sends once when two admins click together', async () => {
+    const results = await Promise.all([release(), release()]);
+
+    expect(transfers()).toHaveLength(1);
+    expect(results.filter((r) => r.error)).toHaveLength(1);
+  });
+
+  it('refuses a second release after the first', async () => {
+    await release();
+    expect((await release()).error).toMatch(/not ready to release/);
+    expect(transfers()).toHaveLength(1);
+  });
+
+  it('reuses a saved recipient', async () => {
+    db.agents[0].monipay_recipient_code = 'RCP_SAVED';
+    payoutRow().agents.monipay_recipient_code = 'RCP_SAVED';
+
+    await release();
+
+    expect(calls.some((c) => c.path === '/transferrecipient')).toBe(false);
+    expect(transfers()[0].body.recipient).toBe('RCP_SAVED');
+  });
+
+  it('sends nothing when the bank name does not match the agent', async () => {
+    replies.recipient = () => reply(200, { status: true, data: { recipient_code: 'RCP_1', details: { account_name: 'SOMEONE ELSE' } } });
+
+    expect((await release()).error).toMatch(/SOMEONE ELSE/);
+    expect(transfers()).toHaveLength(0);
+    expect(payoutRow().status).toBe('pending');
+  });
+
+  it('leaves the payout ready when the recipient cannot be created', async () => {
+    replies.recipient = () => reply(400, { status: false, message: 'Invalid bank' });
+
+    expect((await release()).error).toBe('Invalid bank');
+    expect(payoutRow().status).toBe('pending');
+  });
+
+  it('marks a refused transfer failed and lets it be retried', async () => {
+    db.agent_service_costs = [cost('road_worthiness', 'Lagos', 1200000)];
+    replies.transfer = () => reply(400, { status: false, message: 'Insufficient balance' });
+
+    expect((await release()).error).toMatch(/Insufficient balance.*No money moved/);
+    expect(payoutRow()).toMatchObject({ status: 'failed', failure_reason: 'Insufficient balance' });
+
+    const { payout } = await retryPayout(payoutRow().id);
+    expect(payout.status).toBe('pending');
+    expect(payoutRow().status).toBe('cancelled');
+  });
+
+  it.each([
+    ['a server error', () => reply(500, { message: 'boom' })],
+    ['a timeout', () => { throw new Error('The operation timed out'); }],
+    ['no transfer code', () => reply(200, { status: true, data: {} })],
+  ])('never treats %s as failed, because money may have moved', async (_label, transfer) => {
+    replies.transfer = transfer;
+
+    expect((await release()).unconfirmed).toBe(true);
+
+    expect(payoutRow().status).toBe('processing');
+    expect((await retryPayout(payoutRow().id)).error).toBe('cannot_retry_processing');
+    expect(transfers()).toHaveLength(1);
+  });
+
+  it.each([
+    ['payments are off', () => { process.env.AGENT_PAYOUTS_ENABLED = 'false'; }, /switched off/],
+    ['the agent is inactive', () => { payoutRow().agents.status = 'inactive'; }, /not active/],
+    ['the agent has no bank', () => { payoutRow().agents.bank_code = null; }, /no bank details/],
+    ['the order is on hold', () => { db.guest_renewal_orders[0].scheduled_for = '2027-01-01'; }, /on hold/],
+    ['the order is cancelled', () => { db.guest_renewal_orders[0].fulfillment_status = 'cancelled'; }, /cancelled/],
+    ['costs are missing', () => { payoutRow().missing_costs = [{ service_key: 'x' }]; }, /missing costs/],
+    ['there is no profit', () => { payoutRow().profit_kobo = 0; }, /no profit/],
+    ['the profit is unknown', () => { payoutRow().profit_kobo = null; }, /no profit/],
+    ['it is over the transfer limit', () => { process.env.AGENT_AUTO_PAYOUT_LIMIT_KOBO = '1000'; }, /above the limit/],
+    ['it would pass the daily limit', () => { process.env.AGENT_DAILY_PAYOUT_LIMIT_KOBO = '1000'; }, /today's payment limit/],
+  ])('sends nothing when %s', async (_label, arrange, message) => {
+    arrange();
+
+    expect((await release()).error).toMatch(message);
+    expect(calls).toHaveLength(0);
+    expect(payoutRow().status).toBe('pending');
+  });
+
+  it('counts money already released today towards the daily limit', async () => {
+    process.env.AGENT_DAILY_PAYOUT_LIMIT_KOBO = '2000000';
+    db.agent_payouts.push(ready({ id: 'earlier', status: 'success', amount_kobo: 1000000, released_at: new Date().toISOString() }));
+
+    expect((await release()).error).toMatch(/today's payment limit/);
+  });
+
+  it('warns about work not started and money that may not be in the balance', async () => {
+    db.guest_renewal_orders[0].agent_work_status = 'assigned';
+    db.guest_renewal_orders[0].payment_gateway = 'paystack';
+
+    const { preview } = await getReleasePreview(payoutRow().id);
+
+    expect(preview.warnings).toHaveLength(2);
+    expect(preview.warnings[1]).toMatch(/paystack/);
+    expect(preview).toMatchObject({ amount_kobo: 1200000, profit_kobo: 800000, blockers: [] });
+  });
+
+  it.each([
+    ['the order now belongs to another agent', () => { db.guest_renewal_orders[0].assigned_agent_id = 'a2'; }, /different agent/],
+    ['the customer payment is not successful', () => { db.guest_renewal_orders[0].payment_status = 'refunded'; }, /payment on this order/],
+    ['the figures do not add up', () => { payoutRow().profit_kobo = 500; }, /do not add up/],
+    ['the amount is not whole kobo', () => { payoutRow().amount_kobo = 100.5; }, /not a valid amount/],
+    ['the bank details just changed', () => { payoutRow().agents.bank_changed_at = new Date().toISOString(); }, /just set or changed/],
+  ])('sends nothing when %s', async (_label, arrange, message) => {
+    arrange();
+
+    expect((await release()).error).toMatch(message);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('allows payment once the bank change wait has passed', async () => {
+    payoutRow().agents.bank_changed_at = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString();
+
+    expect((await release()).error).toBeUndefined();
+    expect(transfers()).toHaveLength(1);
+  });
+
+  it('checks a signed-in transaction for successful payment', async () => {
+    Object.assign(payoutRow(), { order_type: 'regular', guest_order_id: null, regular_order_id: 7 });
+    db.renewal_orders = [{ id: 7, assigned_agent_id: 'a1', status: 'processing', agent_work_status: 'in_progress', transaction_id: 9, order_number: 'ORD' }];
+    db.payment_transactions = [{ id: 9, status: 'pending', payment_gateway: 'monipay' }];
+
+    expect((await release()).error).toMatch(/payment on this order/);
+
+    db.payment_transactions[0].status = 'successful';
+    expect((await release()).error).toBeUndefined();
+  });
+
+  it('backs off when releases at the same moment pass the daily limit', async () => {
+    process.env.AGENT_DAILY_PAYOUT_LIMIT_KOBO = '1500000';
+    db.agent_payouts.push(ready({ id: 'other', status: 'processing', amount_kobo: 1000000, released_at: 'z-counted-after-the-first-check' }));
+    db.agent_payouts[1].released_at = new Date(Date.now() + 1000).toISOString();
+
+    expect((await release()).error).toMatch(/today's payment limit/);
+    expect(transfers()).toHaveLength(0);
+    expect(payoutRow().status).toBe('pending');
+  });
+
+  it('treats a duplicate reference as unconfirmed, because that transfer may exist', async () => {
+    replies.transfer = () => reply(409, { message: 'Duplicate reference' });
+
+    expect((await release()).unconfirmed).toBe(true);
+    expect(payoutRow().status).toBe('processing');
+  });
+
+  it.each([400, 401, 403, 404, 422, 429])('treats a %i as refused, with no money moved', async (status) => {
+    replies.transfer = () => reply(status, { message: 'no' });
+
+    await release();
+    expect(payoutRow().status).toBe('failed');
+  });
+
+  describe('who can act', () => {
+    const fresh = { id: 'adm', email: 'boss@motoka.test', loggedInAt: Date.now() };
+    const call = async (admin) => {
+      const res = fakeRes();
+      await releasePayoutHandler({ params: { id: payoutRow().id }, admin }, res);
+      return res;
+    };
+
+    beforeEach(() => {
+      process.env.AGENT_PAYOUT_RELEASER_EMAILS = 'boss@motoka.test';
+      db.profiles = [{ id: 'adm', is_admin: true, is_suspended: false }];
+    });
+    afterEach(() => { delete process.env.AGENT_PAYOUT_RELEASER_EMAILS; });
+
+    it('lets a named admin who just logged in release', async () => {
+      expect((await call(fresh)).status).toHaveBeenCalledWith(200);
+      expect(transfers()).toHaveLength(1);
+    });
+
+    it.each([
+      ['a stale login', () => ({ ...fresh, loggedInAt: Date.now() - 31 * 60 * 1000 }), /log in again/],
+      ['no login time', () => ({ ...fresh, loggedInAt: undefined }), /log in again/],
+      ['a suspended admin', () => { db.profiles[0].is_suspended = true; return fresh; }, /not active/],
+      ['a removed admin', () => { db.profiles[0].is_admin = false; return fresh; }, /not active/],
+      ['a deleted profile', () => { db.profiles = []; return fresh; }, /not active/],
+    ])('refuses %s, even with a valid token', async (_label, arrange, message) => {
+      const res = await call(arrange());
+
+      expect(res.status).toHaveBeenCalledWith(403);
+      expect(res.json.mock.calls[0][0].message).toMatch(message);
+      expect(calls).toHaveLength(0);
+    });
+  });
+
+  it('only marks a sending payment paid with a note saying what was seen', async () => {
+    Object.assign(payoutRow(), { status: 'processing', provider_reference: 'TRF_1' });
+
+    expect((await markPaidManually({ payoutId: payoutRow().id, note: ' ', actor: 'a' })).error).toMatch(/dashboard/);
+    expect(payoutRow().status).toBe('processing');
+
+    const { payout } = await markPaidManually({ payoutId: payoutRow().id, note: 'Saw it on the dashboard', actor: 'a' });
+    expect(payout.status).toBe('success');
+    expect(payout.provider_response.by).toBe('a');
+  });
+
+  describe('bank details', () => {
+    it('records and alerts on a change, with the number masked and the wait started', async () => {
+      db.agents[0].account_number = '0123456789';
+
+      await updateAgent({ params: { id: 'a1' }, body: { account_number: '9999999999' }, admin: { email: 'x@y.z' } }, fakeRes());
+
+      expect(db.agents[0].bank_changed_at).toBeTruthy();
+      expect(db.agent_audit_log[0]).toMatchObject({ agent_id: 'a1', action: 'changed', actor: 'x@y.z' });
+      expect(db.agent_audit_log[0].changes.account).toBe('******9999');
+      expect(mockSendEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendEmail.mock.calls[0][0].html).not.toContain('9999999999');
+    });
+
+    it('stays quiet when the bank details did not change', async () => {
+      await updateAgent({ params: { id: 'a1' }, body: { phone: '0800' } }, fakeRes());
+
+      expect(db.agent_audit_log).toBeUndefined();
+      expect(mockSendEmail).not.toHaveBeenCalled();
+    });
+
+    it('applies the wait and the record to a new agent', async () => {
+      db.agents = [];
+      const res = fakeRes();
+      await createAgent({ body: { name: 'New', account_number: '0123456789', states: '["Lagos"]' }, files: { nin_front: ninFile() }, admin: { email: 'x@y.z' } }, res);
+
+      expect(db.agents[0].bank_changed_at).toBeTruthy();
+      expect(db.agent_audit_log[0].action).toBe('created');
+    });
+  });
+
+  describe('bad input', () => {
+    const update = async (body) => {
+      const res = fakeRes();
+      await updateAgent({ params: { id: 'a1' }, body }, res);
+      return res;
+    };
+
+    it.each([
+      ['a non-text name', { name: { $ne: 1 } }],
+      ['an account number sent as a list', { account_number: ['0123456789'] }],
+      ['an over-long note', { notes: 'x'.repeat(501) }],
+      ['an unknown state', { states: ['Atlantis'] }],
+    ])('refuses %s on an agent', async (_label, body) => {
+      expect((await update(body)).status).toHaveBeenCalledWith(400);
+    });
+
+    it.each([
+      ['a file that is really a program', ninFile('image/jpeg', Buffer.from('MZ\x90\x00program'))],
+      ['a script labelled as an image', ninFile('image/jpeg', Buffer.from('<script>alert(1)</script>'))],
+      ['a too-short file', ninFile('application/pdf', Buffer.from('x'))],
+    ])('refuses %s as a NIN', async (_label, file) => {
+      const res = fakeRes();
+      await createAgent({ body: { name: 'New', states: '["Lagos"]' }, files: { nin_front: file } }, res);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(mockStorage.uploads).toEqual([]);
+    });
+
+    it.each([
+      ['a huge cost', { service_type: 'renewal_item', service_key: 'x', cost_kobo: 1e15 }],
+      ['a script as a key', { service_type: 'renewal_item', service_key: '<script>', cost_kobo: 1 }],
+      ['a key that is not text', { service_type: 'renewal_item', service_key: { a: 1 }, cost_kobo: 1 }],
+      ['an unknown state', { service_type: 'renewal_item', service_key: 'x', cost_kobo: 1, state: 'Atlantis' }],
+    ])('refuses %s on a cost', async (_label, body) => {
+      const res = fakeRes();
+      await upsertAgentCost({ body }, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('still accepts a normal state cost', async () => {
+      const res = fakeRes();
+      await upsertAgentCost({ body: { service_type: 'driver_license', service_key: 'new:3yr', cost_kobo: 5, state: 'FCT (Abuja)' } }, res);
+      expect(res.status).toHaveBeenCalledWith(200);
+    });
+  });
+
+  it('only lets named admins release', async () => {
+    process.env.AGENT_PAYOUT_RELEASER_EMAILS = 'Boss@motoka.test, other@motoka.test';
+    expect(canReleasePayments('boss@motoka.test')).toBe(true);
+    expect(canReleasePayments('someone@motoka.test')).toBe(false);
+    expect(canReleasePayments(null)).toBe(false);
+
+    delete process.env.AGENT_PAYOUT_RELEASER_EMAILS;
+    expect(canReleasePayments('boss@motoka.test')).toBe(false);
+  });
+
+  it.each([['release', releasePayoutHandler], ['preview', getReleasePreviewHandler]])('refuses the %s endpoint for other admins', async (_label, handler) => {
+    process.env.AGENT_PAYOUT_RELEASER_EMAILS = 'boss@motoka.test';
+    const res = fakeRes();
+
+    await handler({ params: { id: payoutRow().id }, admin: { email: 'someone@motoka.test' } }, res);
+
+    expect(res.status).toHaveBeenCalledWith(403);
+    expect(calls).toHaveLength(0);
+    delete process.env.AGENT_PAYOUT_RELEASER_EMAILS;
+  });
+
+  it('forgets the recipient when the bank account changes', async () => {
+    db.agents[0].monipay_recipient_code = 'RCP_OLD';
+    db.agents[0].account_number = '0123456789';
+
+    await updateAgent({ params: { id: 'a1' }, body: { account_number: '9999999999' } }, fakeRes());
+    expect(db.agents[0].monipay_recipient_code).toBeNull();
+  });
+
+  it('keeps the recipient when other details change', async () => {
+    db.agents[0].monipay_recipient_code = 'RCP_OLD';
+
+    await updateAgent({ params: { id: 'a1' }, body: { phone: '0800', account_number: db.agents[0].account_number } }, fakeRes());
+    expect(db.agents[0].monipay_recipient_code).toBe('RCP_OLD');
+  });
+
+  describe('webhooks', () => {
+    beforeEach(() => {
+      Object.assign(payoutRow(), { status: 'processing', provider_reference: 'TRF_1' });
+    });
+
+    it('reads the known events', () => {
+      const data = { transfer_code: 'TRF_1', reference: 'ref', reason: 'no funds' };
+      expect(parseTransferEvent({ event: 'transfer.success', data })).toMatchObject({ outcome: 'success', references: ['TRF_1', 'ref'] });
+      expect(parseTransferEvent({ event: 'transfer.failed', data })).toMatchObject({ outcome: 'failed', reason: 'no funds' });
+      expect(parseTransferEvent({ event: 'transfer.reversed', data }).outcome).toBe('reversed');
+      expect(parseTransferEvent({ event: 'transfer.queued', data })).toBeNull();
+      expect(parseTransferEvent({ event: 'charge.success', data })).toBeNull();
+      expect(parseTransferEvent({ event: 'transfer.success', data: {} })).toBeNull();
+    });
+
+    it('settles by transfer code or by the payout id', async () => {
+      await markSuccess({ references: [payoutRow().id], raw: {} });
+      expect(payoutRow().status).toBe('success');
+    });
+
+    it('holds a success with the wrong amount, and alerts once', async () => {
+      await markSuccess({ references: ['TRF_1'], raw: {}, amountKobo: 1 });
+      await markSuccess({ references: ['TRF_1'], raw: {}, amountKobo: 1 });
+
+      expect(payoutRow().status).toBe('processing');
+      expect(payoutRow().failure_reason).toMatch(/Amount mismatch/);
+      expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('settles when the amount matches', async () => {
+      await markSuccess({ references: ['TRF_1'], raw: {}, amountKobo: 1200000 });
+      expect(payoutRow().status).toBe('success');
+    });
+
+    it.each([
+      ['a successful transfer whose status says success', { event: 'transfer.success', data: { transfer_code: 'TRF_1', status: 'success' } }, 'success'],
+      ['a failed transfer', { event: 'transfer.failed', data: { transfer_code: 'TRF_1', status: 'failed' } }, 'failed'],
+    ])('routes %s to the payout, not to customer payments', async (_label, body, expected) => {
+      const res = fakeRes();
+      await handleMonipayWebhook({ body }, res);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(payoutRow().status).toBe(expected);
+    });
+
+    it('catches a reversal even when its status still says success', async () => {
+      payoutRow().status = 'success';
+      await handleMonipayWebhook({ body: { event: 'transfer.reversed', data: { transfer_code: 'TRF_1', status: 'success' } } }, fakeRes());
+      expect(payoutRow().status).toBe('failed');
+    });
+
+    it('answers a body that is not an object without crashing', async () => {
+      const res = fakeRes();
+      await handleMonipayWebhook({ body: null }, res);
+      expect(res.status).toHaveBeenCalledWith(400);
+    });
+
+    it('never accepts an unsigned webhook in production, whatever the skip flag says', async () => {
+      const previous = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      process.env.SKIP_WEBHOOK_VERIFY = 'true';
+      const res = fakeRes();
+      const next = jest.fn();
+
+      verifyMonipayWebhook({ headers: {}, body: Buffer.from('{}') }, res, next);
+
+      process.env.NODE_ENV = previous;
+      delete process.env.SKIP_WEBHOOK_VERIFY;
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    it('ignores a success for a transfer it does not know', async () => {
+      expect(await markSuccess({ references: ['TRF_OTHER'], raw: {} })).toBeNull();
+      expect(payoutRow().status).toBe('processing');
+    });
+
+    it('records a failure and alerts', async () => {
+      await markFailedByReference({ references: ['TRF_1'], reason: 'no funds', raw: {} });
+      expect(payoutRow()).toMatchObject({ status: 'failed', failure_reason: 'no funds' });
+      expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    });
+
+    it('a late failure cannot undo a success, but a reversal can', async () => {
+      await markSuccess({ references: ['TRF_1'], raw: {} });
+
+      await markFailedByReference({ references: ['TRF_1'], raw: {} });
+      expect(payoutRow().status).toBe('success');
+
+      await markFailedByReference({ references: ['TRF_1'], reason: 'Reversed', raw: {}, reversed: true });
+      expect(payoutRow()).toMatchObject({ status: 'failed', paid_at: null });
+    });
+  });
+
+  describe('confirming with Monipay', () => {
+    const lookupStatus = (status) => () => reply(200, { status: true, data: { status } });
+
+    beforeEach(() => {
+      Object.assign(payoutRow(), { status: 'processing', provider_reference: 'TRF_1', released_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() });
+    });
+
+    it.each([['success', 'success'], ['failed', 'failed'], ['reversed', 'failed']])('moves on when Monipay says %s', async (provider, expected) => {
+      replies.lookup = lookupStatus(provider);
+      await reconcilePayout(payoutRow().id);
+      expect(payoutRow().status).toBe(expected);
+    });
+
+    it('waits while Monipay is still processing', async () => {
+      replies.lookup = lookupStatus('pending');
+      expect((await reconcilePayout(payoutRow().id)).error).toMatch(/still processing/);
+      expect(payoutRow().status).toBe('processing');
+    });
+
+    it('finds a transfer whose response was lost, by the id in its narration', async () => {
+      payoutRow().provider_reference = null;
+      replies.lookup = (path) => (path === '/transfer'
+        ? reply(200, { status: true, data: [{ transfer_code: 'TRF_FOUND', reason: `Motoka payout ${payoutRow().id}` }] })
+        : reply(200, { status: true, data: { status: 'success' } }));
+
+      await reconcilePayout(payoutRow().id);
+
+      expect(payoutRow()).toMatchObject({ status: 'success', provider_reference: 'TRF_FOUND' });
+    });
+
+    it('does not fail a transfer Monipay has no record of', async () => {
+      payoutRow().provider_reference = null;
+      replies.lookup = () => reply(200, { status: true, data: [] });
+
+      expect((await reconcilePayout(payoutRow().id)).error).toMatch(/Monipay dashboard/);
+      expect(payoutRow().status).toBe('processing');
+    });
+
+    it('the sweep settles what it can and alerts once about the rest', async () => {
+      replies.lookup = lookupStatus('pending');
+
+      await reconcileProcessingPayouts();
+      await reconcileProcessingPayouts();
+
+      expect(payoutRow().status).toBe('processing');
+      expect(mockSendEmail).toHaveBeenCalledTimes(1);
+      expect(mockSendEmail.mock.calls[0][0].subject).toMatch(/not confirmed/);
+    });
+
+    it('the sweep does nothing while payments are off', async () => {
+      process.env.AGENT_PAYOUTS_ENABLED = 'false';
+      await reconcileProcessingPayouts();
+      expect(calls).toHaveLength(0);
+    });
+
+    it('needs a note before an unconfirmed transfer can be marked failed', async () => {
+      expect((await markUnconfirmedFailed({ payoutId: payoutRow().id, note: ' ', actor: 'a' })).error).toMatch(/dashboard/);
+      expect(payoutRow().status).toBe('processing');
+
+      await markUnconfirmedFailed({ payoutId: payoutRow().id, note: 'Not on dashboard', actor: 'a@b.c' });
+      expect(payoutRow()).toMatchObject({ status: 'failed', failure_reason: 'Marked failed by a@b.c: Not on dashboard' });
+    });
+  });
+
+  it('matches names in any order', () => {
+    expect(accountNamesMatch('Ada Lagos', 'LAGOS ADA')).toBe(true);
+    expect(accountNamesMatch('Ada Lagos', 'ADA CHIOMA LAGOS')).toBe(true);
+    expect(accountNamesMatch('Ada Lagos', 'BOLA LAGOS')).toBe(false);
+    expect(accountNamesMatch('', 'BOLA')).toBe(false);
   });
 });

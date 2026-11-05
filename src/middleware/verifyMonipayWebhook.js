@@ -4,7 +4,8 @@ import { verifyWebhookSignature } from '../services/payment/monipay/monipay.serv
 export const verifyMonipayWebhook = (req, res, next) => {
   try {
     const signature = req.headers['x-monipay-signature'] || req.headers['x-signature'];
-    const skipVerify = process.env.SKIP_WEBHOOK_VERIFY === 'true';
+    // Local development only: production must never accept an unsigned webhook.
+    const skipVerify = process.env.SKIP_WEBHOOK_VERIFY === 'true' && process.env.NODE_ENV !== 'production';
     const secret = process.env.MONIPAY_WEBHOOK_SECRET || process.env.MONIPAY_SECRET_KEY;
 
     logInfo('[Monipay Webhook] Received', { hasSignature: !!signature, hasSecret: !!secret });
@@ -37,7 +38,7 @@ export const verifyMonipayWebhook = (req, res, next) => {
     next();
   } catch (error) {
     logError('[Monipay Webhook] Verification error', { message: error.message });
-    if (process.env.SKIP_WEBHOOK_VERIFY === 'true') return next();
+    if (process.env.SKIP_WEBHOOK_VERIFY === 'true' && process.env.NODE_ENV !== 'production') return next();
     return res.status(500).json({ status: false, message: 'Signature verification failed' });
   }
 };
