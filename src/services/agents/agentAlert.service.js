@@ -46,7 +46,7 @@ const KIND_COPY = {
 };
 
 const NEXT_STEP = {
-  manual_review: 'Open the Payouts queue in the admin to set the missing costs and pay.',
+  manual_review: 'Add any missing prices in Doc Prices in the admin. The payout updates by itself, then you can release it from Payouts.',
   failed: 'Open the Payouts queue in the admin to retry or mark as paid.',
   amount_mismatch: 'Check the transfer on the Monipay dashboard before doing anything else.',
   unconfirmed: 'Check the transfer on the Monipay dashboard, then record the result in the Payouts queue.',

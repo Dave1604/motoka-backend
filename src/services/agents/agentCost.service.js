@@ -3,6 +3,10 @@ import { logError, logInfo } from '../../utils/logger.js';
 
 export const DEFAULT_COST_STATE = 'default';
 
+// Customers don't pay for these and agents have nothing to do for them, so they
+// cost ₦0 in every state and never hold up a payout waiting for a price.
+const FREE_RENEWAL_ITEMS = new Set(['digital_copy']);
+
 /**
  * Which state's agents and costs apply to an order. renewal_state is what the
  * customer chose. Plate and licence orders have none, so they fall back to the
@@ -90,7 +94,9 @@ export async function computeOrderCost({ orderType, order, state }) {
     const key = `${line.service_type}:${line.service_key}`;
     const stateKey = `${key}:${orderState}`;
     const defaultKey = `${key}:${DEFAULT_COST_STATE}`;
-    if (orderState && byKey.has(stateKey)) {
+    if (line.service_type === 'renewal_item' && FREE_RENEWAL_ITEMS.has(line.service_key)) {
+      costs.push({ ...line, cost_kobo: 0, cost_source: 'free' });
+    } else if (orderState && byKey.has(stateKey)) {
       costs.push({ ...line, cost_kobo: byKey.get(stateKey), cost_source: orderState });
     } else if (byKey.has(defaultKey)) {
       costs.push({ ...line, cost_kobo: byKey.get(defaultKey), cost_source: DEFAULT_COST_STATE });

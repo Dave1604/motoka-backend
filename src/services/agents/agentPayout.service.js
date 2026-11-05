@@ -183,7 +183,7 @@ async function releaseBlockers({ payout, agent, order }) {
   if ((payout.missing_costs || []).length > 0) blockers.push('This order has missing costs. Set them, then click Retry.');
   if (!Number.isInteger(amount) || amount <= 0) blockers.push('The agent cost is not a valid amount.');
   if (payout.profit_kobo === null || payout.profit_kobo === undefined || Number(payout.profit_kobo) <= 0) {
-    blockers.push('This payment would leave Motoka no profit.');
+    blockers.push('This payment would leave Motoka no service charge.');
   } else if (Number(payout.customer_amount_kobo) - amount !== Number(payout.profit_kobo)) {
     blockers.push('The figures on this payout do not add up. Click Retry to work them out again.');
   }
@@ -533,6 +533,51 @@ export async function retryPayout(payoutId) {
 }
 
 /**
+ * Run after an agent price is saved. Payouts held for a missing price never reached
+ * Monipay, so nobody should have to retry each one by hand. A payout whose prices
+ * are now all set goes through retryPayout, keeping the new-row rule above. One still
+ * waiting only has its figures corrected, so it doesn't leave a cancelled row for
+ * every price saved. Nothing here sends money: the best result is Ready to release.
+ */
+export async function refreshPayoutsWaitingForPrices() {
+  const supabase = getSupabaseAdmin();
+  const { data: rows, error } = await supabase.from('agent_payouts').select('*').eq('status', 'manual_review');
+  if (error) throw error;
+
+  let ready = 0;
+  for (const row of rows || []) {
+    if ((row.missing_costs || []).length === 0) continue;
+    try {
+      const orderId = row.order_type === 'regular' ? row.regular_order_id : row.guest_order_id;
+      const { data: order } = await supabase.from(ORDER_TABLES[row.order_type]).select('*').eq('id', orderId).maybeSingle();
+      if (!order || isOrderOnHold({ orderType: row.order_type, order }) || isOrderCancelled({ orderType: row.order_type, order })) continue;
+
+      const cost = await computeOrderCost({ orderType: row.order_type, order });
+      if (cost.missing.length > 0) {
+        await supabase
+          .from('agent_payouts')
+          .update({
+            ...costColumns(cost),
+            failure_reason: withholdReasonFor({ amountKobo: cost.totalKobo, missing: cost.missing, profitKobo: cost.profitKobo }),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', row.id)
+          .eq('status', 'manual_review');
+        continue;
+      }
+
+      const { payout, error: retryError } = await retryPayout(row.id);
+      if (retryError) logError('[AgentPayout] Could not refresh payout', { payoutId: row.id, error: retryError });
+      if (payout?.status === 'pending') ready += 1;
+    } catch (err) {
+      // One bad order must not stop the others from updating.
+      logError('[AgentPayout] Could not refresh payout', { payoutId: row.id, error: err.message });
+    }
+  }
+  return { ready };
+}
+
+/**
  * Retire rows nothing was sent for. A row that reached the provider or was already
  * paid can never be cancelled.
  */
@@ -561,7 +606,7 @@ export async function markPaidManually({ payoutId, note, actor }) {
   // The total on this row leaves out the missing items, so recording it as paid
   // would make the ledger say the order is settled when it is not.
   if ((current.missing_costs || []).length > 0) {
-    return { error: 'This order has missing costs. Set them, then click Retry to refresh the amount.' };
+    return { error: 'This order has missing prices. Add them in Doc Prices and the amount will update.' };
   }
 
   // A transfer is on its way. Recording another payment here could pay the agent

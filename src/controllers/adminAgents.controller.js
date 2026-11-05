@@ -7,6 +7,7 @@ import {
   markPaidManually,
   markUnconfirmedFailed,
   reconcilePayout,
+  refreshPayoutsWaitingForPrices,
   releasePayout,
   retryPayout,
 } from '../services/agents/agentPayout.service.js';
@@ -483,7 +484,16 @@ export async function upsertAgentCost(req, res) {
 
     if (error) return response.serverError(res, 'Failed to save cost');
     logInfo('[AdminAgents] Cost saved', { service_type, service_key, cost_kobo: cost, adminId: req.admin?.id });
-    return response.success(res, data, 'Cost saved');
+
+    // The price is saved either way, so a problem here must not read as a failed save.
+    let ready = 0;
+    try {
+      ({ ready } = await refreshPayoutsWaitingForPrices());
+    } catch (err) {
+      logError('[AdminAgents] Could not refresh payouts after saving a cost', err);
+    }
+    const readyNote = ready > 0 ? ` ${ready} ${ready === 1 ? 'payment is' : 'payments are'} now ready to release.` : '';
+    return response.success(res, data, `Cost saved.${readyNote}`);
   } catch (err) {
     logError('[AdminAgents] upsertAgentCost error', err);
     return response.serverError(res, 'Failed to save cost');

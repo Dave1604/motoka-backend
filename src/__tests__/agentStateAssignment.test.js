@@ -83,7 +83,7 @@ jest.unstable_mockModule('../services/email/email.service.js', () => ({
 const { resolveOrderState, orderServiceAmountKobo, computeOrderCost } = await import('../services/agents/agentCost.service.js');
 const {
   withholdReasonFor, retryPayout, markPaidManually, releasePayout, getReleasePreview, markSuccess, markFailedByReference,
-  reconcilePayout, reconcileProcessingPayouts, markUnconfirmedFailed, accountNamesMatch,
+  reconcilePayout, reconcileProcessingPayouts, markUnconfirmedFailed, accountNamesMatch, refreshPayoutsWaitingForPrices,
 } = await import('../services/agents/agentPayout.service.js');
 const { canReleasePayments, parseTransferEvent } = await import('../services/agents/monipayTransfer.service.js');
 const { pickAgent, runAgentPipeline, reassignOrder, assignOrderManually, releaseAgentFromCancelledOrder } = await import('../services/agents/agentPipeline.service.js');
@@ -192,6 +192,16 @@ describe('computeOrderCost', () => {
     const result = await computeOrderCost({ orderType: 'guest', order: guestOrder({ renewal_state: 'Ogun' }) });
     expect(result.totalKobo).toBe(500000);
     expect(result.costs[0].cost_source).toBe('default');
+  });
+
+  it('charges nothing for a digital copy, whatever the cost table says', async () => {
+    db.agent_service_costs = [cost('road_worthiness', 'default', 500000), cost('digital_copy', 'Lagos', 99900)];
+    const order = guestOrder({ selected_items: ['road_worthiness', 'digital_copy'] });
+    const result = await computeOrderCost({ orderType: 'guest', order });
+    expect(result.missing).toEqual([]);
+    expect(result.totalKobo).toBe(500000);
+    expect(result.profitKobo).toBe(1500000);
+    expect(result.costs.find((c) => c.service_key === 'digital_copy').cost_kobo).toBe(0);
   });
 
   it('leaves profit empty while a cost is missing', async () => {
@@ -413,13 +423,101 @@ describe('retryPayout', () => {
   });
 });
 
+describe('refreshPayoutsWaitingForPrices', () => {
+  const held = (extra = {}) => ({
+    id: 'p1', order_type: 'guest', guest_order_id: 'g1', agent_id: 'a1', status: 'manual_review', amount_kobo: 0,
+    provider: 'monipay', agents: agent('a1'),
+    missing_costs: [{ service_type: 'renewal_item', service_key: 'road_worthiness' }],
+    failure_reason: 'missing_costs:renewal_item:road_worthiness',
+    ...extra,
+  });
+
+  beforeEach(() => {
+    db.guest_renewal_orders = [guestOrder({ assigned_agent_id: 'a1' })];
+    db.agents = [agent('a1')];
+    db.agent_service_costs = [cost('road_worthiness', 'Lagos', 1200000)];
+  });
+
+  it('makes a payout ready once its last price is set, without sending money', async () => {
+    db.agent_payouts = [held()];
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+
+    expect(await refreshPayoutsWaitingForPrices()).toEqual({ ready: 1 });
+
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    expect(db.agent_payouts.find((p) => p.id === 'p1').status).toBe('cancelled');
+    expect(db.agent_payouts.find((p) => p.id !== 'p1')).toMatchObject({ status: 'pending', amount_kobo: 1200000, profit_kobo: 800000 });
+  });
+
+  it('updates the figures in place while another price is still missing', async () => {
+    db.guest_renewal_orders = [guestOrder({ assigned_agent_id: 'a1', selected_items: ['road_worthiness', 'insurance'] })];
+    db.agent_payouts = [held({
+      missing_costs: [{ service_type: 'renewal_item', service_key: 'road_worthiness' }, { service_type: 'renewal_item', service_key: 'insurance' }],
+    })];
+
+    expect(await refreshPayoutsWaitingForPrices()).toEqual({ ready: 0 });
+
+    expect(db.agent_payouts).toHaveLength(1);
+    expect(db.agent_payouts[0]).toMatchObject({
+      status: 'manual_review',
+      amount_kobo: 1200000,
+      profit_kobo: null,
+      missing_costs: [{ service_type: 'renewal_item', service_key: 'insurance' }],
+      failure_reason: 'missing_costs:renewal_item:insurance',
+    });
+  });
+
+  it('holds a payout for review when the new price leaves no service charge', async () => {
+    db.agent_service_costs = [cost('road_worthiness', 'Lagos', 2000000)];
+    db.agent_payouts = [held()];
+
+    expect(await refreshPayoutsWaitingForPrices()).toEqual({ ready: 0 });
+
+    expect(db.agent_payouts.find((p) => p.id !== 'p1')).toMatchObject({ status: 'manual_review', failure_reason: 'no_profit:0' });
+  });
+
+  it('leaves alone a payout held for another reason, and any other status', async () => {
+    db.agent_payouts = [
+      held({ id: 'over', missing_costs: [], failure_reason: 'over_limit:1>0' }),
+      held({ id: 'failed', status: 'failed' }),
+      held({ id: 'sending', status: 'processing' }),
+      held({ id: 'done', status: 'success' }),
+    ];
+    const before = db.agent_payouts.map((p) => ({ ...p }));
+
+    expect(await refreshPayoutsWaitingForPrices()).toEqual({ ready: 0 });
+
+    expect(db.agent_payouts).toEqual(before);
+  });
+
+  it('leaves a payout on a cancelled order alone', async () => {
+    db.guest_renewal_orders = [guestOrder({ assigned_agent_id: 'a1', fulfillment_status: 'cancelled' })];
+    db.agent_payouts = [held()];
+
+    expect(await refreshPayoutsWaitingForPrices()).toEqual({ ready: 0 });
+
+    expect(db.agent_payouts).toHaveLength(1);
+    expect(db.agent_payouts[0].status).toBe('manual_review');
+  });
+
+  it('says how many payments became ready when a price is saved', async () => {
+    db.agent_payouts = [held()];
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+    await upsertAgentCost({ body: { service_type: 'renewal_item', service_key: 'insurance', cost_kobo: 100 } }, res);
+
+    expect(res.json.mock.calls[0][0].message).toBe('Cost saved. 1 payment is now ready to release.');
+  });
+});
+
 describe('markPaidManually', () => {
   it('refuses a row with missing costs, because its amount is incomplete', async () => {
     db.agent_payouts = [{ id: 'p1', status: 'manual_review', missing_costs: [{ service_key: 'x' }] }];
 
     const result = await markPaidManually({ payoutId: 'p1', actor: 'a' });
 
-    expect(result.error).toMatch(/missing costs/);
+    expect(result.error).toMatch(/missing prices/);
     expect(db.agent_payouts[0].status).toBe('manual_review');
   });
 
@@ -1054,8 +1152,8 @@ describe('releasing an agent payment', () => {
     ['the order is on hold', () => { db.guest_renewal_orders[0].scheduled_for = '2027-01-01'; }, /on hold/],
     ['the order is cancelled', () => { db.guest_renewal_orders[0].fulfillment_status = 'cancelled'; }, /cancelled/],
     ['costs are missing', () => { payoutRow().missing_costs = [{ service_key: 'x' }]; }, /missing costs/],
-    ['there is no profit', () => { payoutRow().profit_kobo = 0; }, /no profit/],
-    ['the profit is unknown', () => { payoutRow().profit_kobo = null; }, /no profit/],
+    ['there is no profit', () => { payoutRow().profit_kobo = 0; }, /no service charge/],
+    ['the profit is unknown', () => { payoutRow().profit_kobo = null; }, /no service charge/],
     ['it is over the transfer limit', () => { process.env.AGENT_AUTO_PAYOUT_LIMIT_KOBO = '1000'; }, /above the limit/],
     ['it would pass the daily limit', () => { process.env.AGENT_DAILY_PAYOUT_LIMIT_KOBO = '1000'; }, /today's payment limit/],
   ])('sends nothing when %s', async (_label, arrange, message) => {
