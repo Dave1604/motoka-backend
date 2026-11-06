@@ -3,8 +3,10 @@ import { jest } from '@jest/globals';
 // profiles.id is the auth uid (what cars.user_id references); profiles.user_id is the short display id
 const rows = { profiles: { id: 'u1', user_id: 'MTK-0001', first_name: 'A', last_name: 'B', email: 'a@b.com' },
                cars: { id: 7, user_id: 'u1', registration_no: 'AKD455GQ', expiry_date: '2027-01-01' },
-               renewal_orders: { id: 99, order_number: 'ORD-20261106-00001', transaction_id: 55, status: 'pending' } };
-const mkQuery = (table) => { const q = { select: () => q, eq: () => q, maybeSingle: async () => ({ data: rows[table] ?? null }) }; return q; };
+               renewal_orders: { id: 99, order_number: 'ORD-20261106-00001', transaction_id: 55, status: 'pending' },
+               plate_number_prices: { price: 25000 },
+               driver_license_prices: { price: 15000 } };
+const mkQuery = (table) => { const q = { select: () => q, eq: () => q, is: () => q, maybeSingle: async () => ({ data: rows[table] ?? null }) }; return q; };
 jest.unstable_mockModule('../../config/supabase.js'.replace('../../', '../'), () => ({ getSupabaseAdmin: () => ({ from: (t) => mkQuery(t) }) }));
 jest.unstable_mockModule('../utils/logger.js', () => ({ logError: () => {}, logInfo: () => {}, logDebug: () => {} }));
 const validate = jest.fn(async (items, state) => ({ valid: true, total: state === 'Lagos' ? 1500000 : 1200000 }));
@@ -44,4 +46,30 @@ test('records a successful manual transaction priced for the state and raises th
   expect(processPaymentSuccess).toHaveBeenCalledWith(expect.objectContaining({ reference: 'MAN-TEST', status: 'successful', channel: 'cash', orderType: 'renewal_manual', renewalAmount: 1500000, renewalState: 'Lagos' }));
   expect(r.body.data.order.order_number).toBe('ORD-20261106-00001');
   expect(r.body.data.transaction.amount).toBe(1500000);
+});
+
+test('a plate number order prices from plate_number_prices in kobo, keeps the car, and is typed plate_number', async () => {
+  const r = await call({ user_id: 'u1', kind: 'plate_number', car_id: 7, plate_type: 'Normal', channel: 'pos' });
+  expect(r.code).toBe(201);
+  expect(validate).not.toHaveBeenCalled();
+  expect(createTransaction).toHaveBeenCalledWith(expect.objectContaining({ carId: 7, amount: 2500000, paymentType: 'plate_number', paymentGateway: 'manual' }));
+  const meta = createTransaction.mock.calls[0][0].metadata;
+  expect(meta).toMatchObject({ payment_type: 'plate_number', plate_type: 'Normal', sub_type: null });
+  expect(processPaymentSuccess).toHaveBeenCalledWith(expect.objectContaining({ orderType: 'plate_number', selectedItems: [], renewalAmount: 2500000 }));
+});
+
+test('a driver licence order needs no car, validates type and duration, and is typed driver_license', async () => {
+  const bad = await call({ user_id: 'u1', kind: 'driver_license', license_type: 'new', duration: '10yr' });
+  expect(bad.code).toBe(400);
+  const r = await call({ user_id: 'u1', kind: 'driver_license', license_type: 'New', duration: '5yr', channel: 'cash' });
+  expect(r.code).toBe(201);
+  expect(createTransaction).toHaveBeenCalledWith(expect.objectContaining({ carId: null, amount: 1500000, paymentType: 'driver_license' }));
+  const meta = createTransaction.mock.calls[0][0].metadata;
+  expect(meta).toMatchObject({ payment_type: 'driver_license', license_type: 'new', duration: '5yr' });
+  expect(processPaymentSuccess).toHaveBeenCalledWith(expect.objectContaining({ orderType: 'driver_license', renewalState: null }));
+});
+
+test('a plate order without a car is refused', async () => {
+  const r = await call({ user_id: 'u1', kind: 'plate_number', plate_type: 'Normal' });
+  expect(r.code).toBe(400);
 });
