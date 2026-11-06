@@ -1,5 +1,5 @@
 -- ============================================================
--- MIGRATION 115 – Welcome bonus for adding your first car (restricted)
+-- MIGRATION 114 – Welcome bonus for adding your first car (restricted)
 -- ============================================================
 -- A user who adds their FIRST car to Motoka gets a one-time ₦2,000
 -- (200,000 kobo) wallet credit. It is RESTRICTED money:
@@ -31,6 +31,7 @@ ALTER TABLE public.wallets
   ADD COLUMN IF NOT EXISTS bonus_expires_at TIMESTAMPTZ;
 
 -- The restricted slice can never exceed the total balance.
+ALTER TABLE public.wallets DROP CONSTRAINT IF EXISTS wallets_bonus_within_balance;
 ALTER TABLE public.wallets
   ADD CONSTRAINT wallets_bonus_within_balance
   CHECK (bonus_balance_kobo <= balance_kobo);
@@ -115,11 +116,13 @@ BEGIN
       wallet_id, direction, amount_kobo, balance_after, reason, reference, note
     ) VALUES (
       v_wallet.id, 'debit', v_amount, v_new, 'bonus_expiry',
-      'bonus_expiry_' || v_wallet.id,
+      'bonus_expiry_' || v_wallet.id || '_'
+        || to_char(v_wallet.bonus_expires_at, 'YYYYMMDDHH24MISS'),
       'Welcome bonus expired on ' || to_char(v_wallet.bonus_expires_at, 'YYYY-MM-DD')
     );
   EXCEPTION WHEN unique_violation THEN
-    NULL; -- already processed; balance math above is guarded by the bonus > 0 check
+    -- Same bonus already expired in a concurrent txn; that txn did the debit.
+    RAISE EXCEPTION 'bonus_expiry already recorded for wallet %', v_wallet.id;
   END;
 
   RETURN v_new;

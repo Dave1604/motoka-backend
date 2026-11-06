@@ -1,5 +1,5 @@
 -- =============================================
--- MIGRATION 116 – Plate verification queue for signup bonus
+-- MIGRATION 115 – Plate verification queue for signup bonus
 -- =============================================
 -- Users who want the ₦2,000 signup bonus must have their plate number
 -- verified on verify.autoreg.ng (external agency portal). Because that

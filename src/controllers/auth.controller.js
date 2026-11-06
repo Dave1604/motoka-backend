@@ -7,11 +7,6 @@ import {
   attributeReferral,
   ensureReferralCode,
 } from '../services/referral/referral.service.js';
-import { adminAdjustWallet } from '../services/wallet/wallet.service.js';
-
-// Plate signup bonus (₦2,000) — credited immediately, clawed back if plate rejected.
-const BONUS_NAIRA = 2000;
-const BONUS_KOBO = BONUS_NAIRA * 100;
 
 // Fields that must never appear in any API response (KAGE-003, KAGE-005)
 const SAFE_PROFILE_FIELDS = [
@@ -178,30 +173,10 @@ export const register = async (req, res) => {
       console.error('[Register] Referral hook failed (non-fatal):', referralErr?.message || referralErr);
     }
 
-    // Plate verification signup bonus: credit ₦2,000 immediately (status pending).
-    // The admin verifies on autoreg.ng; if rejected, the bonus is clawed back via debit.
-    if (plate_number) {
-      try {
-        const bonusRef = `PLATE_SIGNUP_BONUS_${userId}`;
-        await adminAdjustWallet({
-          userId,
-          direction: 'credit',
-          amountKobo: BONUS_KOBO,
-          adminId: null,
-          note: `₦${BONUS_NAIRA} signup bonus — plate ${plate_number} pending verification`,
-          reference: bonusRef,
-        });
-        // Mark bonus as already credited so reject can claw it back
-        await supabaseAdmin
-          .from('profiles')
-          .update({ plate_bonus_credited: true })
-          .eq('id', userId);
-      } catch (bonusErr) {
-        // Never block registration because of bonus credit
-        console.error('[Register] Plate bonus credit failed (non-fatal):', bonusErr?.message || bonusErr);
-      }
-    }
-
+    // The ₦2,000 plate bonus is NOT granted here. It is granted by the admin
+    // verify step (POST /admin/plate-verifications/:userId/verify) once the
+    // plate has actually been checked on verify.autoreg.ng — crediting at
+    // signup would pay out on any unverified string a registrant typed.
     // No session until the code is entered: the verify step returns one.
     return response.created(res, {
       user: { id: userId, email: data.user.email, email_verified: false, ...sanitizeProfile(profile) },

@@ -1,5 +1,5 @@
 -- =============================================
--- MIGRATION 117 – Car detail capture for plate verification
+-- MIGRATION 116 – Car detail capture for plate verification
 -- =============================================
 -- When an admin manually verifies a plate on verify.autoreg.ng, they can see
 -- the car's details (chassis, color, brand, model, year). We store those on

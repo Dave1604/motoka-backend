@@ -51,6 +51,14 @@ export const getProfile = async (req, res) => {
         terms_accepted_at: profile.terms_accepted_at || null,
         auto_renew_enabled: Boolean(profile.auto_renew_enabled),
         auto_renew_eligible: autoRenewEligible,
+        plate_number: profile.plate_number || null,
+        plate_verification_status: profile.plate_verification_status || null,
+        plate_verified_at: profile.plate_verified_at || null,
+        plate_bonus_credited: Boolean(profile.plate_bonus_credited),
+        car_brand: profile.car_brand || null,
+        car_model: profile.car_model || null,
+        car_color: profile.car_color || null,
+        car_year: profile.car_year || null,
         created_at: profile.created_at,
         updated_at: profile.updated_at
       }

@@ -162,7 +162,7 @@ export const listUsers = async (req, res) => {
 
     // cars: all (default) | any (has at least one car) | none (0 cars —
     // signed up but never registered a vehicle; the re-engagement segment).
-    // Backed by profiles.has_car (migration 114) so count/pagination stay exact.
+    // Backed by profiles.has_car (migration 113) so count/pagination stay exact.
     if (!['all', 'any', 'none'].includes(cars)) {
       return res.status(400).json({ status: false, message: `Invalid cars filter: ${cars}` });
     }

@@ -213,4 +213,10 @@ router.get('/plate-verifications/verify-url', authenticateAdmin, plateVerificati
 router.post('/plate-verifications/:userId/verify', authenticateAdmin, plateVerification.verifyPlate);
 router.post('/plate-verifications/:userId/reject', authenticateAdmin, plateVerification.rejectPlate);
 
+// ── Plate verification queue (signup bonus gate) ───────────────────────────
+router.get('/plate-verifications', authenticateAdmin, plateVerification.listPlateVerifications);
+router.get('/plate-verifications/verify-url', authenticateAdmin, plateVerification.getVerifyUrl);
+router.post('/plate-verifications/:userId/verify', authenticateAdmin, plateVerification.verifyPlate);
+router.post('/plate-verifications/:userId/reject', authenticateAdmin, plateVerification.rejectPlate);
+
 export default router;
