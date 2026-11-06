@@ -14,6 +14,17 @@ import { unauthorized, forbidden } from '../utils/responses.js';
  *
  * Both paths attach req.admin = { id, email, is_admin: true }
  */
+/**
+ * When the admin actually signed in. A Supabase token's iat resets on every silent
+ * refresh, while amr keeps the sign-in time. Only read after the token is verified.
+ */
+function supabaseLoginTime(token) {
+  const claims = jwt.decode(token) || {};
+  const signIns = Array.isArray(claims.amr) ? claims.amr.map((m) => Number(m?.timestamp)).filter(Boolean) : [];
+  const seconds = signIns.length > 0 ? Math.max(...signIns) : claims.iat;
+  return seconds ? seconds * 1000 : 0;
+}
+
 export const authenticateAdmin = async (req, res, next) => {
   try {
     const authHeader = req.headers.authorization;
@@ -29,7 +40,7 @@ export const authenticateAdmin = async (req, res, next) => {
       try {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         if (decoded.is_admin && decoded.type === 'admin') {
-          req.admin = { id: decoded.id, email: decoded.email, is_admin: true };
+          req.admin = { id: decoded.id, email: decoded.email, is_admin: true, loggedInAt: decoded.iat * 1000 };
           return next();
         }
       } catch (jwtErr) {
@@ -64,7 +75,7 @@ export const authenticateAdmin = async (req, res, next) => {
       return forbidden(res, 'Your account has been suspended');
     }
 
-    req.admin = { id: user.id, email: user.email, is_admin: true };
+    req.admin = { id: user.id, email: user.email, is_admin: true, loggedInAt: supabaseLoginTime(token) };
     return next();
 
   } catch (error) {

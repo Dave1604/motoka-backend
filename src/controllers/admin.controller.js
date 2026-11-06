@@ -39,6 +39,8 @@ import { PAYMENT_STATUS, ORDER_TYPE } from '../constants/payment.constants.js';
 import { generateOrderNumber } from '../utils/paymentHelpers.js';
 import { loadRenewalsSummary } from '../services/renewalsSummary.service.js';
 import { getRenewalItems } from '../services/payment/renewalItems.service.js';
+import { releaseAgentFromCancelledOrder, runAgentPipeline } from '../services/agents/agentPipeline.service.js';
+import { completeAgentWork } from '../services/agents/agentWork.service.js';
 
 // Paystack stores all amounts in kobo (100 kobo = ₦1). Convert before returning to frontend.
 const koboToNaira = (kobo) => Math.round(parseFloat(kobo || 0)) / 100;
@@ -1136,7 +1138,7 @@ export const listOrders = async (req, res) => {
       if (!VALID_PAYMENT_STATUSES.includes(payment)) {
         return res.status(400).json({ status: false, message: `Invalid payment filter: ${payment}` });
       }
-      paymentSelect = 'payment_transactions!inner:transaction_id ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
+      paymentSelect = 'payment_transactions:transaction_id!inner ( id, reference, amount, status, payment_gateway, payment_type, metadata )';
       paymentFilter = payment;
     }
 
@@ -1325,6 +1327,9 @@ export const reopenOrder = async (req, res) => {
       return response.serverError(res, 'Failed to reopen order');
     }
 
+    // Cancelling released the agent, unless one had already been paid.
+    await runAgentPipeline({ orderType: 'regular', order: { id: order.id } });
+
     logInfo('[Admin] Order reopened', {
       orderNumber,
       adminId: req.admin?.id || null,
@@ -1388,6 +1393,7 @@ export const updateOrderStatus = async (req, res) => {
         logError('Update order status — completeOrder', err);
         return response.serverError(res, 'Failed to update order status');
       }
+      await completeAgentWork({ orderType: 'regular', orderId: current.id, actor: req.admin?.email || req.admin?.id || 'admin' });
     } else {
       updateData = {
         status: dbStatus,
@@ -1437,6 +1443,14 @@ export const updateOrderStatus = async (req, res) => {
       if (updateError) {
         logError('Update order status', updateError);
         return response.serverError(res, 'Failed to update order status');
+      }
+
+      // Released from a hold by hand: this is when it gets its agent.
+      if (current.status === 'scheduled' && ['pending', 'processing'].includes(dbStatus)) {
+        await runAgentPipeline({ orderType: 'regular', order: { id: current.id } });
+      }
+      if (dbStatus === 'cancelled') {
+        await releaseAgentFromCancelledOrder({ orderType: 'regular', orderId: current.id, actor: req.admin?.email || req.admin?.id || 'admin' });
       }
     }
 
@@ -2907,6 +2921,13 @@ export const updateGuestOrderStatus = async (req, res) => {
       return response.serverError(res, 'Failed to update guest order status');
     }
 
+    if (dbStatus === 'completed') {
+      await completeAgentWork({ orderType: 'guest', orderId: id, actor: req.admin?.email || req.admin?.id || 'admin' });
+    }
+    if (dbStatus === 'cancelled') {
+      await releaseAgentFromCancelledOrder({ orderType: 'guest', orderId: id, actor: req.admin?.email || req.admin?.id || 'admin' });
+    }
+
     logInfo('[Admin] Guest order status updated', {
       id,
       from: current.fulfillment_status || 'pending',
@@ -2966,6 +2987,8 @@ export const reopenGuestOrder = async (req, res) => {
       logError('[Admin] reopenGuestOrder failed', updateError);
       return response.serverError(res, 'Failed to reopen guest order');
     }
+
+    await runAgentPipeline({ orderType: 'guest', order: { id } });
 
     logInfo('[Admin] Guest order reopened', { id, adminId: req.admin?.id || null });
     return response.success(

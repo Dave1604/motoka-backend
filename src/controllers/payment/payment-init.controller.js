@@ -179,6 +179,17 @@ export function buildCallbackUrl(req, path) {
   const base = matched || process.env.FRONTEND_URL || 'http://localhost:3001';
   return `${base.replace(/\/$/, '')}${path}`;
 }
+/**
+ * What the checkout needs to keep going after a gateway refuses or cannot be
+ * reached: the amount in kobo, worked out here so the browser never has to.
+ * Null for every other failure, such as a validation error, where the customer
+ * has something to fix before paying any way at all.
+ */
+export function gatewayFailureDetails(error) {
+  const amount = Number(error?.gatewayFailedAmount);
+  return amount > 0 ? { gateway_failed: true, amount } : null;
+}
+
 export const initializePayment = async (req, res) => {
   try {
     const userId = req.user.id;
@@ -632,6 +643,9 @@ export const initializePayment = async (req, res) => {
         code: initError.code,
         reference: transaction.reference
       });
+      // The price is settled and only the gateway failed, so the caller can still
+      // offer the wallet, which needs no gateway. See gatewayFailureDetails.
+      initError.gatewayFailedAmount = amount;
       throw initError;
     }
     
@@ -727,7 +741,13 @@ export const initializePayment = async (req, res) => {
     });
     
     const isProduction = process.env.NODE_ENV === 'production';
-    
+
+    const gatewayFailure = gatewayFailureDetails(error);
+    if (gatewayFailure) {
+      const message = isProduction ? getUserFriendlyMessage(error) : error.message;
+      return paymentResponse.error(res, message, error.statusCode || 500, gatewayFailure);
+    }
+
     if (error instanceof PaystackError) {
       return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }

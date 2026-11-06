@@ -6,6 +6,44 @@ const PAYSTACK_BASE_URL = 'https://api.paystack.co';
 let banksCache = null;
 let banksCacheAt = 0;
 const BANKS_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+const RESOLVE_TIMEOUT_MS = 10_000;
+
+/**
+ * GET /api/admin/banks/resolve?account_number=&bank_code=
+ * Looks up the name on a bank account so an admin can confirm it before an agent
+ * is saved. Paystack's refusal means the account does not exist (422); anything
+ * else means the lookup itself is unavailable (503), and the form then lets the
+ * admin type the name.
+ */
+export const resolveBankAccount = async (req, res) => {
+  const { account_number: accountNumber, bank_code: bankCode } = req.query;
+  if (!/^\d{10}$/.test(accountNumber || '') || !/^[0-9A-Za-z-]+$/.test(bankCode || '')) {
+    return res.status(400).json({ success: false, message: 'A 10-digit account number and a bank are required' });
+  }
+
+  try {
+    const query = new URLSearchParams({ account_number: accountNumber, bank_code: bankCode });
+    const response = await fetch(`${PAYSTACK_BASE_URL}/bank/resolve?${query}`, {
+      headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
+      signal: AbortSignal.timeout(RESOLVE_TIMEOUT_MS),
+    });
+    const data = await response.json();
+
+    if (response.ok && data.status && data.data?.account_name) {
+      return res.json({ success: true, data: { account_name: data.data.account_name } });
+    }
+    if (response.status === 400 || response.status === 404 || response.status === 422) {
+      return res.status(422).json({ success: false, message: 'We could not find this account. Check the number and bank.' });
+    }
+
+    // Never log the account number: this is a person's bank detail.
+    logError('[resolveBankAccount] Paystack error', { status: response.status, message: data.message });
+    return res.status(503).json({ success: false, message: 'Account check is unavailable right now' });
+  } catch (err) {
+    logError('[resolveBankAccount] error', { message: err.message });
+    return res.status(503).json({ success: false, message: 'Account check is unavailable right now' });
+  }
+};
 
 /**
  * GET /api/banks
