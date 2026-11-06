@@ -7,6 +7,7 @@ import { rollOrderToNextCycle, rollGuestOrder } from '../controllers/admin-order
 import * as walletAdmin from '../controllers/wallet/walletAdmin.controller.js';
 import * as renewals from '../controllers/adminRenewals.controller.js';
 import * as plateVerification from '../controllers/admin/plateVerification.controller.js';
+import * as adminOrders from '../controllers/admin/orders.controller.js';
 import { adminCreateShipmentHandler, adminTrackShipmentHandler } from '../controllers/delivery.controller.js';
 
 import { authenticateAdmin } from '../middleware/authenticateAdmin.js';
@@ -94,6 +95,7 @@ router.get('/analytics/traffic', authenticateAdmin, getTrafficReportHandler);
 router.get('/activity/since', authenticateAdmin, admin.getActivitySince);
 
 // ── Order management (authenticateAdmin) ─────────────────────────────────────
+router.post('/orders', authenticateAdmin, adminOrders.adminCreateOrder);
 router.get('/orders', authenticateAdmin, admin.listOrders);
 router.post('/shipments', authenticateAdmin, adminCreateShipmentHandler);
 router.get('/orders/:orderNumber/shipment', authenticateAdmin, adminTrackShipmentHandler);
