@@ -63,7 +63,8 @@ export const PAYMENT_GATEWAY = {
   PAYSTACK: 'paystack',
   MONIPAY: 'monipay',
   MONICREDIT: 'monicredit',
-  WALLET: 'wallet'
+  WALLET: 'wallet',
+  MANUAL: 'manual'
 };
 
 export const PAYSTACK_EVENTS = {
