@@ -596,15 +596,12 @@ describe('agent NIN documents', () => {
     expect(db.agent_states.map((row) => row.state)).toEqual(['Lagos', 'Ogun']);
   });
 
-  it.each([
-    ['no files', undefined],
-    ['only the back', { nin_back: ninFile() }],
-  ])('refuses to create an agent with %s', async (_label, requestFiles) => {
+  it('creates an agent with no NIN files', async () => {
     const res = fakeRes();
-    await createAgent({ body, files: requestFiles }, res);
+    await createAgent({ body, files: undefined }, res);
 
-    expect(res.status).toHaveBeenCalledWith(400);
-    expect(db.agents).toBeUndefined();
+    expect(res.status).toHaveBeenCalledWith(201);
+    expect(db.agents[0].nin_front_path ?? null).toBeNull();
     expect(mockStorage.uploads).toEqual([]);
   });
 

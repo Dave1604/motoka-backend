@@ -148,9 +148,6 @@ export async function createAgent(req, res) {
     const badField = invalidAgentField(req.body);
     if (badField) return response.error(res, `${badField} is not valid`);
     if (!ninFilesValid(req.files)) return response.error(res, 'NIN files must be real JPG, PNG, WebP or PDF files');
-    if (!req.files?.nin_front?.[0]) {
-      return response.error(res, 'NIN front is required');
-    }
 
     // Upload before inserting, so a failed upload cannot leave an agent with no ID on file.
     const id = randomUUID();
@@ -482,7 +479,10 @@ export async function upsertAgentCost(req, res) {
       .select('*')
       .single();
 
-    if (error) return response.serverError(res, 'Failed to save cost');
+    if (error) {
+      logError('[AdminAgents] Could not save cost', { service_type, service_key, state: costState, error: error.message });
+      return response.serverError(res, 'Failed to save cost');
+    }
     logInfo('[AdminAgents] Cost saved', { service_type, service_key, cost_kobo: cost, adminId: req.admin?.id });
 
     // The price is saved either way, so a problem here must not read as a failed save.
@@ -539,6 +539,7 @@ export async function listPayouts(req, res) {
 async function decoratePayout(payout) {
   const supabase = getSupabaseAdmin();
   let order_reference = null;
+  let order_path = null;
   let order_status = null;
   let agent_work_status = null;
 
@@ -550,6 +551,7 @@ async function decoratePayout(payout) {
         .eq('id', payout.regular_order_id)
         .maybeSingle();
       order_reference = data?.order_number || `#${payout.regular_order_id}`;
+      order_path = data?.order_number ? `/admin/orders/${encodeURIComponent(data.order_number)}` : null;
       order_status = data?.status || null;
       agent_work_status = data?.agent_work_status || null;
     } else if (payout.order_type === 'guest' && payout.guest_order_id) {
@@ -559,6 +561,7 @@ async function decoratePayout(payout) {
         .eq('id', payout.guest_order_id)
         .maybeSingle();
       order_reference = data?.plate_number ? `Guest · ${data.plate_number}` : `Guest · ${String(payout.guest_order_id).slice(0, 8)}`;
+      order_path = data ? `/admin/guest-orders/${payout.guest_order_id}` : null;
       order_status = data?.fulfillment_status || data?.payment_status || null;
       agent_work_status = data?.agent_work_status || null;
     }
@@ -573,6 +576,7 @@ async function decoratePayout(payout) {
     agent_account_number: payout.agents?.account_number || null,
     agent_account_name: payout.agents?.account_name || null,
     order_reference,
+    order_path,
     order_status,
     agent_work_status,
     agents: undefined,
