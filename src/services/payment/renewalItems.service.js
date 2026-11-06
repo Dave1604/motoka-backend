@@ -10,8 +10,9 @@ import { logError } from '../../utils/logger.js';
 // Short-lived cache so duplicate calls within a single request lifecycle are free.
 // Renewal items rarely change; 60 s is safe and eliminates the N+1 re-fetch in the
 // Monicredit adapter without coupling the adapter to the controller's data.
-let _itemsCache = null;
-let _itemsCacheAt = 0;
+// Keyed by state: Lagos carries its own road worthiness price (migration 117), so a
+// single shared entry would quote one state's price to a customer in another.
+const _itemsCache = new Map();
 const ITEMS_CACHE_TTL = 60_000;
 
 export class RenewalItemsError extends Error {
@@ -26,8 +27,12 @@ export class RenewalItemsError extends Error {
 export async function getRenewalItems({ includeInactive = false, state = null } = {}) {
   // Only cache the default (active-only) query — admin calls with includeInactive bypass cache
   const canUseCache = !includeInactive;
-  if (canUseCache && _itemsCache && (Date.now() - _itemsCacheAt) < ITEMS_CACHE_TTL) {
-    return _itemsCache;
+  const cacheKey = state || '';
+  if (canUseCache) {
+    const cached = _itemsCache.get(cacheKey);
+    if (cached && (Date.now() - cached.at) < ITEMS_CACHE_TTL) {
+      return cached.items;
+    }
   }
 
   const supabaseAdmin = getSupabaseAdmin();
@@ -57,8 +62,7 @@ export async function getRenewalItems({ includeInactive = false, state = null } 
   }));
 
   if (canUseCache) {
-    _itemsCache = result;
-    _itemsCacheAt = Date.now();
+    _itemsCache.set(cacheKey, { items: result, at: Date.now() });
   }
 
   return result;

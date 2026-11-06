@@ -86,7 +86,8 @@ export async function initiateGuestRenewal({
   const supabase = getSupabaseAdmin();
 
   // ── 1. Validate selected renewal items and compute renewal amount ──────────
-  const validation = await validateRenewalItemsSelection(selectedItems);
+  // renewalState drives the price: Lagos road worthiness costs more (migration 117).
+  const validation = await validateRenewalItemsSelection(selectedItems, renewalState);
   if (!validation.valid) {
     throw Object.assign(new Error(validation.error), { statusCode: 400 });
   }
@@ -346,8 +347,8 @@ export async function getGuestReceipt(orderId, receiptToken) {
     return null;
   }
 
-  // Enrich with item name details
-  const allItems = await getRenewalItems();
+  // Enrich with item name details, priced for the state the order was placed in
+  const allItems = await getRenewalItems({ state: order.renewal_state || null });
   const itemMap = new Map(allItems.map(i => [i.id, i]));
   const enrichedItems = (order.selected_items || []).map(id => itemMap.get(id) || { id, name: id, price: 0 });
 
