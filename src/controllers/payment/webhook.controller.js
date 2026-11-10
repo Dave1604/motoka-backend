@@ -169,8 +169,11 @@ async function handleMonipayChargeSuccess(data, eventId) {
     return;
   }
 
-  if (transaction.status === PAYMENT_STATUS.ABANDONED) {
-    logWarn('[Monipay Webhook] Payment received for abandoned transaction — recovering', { reference });
+  if (transaction.status === PAYMENT_STATUS.ABANDONED || transaction.status === PAYMENT_STATUS.FAILED) {
+    logWarn('[Monipay Webhook] Payment received for given-up transaction — recovering', {
+      reference,
+      priorStatus: transaction.status,
+    });
     await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.PENDING });
     transaction = await getTransactionByReference(reference);
   }

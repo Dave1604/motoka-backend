@@ -190,11 +190,15 @@ export const verifyPayment = async (req, res) => {
     // re-init superseded it). Recover instead of reporting "already verified"
     // without ever creating the order — that's how paid customers ended up
     // with no order and a row stuck as abandoned.
+    // Same for a row the poller marked failed: Monipay reports an unfinished
+    // checkout as failed, then the transfer lands. Without this the user saw
+    // "Payment already verified" and no wallet credit.
     const priorStatus = transaction.status;
-    if (transaction.status === PAYMENT_STATUS.ABANDONED) {
-      logWarn('[Verify Payment] Recovering abandoned transaction — gateway confirms success', {
+    if (transaction.status === PAYMENT_STATUS.ABANDONED || transaction.status === PAYMENT_STATUS.FAILED) {
+      logWarn('[Verify Payment] Recovering given-up transaction — gateway confirms success', {
         reference,
-        userId
+        userId,
+        priorStatus
       });
       await updateTransactionStatus(reference, { status: PAYMENT_STATUS.PENDING });
       transaction = { ...transaction, status: PAYMENT_STATUS.PENDING };

@@ -72,7 +72,7 @@ class MonipayPoller {
 
       const { data: pendings, error } = await supabaseAdmin
         .from('payment_transactions')
-        .select('id, reference, amount, user_id, car_id, payment_type, metadata, created_at')
+        .select('id, reference, amount, user_id, car_id, payment_type, metadata, status, created_at')
         .eq('payment_gateway', PAYMENT_GATEWAY.MONIPAY)
         .eq('status', PAYMENT_STATUS.PENDING)
         .gte('created_at', cutoff)
@@ -82,13 +82,32 @@ class MonipayPoller {
       if (error) {
         this.stats.errors++;
         logError('[Monipay Poller] Failed to query pending txns', { error: error.message });
-      } else {
-        for (const txn of pendings || []) {
-          await this.processTxn(txn).catch((err) => {
-            this.stats.errors++;
-            logError('[Monipay Poller] processTxn failed', { reference: txn.reference, error: err.message });
-          });
-        }
+      }
+
+      // Rows we gave up on inside the window. Monipay reports an unfinished
+      // checkout as failed/abandoned while a bank transfer is still on its way,
+      // so a row marked failed or abandoned can still turn into a payment. Keep
+      // verifying those until the window closes — the wallet top-ups lost in
+      // November 2026 were exactly this.
+      const { data: givenUp, error: givenUpError } = await supabaseAdmin
+        .from('payment_transactions')
+        .select('id, reference, amount, user_id, car_id, payment_type, metadata, status, created_at, updated_at')
+        .eq('payment_gateway', PAYMENT_GATEWAY.MONIPAY)
+        .in('status', [PAYMENT_STATUS.FAILED, PAYMENT_STATUS.ABANDONED])
+        .gte('updated_at', cutoff)
+        .order('updated_at', { ascending: true })
+        .limit(this.batchSize);
+
+      if (givenUpError) {
+        this.stats.errors++;
+        logError('[Monipay Poller] Failed to query failed/abandoned txns', { error: givenUpError.message });
+      }
+
+      for (const txn of [...(pendings || []), ...(givenUp || [])]) {
+        await this.processTxn(txn).catch((err) => {
+          this.stats.errors++;
+          logError('[Monipay Poller] processTxn failed', { reference: txn.reference, error: err.message });
+        });
       }
 
       await this.processGuestOrders(supabaseAdmin, cutoff);
@@ -109,8 +128,12 @@ class MonipayPoller {
       return;
     }
 
+    // Only a gateway "failed" on a pending row is worth recording. "abandoned"
+    // just means the checkout page was closed; the transfer may still land, so
+    // the row stays pending until the sweep. Rows already failed/abandoned are
+    // left as they are.
     if (!verifyResult.success) {
-      if (verifyResult.status === 'failed' || verifyResult.status === 'abandoned') {
+      if (verifyResult.status === 'failed' && txn.status === PAYMENT_STATUS.PENDING) {
         await updateTransactionStatus(txn.reference, { status: PAYMENT_STATUS.FAILED });
         this.stats.failed++;
       }
@@ -139,6 +162,17 @@ class MonipayPoller {
       metadata = typeof txn.metadata === 'string' ? JSON.parse(txn.metadata) : (txn.metadata || {});
     } catch {
       return;
+    }
+
+    const priorStatus = txn.status || PAYMENT_STATUS.PENDING;
+    if (priorStatus !== PAYMENT_STATUS.PENDING) {
+      // The order-creating RPC expects status = pending; reset first exactly
+      // like the webhook recovery path does.
+      logInfo('[Monipay Poller] Recovering given-up transaction — gateway confirms success', {
+        reference: txn.reference,
+        priorStatus,
+      });
+      await updateTransactionStatus(txn.reference, { status: PAYMENT_STATUS.PENDING });
     }
 
     // Wallet top-ups credit the ledger; they must never reach the order RPC.
@@ -200,7 +234,7 @@ class MonipayPoller {
       userId: updatedTxn.user_id,
       paymentGateway: PAYMENT_GATEWAY.MONIPAY,
       amountKobo: updatedTxn.amount,
-      statusBefore: PAYMENT_STATUS.PENDING,
+      statusBefore: priorStatus,
       statusAfter: PAYMENT_STATUS.SUCCESSFUL,
       metadata: { orderId: processResult.orderId, source: 'poller' },
     }).catch((err) => logError('[Monipay Poller] Audit log failed', { error: err.message }));
