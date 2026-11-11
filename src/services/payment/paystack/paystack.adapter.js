@@ -149,6 +149,13 @@ export class PaystackAdapter {
    * @param {string} transactionId - Transaction reference
    * @returns {Promise<Object>} Normalized verification response
    */
+  // Hosted checkout for callers that already hold the payer and the reference
+  // (wallet top-ups, guest renewals, Ladipo). initializePayment above is the
+  // car/renewal flow that builds all of that itself.
+  static async initializeCheckout(params) {
+    return paystackInitialize(params);
+  }
+
   static async verifyPayment(transactionId) {
     try {
       const paystackResult = await paystackVerify(transactionId);

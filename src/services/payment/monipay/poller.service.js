@@ -16,7 +16,7 @@ import { handleWalletFundingSuccess } from '../../wallet/wallet.service.js';
 import { validatePaymentAmount, AmountValidationError } from '../validation/amount.validator.js';
 import { PaymentSuccessService } from '../payment-success.service.js';
 import { logPaymentAudit } from '../audit.service.js';
-import { MonipayAdapter } from './index.js';
+import { GatewayFactory } from '../gateway/gateway.factory.js';
 import { verifyGuestPayment } from '../../guest/guestRenewal.service.js';
 
 class MonipayPoller {
@@ -119,7 +119,7 @@ class MonipayPoller {
   async processTxn(txn) {
     let verifyResult;
     try {
-      verifyResult = await MonipayAdapter.verifyPayment(txn.reference);
+      verifyResult = await GatewayFactory.getGateway(PAYMENT_GATEWAY.MONIPAY).verifyPayment(txn.reference);
     } catch (error) {
       logDebug('[Monipay Poller] Verify transport error — will retry', {
         reference: txn.reference,

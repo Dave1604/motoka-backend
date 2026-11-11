@@ -16,7 +16,7 @@ import { handleWalletFundingSuccess } from '../../wallet/wallet.service.js';
 import { validatePaymentAmount, AmountValidationError } from '../validation/amount.validator.js';
 import { PaymentSuccessService } from '../payment-success.service.js';
 import { logPaymentAudit } from '../audit.service.js';
-import { PaystackAdapter } from './paystack.adapter.js';
+import { GatewayFactory } from '../gateway/gateway.factory.js';
 
 export class PaystackPoller {
   constructor() {
@@ -125,7 +125,7 @@ export class PaystackPoller {
   async processTxn(txn) {
     let verifyResult;
     try {
-      verifyResult = await PaystackAdapter.verifyPayment(txn.paystack_reference || txn.reference);
+      verifyResult = await GatewayFactory.getGateway(PAYMENT_GATEWAY.PAYSTACK).verifyPayment(txn.paystack_reference || txn.reference);
     } catch (error) {
       logDebug('[Paystack Poller] Verify transport error — will retry', {
         reference: txn.reference,

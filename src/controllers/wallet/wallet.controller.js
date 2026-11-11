@@ -1,7 +1,8 @@
 import { getWallet, getWalletLedger, payWithWallet as payWithWalletService, WalletError } from '../../services/wallet/wallet.service.js';
 import { createTransaction, updateTransactionWithPaystackInit, updateTransactionWithMonipayInit, getTransactionByReference, markTransactionAbandoned } from '../../services/payment/transaction.service.js';
-import { initializeTransaction, PaystackError } from '../../services/payment/paystack.service.js';
-import { initializeTransaction as initializeMonipayTransaction, MonipayError } from '../../services/payment/monipay/monipay.service.js';
+import { PaystackError } from '../../services/payment/paystack.service.js';
+import { MonipayError } from '../../services/payment/monipay/monipay.service.js';
+import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
 import { validateRenewalItemsSelection } from '../../services/payment/renewalItems.service.js';
 import { quoteFromDeliveryFields, DeliveryQuoteError } from '../../services/courier/deliveryQuote.service.js';
 import { TerminalError } from '../../services/courier/terminal.service.js';
@@ -423,9 +424,10 @@ export const initFunding = async (req, res) => {
       phone: profile.phone_number || undefined,
     };
 
+    const adapter = GatewayFactory.getGateway(gateway);
     let init;
     if (gateway === PAYMENT_GATEWAY.MONIPAY) {
-      init = await initializeMonipayTransaction({
+      init = await adapter.initializeCheckout({
         ...payer,
         metadata: {
           payment_type: PAYMENT_TYPE.WALLET_FUNDING,
@@ -437,7 +439,7 @@ export const initFunding = async (req, res) => {
       });
       await updateTransactionWithMonipayInit(transaction.reference, init);
     } else {
-      init = await initializeTransaction({
+      init = await adapter.initializeCheckout({
         ...payer,
         metadata: {
           payment_type: PAYMENT_TYPE.WALLET_FUNDING,

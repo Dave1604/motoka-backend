@@ -103,6 +103,10 @@ export class MonipayAdapter {
     }
   }
 
+  static async initializeCheckout(params) {
+    return initializeTransaction(params);
+  }
+
   static async verifyPayment(transactionId) {
     try {
       const result = await verifyTransaction(transactionId);

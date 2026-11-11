@@ -28,7 +28,8 @@ import {
   createTransaction,
   updateTransactionWithPaystackInit
 } from '../../services/payment/transaction.service.js';
-import { initializeTransaction as paystackInitialize, PaystackError } from '../../services/payment/paystack.service.js';
+import { PaystackError } from '../../services/payment/paystack.service.js';
+import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
 import { getRenewalItems } from '../../services/payment/renewalItems.service.js';
 import {
   PAYMENT_TYPE,
@@ -166,7 +167,7 @@ export const setupCardForValidCar = async (req, res) => {
 
     const callbackUrl = `${process.env.FRONTEND_URL}/payment/paystack/callback`;
 
-    const paystackResult = await paystackInitialize({
+    const paystackResult = await GatewayFactory.getGateway(PAYMENT_GATEWAY.PAYSTACK).initializeCheckout({
       email: userEmail,
       amount: PAYMENT_LIMITS.TOKENIZATION_AMOUNT,
       reference: transaction.reference,
