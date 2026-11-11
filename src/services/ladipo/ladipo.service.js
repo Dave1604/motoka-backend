@@ -1,7 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { getSupabaseAdmin } from '../../config/supabase.js';
-import { initializeTransaction, verifyTransaction } from '../payment/paystack.service.js';
-import { initializeTransaction as initMonipay, verifyTransaction as verifyMonipay } from '../payment/monipay/monipay.service.js';
+import { GatewayFactory } from '../payment/gateway/gateway.factory.js';
 import { getAllStates, getDeliveryFee } from '../location.service.js';
 import { logError, logInfo, logDebug } from '../../utils/logger.js';
 import {
@@ -886,7 +885,7 @@ export async function payOrder({ orderNumber, userId, userEmail, payment_gateway
     const reference = `mp_ladipo_${orderNumber}_${Date.now()}`;
     const callback_url = `${frontendUrl}/ladipo/payment/callback`;
 
-    const monipayResult = await initMonipay({
+    const monipayResult = await GatewayFactory.getGateway('monipay').initializeCheckout({
       email,
       amount: order.total_kobo,
       reference,
@@ -919,7 +918,7 @@ export async function payOrder({ orderNumber, userId, userEmail, payment_gateway
   const reference = `ladipo_${orderNumber}_${Date.now()}`;
   const callback_url = `${frontendUrl}/ladipo/payment/callback`;
 
-  const paystackResult = await initializeTransaction({
+  const paystackResult = await GatewayFactory.getGateway('paystack').initializeCheckout({
     email,
     amount: order.total_kobo,
     reference,
@@ -1169,19 +1168,10 @@ function resolveLadipoGateway(reference, explicitGateway) {
 }
 
 async function verifyLadipoPaymentWithGateway(reference, gateway) {
-  if (gateway === 'monipay') {
-    const monipayResult = await verifyMonipay(reference);
-    return {
-      status: monipayResult.status,
-      amountKobo: monipayResult.amount,
-      isSuccessful: monipayResult.success === true || monipayResult.status === 'success',
-    };
-  }
-
-  const paystackResult = await verifyTransaction(reference);
+  const result = await GatewayFactory.getGateway(gateway).verifyPayment(reference);
   return {
-    status: paystackResult.status,
-    amountKobo: paystackResult.amount,
-    isSuccessful: paystackResult.status === 'success',
+    status: result.status,
+    amountKobo: result.amount,
+    isSuccessful: result.success === true || result.status === 'success',
   };
 }

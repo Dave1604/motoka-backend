@@ -17,8 +17,7 @@ import { getRenewalItems, validateRenewalItemsSelection } from '../payment/renew
 import { quoteFromDeliveryFields, DeliveryQuoteError } from '../courier/deliveryQuote.service.js';
 import { TerminalError } from '../courier/terminal.service.js';
 import { generatePaymentReference, sanitizeAttribution } from '../../utils/paymentHelpers.js';
-import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify } from '../payment/paystack.service.js';
-import { initializeTransaction as monipayInit, verifyTransaction as monipayVerify } from '../payment/monipay/monipay.service.js';
+import { GatewayFactory } from '../payment/gateway/gateway.factory.js';
 import { PAYMENT_GATEWAY } from '../../constants/payment.constants.js';
 import { sendGuestPaymentConfirmationEmail } from '../email/paymentEmail.service.js';
 import { sendAdminGuestOrderAlert } from '../email/adminOrderAlert.service.js';
@@ -263,11 +262,11 @@ async function _initPaystack({ email, amount, reference, callbackUrl, name, plat
     ]
   };
 
-  return paystackInit({ email, amount, reference, callback_url: callbackUrl, metadata });
+  return GatewayFactory.getGateway(PAYMENT_GATEWAY.PAYSTACK).initializeCheckout({ email, amount, reference, callback_url: callbackUrl, metadata });
 }
 
 async function _initMonipay({ email, amount, reference, callbackUrl, name, phone, firstName, lastName, plateNumber, selectedItems, deliveryDetails }) {
-  return monipayInit({
+  return GatewayFactory.getGateway(PAYMENT_GATEWAY.MONIPAY).initializeCheckout({
     email,
     amount,
     reference,
@@ -750,9 +749,7 @@ export async function verifyGuestPayment(orderId, reference) {
   if (order.payment_gateway === PAYMENT_GATEWAY.PAYSTACK || order.payment_gateway === PAYMENT_GATEWAY.MONIPAY) {
     let verifyResult;
     try {
-      verifyResult = order.payment_gateway === PAYMENT_GATEWAY.MONIPAY
-        ? await monipayVerify(ref)
-        : await paystackVerify(ref);
+      verifyResult = await GatewayFactory.getGateway(order.payment_gateway).verifyPayment(ref);
     } catch (err) {
       logError('[GuestRenewal] Gateway verify call failed', {
         ref,

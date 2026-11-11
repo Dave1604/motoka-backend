@@ -31,12 +31,12 @@ import { getSupabaseAdmin } from '../../config/supabase.js';
 import { sendPaymentFailedEmail } from '../../services/email/paymentEmail.service.js';
 import { createInAppNotification } from '../../services/notification.service.js';
 import { formatAmount } from '../../utils/paymentHelpers.js';
-import { parseWebhookEvent, verifyTransaction as paystackVerifyTransaction, createRefund } from '../../services/payment/paystack.service.js';
+import { parseWebhookEvent, createRefund } from '../../services/payment/paystack.service.js';
 import {
   parseWebhookEvent as parseMonipayWebhookEvent,
-  verifyTransaction as monipayVerifyTransaction,
   isPaidStatus,
 } from '../../services/payment/monipay/monipay.service.js';
+import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.js';
 import { activateSubscription } from '../../services/payment/subscription.service.js';
 import { logPaymentAudit } from '../../services/payment/audit.service.js';
 import { markGuestOrderPaid, markGuestOrderFailed } from '../../services/guest/guestRenewal.service.js';
@@ -140,7 +140,7 @@ async function handleMonipayChargeSuccess(data, eventId) {
     // path does. (Ladipo needs no equivalent here — verifyAndFulfillOrder calls
     // the gateway and amount-checks on its own.)
     const guestOrder = await markGuestOrderPaid(reference, {
-      verifyWithGateway: async () => monipayVerifyTransaction(reference),
+      verifyWithGateway: async () => GatewayFactory.getGateway(PAYMENT_GATEWAY.MONIPAY).verifyPayment(reference),
     });
     if (guestOrder) {
       logInfo('[Monipay Webhook] Guest order marked as paid', { reference, orderId: guestOrder.id });
@@ -183,7 +183,7 @@ async function handleMonipayChargeSuccess(data, eventId) {
 
   let verifyResult;
   try {
-    verifyResult = await monipayVerifyTransaction(transaction.reference || reference);
+    verifyResult = await GatewayFactory.getGateway(PAYMENT_GATEWAY.MONIPAY).verifyPayment(transaction.reference || reference);
   } catch (verifyErr) {
     logError('[Monipay Webhook] Verify failed', { reference, error: verifyErr.message });
     throw verifyErr;
@@ -446,7 +446,7 @@ async function handleChargeSuccess(data, eventId) {
   // Webhook signature proves origin, but API verify confirms payment state
   try {
     const verifyRef = transaction.paystack_reference || reference;
-    const verifyResult = await paystackVerifyTransaction(verifyRef);
+    const verifyResult = await GatewayFactory.getGateway(PAYMENT_GATEWAY.PAYSTACK).verifyPayment(verifyRef);
     if (verifyResult.status !== 'success') {
       logError('[Paystack Webhook] Verify returned non-success', { reference, status: verifyResult.status });
       await updateTransactionStatus(transaction.reference, { status: PAYMENT_STATUS.FAILED });

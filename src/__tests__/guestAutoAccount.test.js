@@ -18,13 +18,22 @@ jest.unstable_mockModule('../services/courier/deliveryQuote.service.js', () => (
 jest.unstable_mockModule('../services/courier/terminal.service.js', () => ({
   TerminalError: class TerminalError extends Error {},
 }));
+// The guest service now reaches the gateways through GatewayFactory, whose
+// adapters import more than init/verify from each service module.
 jest.unstable_mockModule('../services/payment/paystack.service.js', () => ({
   initializeTransaction: jest.fn(),
   verifyTransaction: jest.fn(),
+  verifyWebhookSignature: jest.fn(),
+  parseWebhookEvent: jest.fn(),
+  PaystackError: class PaystackError extends Error {},
 }));
 jest.unstable_mockModule('../services/payment/monipay/monipay.service.js', () => ({
   initializeTransaction: jest.fn(),
   verifyTransaction: jest.fn(),
+  verifyWebhookSignature: jest.fn(),
+  parseWebhookEvent: jest.fn(),
+  isPaidStatus: jest.fn(),
+  MonipayError: class MonipayError extends Error {},
 }));
 jest.unstable_mockModule('../services/email/paymentEmail.service.js', () => ({
   sendGuestPaymentConfirmationEmail: jest.fn(),
