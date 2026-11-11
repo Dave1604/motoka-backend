@@ -39,7 +39,6 @@ import { getCorsConfig } from './config/cors.config.js';
 import { getSupabaseAdmin } from './config/supabase.js';
 import paymentMetrics from './services/payment/metrics.service.js';
 import { runAutoBillingJob } from './services/payment/autoBilling.service.js';
-import { monicreditPoller } from './services/payment/monicredit/poller.service.js';
 import { monipayPoller } from './services/payment/monipay/poller.service.js';
 import { paystackPoller } from './services/payment/paystack/poller.service.js';
 import { renewalSweeper } from './services/payment/renewalSweeper.service.js';
@@ -180,7 +179,6 @@ app.use(cors(getCorsConfig()));
 
 app.use('/api/webhooks/paystack', express.raw({ type: 'application/json', limit: '2mb' }));
 app.use('/api/webhooks/monipay', express.raw({ type: 'application/json', limit: '2mb' }));
-app.use('/api/webhooks/monicredit', express.raw({ type: 'application/json', limit: '2mb' }));
 // Meta signs the raw request body with the app secret — express.json() would
 // have already parsed (and mutated) req.body by the time verification runs.
 app.use('/api/v1/facebook/webhook', express.raw({ type: 'application/json', limit: '1mb' }));
@@ -692,10 +690,6 @@ app.listen(PORT, '0.0.0.0', () => {
           monipay: {
             total: snapshot.gateways.monipay?.total || 0,
             successRate: `${paymentMetrics.getGatewaySuccessRate('monipay')}%`
-          },
-          monicredit: {
-            total: snapshot.gateways.monicredit.total,
-            successRate: `${paymentMetrics.getGatewaySuccessRate('monicredit')}%`
           }
         },
         webhooks: {
@@ -781,7 +775,6 @@ app.listen(PORT, '0.0.0.0', () => {
 
   // Pending-txn pollers — fill in if webhooks are delayed or missed.
   monipayPoller.start();
-  monicreditPoller.start();
   paystackPoller.start();
   renewalSweeper.start();
 });

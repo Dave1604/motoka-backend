@@ -1,7 +1,7 @@
 import { logWarn, logError, logDebug } from './logger.js';
 
-const DEFAULT_MAX_RETRIES = parseInt(process.env.MONICREDIT_MAX_RETRIES || '3', 10);
-const DEFAULT_INITIAL_DELAY_MS = parseInt(process.env.MONICREDIT_RETRY_INITIAL_DELAY_MS || '1000', 10);
+const DEFAULT_MAX_RETRIES = parseInt(process.env.PAYMENT_MAX_RETRIES || '3', 10);
+const DEFAULT_INITIAL_DELAY_MS = parseInt(process.env.PAYMENT_RETRY_INITIAL_DELAY_MS || '1000', 10);
 const DEFAULT_MAX_DELAY_MS = 10000; // 10 seconds max delay
 const DEFAULT_BACKOFF_MULTIPLIER = 2;
 

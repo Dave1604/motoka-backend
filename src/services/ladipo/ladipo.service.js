@@ -869,7 +869,7 @@ export async function payOrder({ orderNumber, userId, userEmail, payment_gateway
   if (error || !order) throw new Error('Order not found');
   if (order.payment_status === 'paid') throw new Error('Order already paid');
 
-  // Use email from auth token; optionally enrich with profile for Monicredit customer fields
+  // Use email from auth token; optionally enrich with profile for the gateway's customer fields
   const email = userEmail;
   if (!email) throw new Error('Could not resolve user email for payment');
 
@@ -880,8 +880,6 @@ export async function payOrder({ orderNumber, userId, userEmail, payment_gateway
     .single();
 
   const frontendUrl = process.env.FRONTEND_URL || 'https://app.motoka.ng';
-
-  if (payment_gateway === 'monicredit') payment_gateway = 'monipay';
 
   // ── Monipay hosted checkout ──────────────────────────────────────────────
   if (payment_gateway === 'monipay') {

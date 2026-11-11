@@ -9,7 +9,7 @@ import { logError } from '../../utils/logger.js';
 
 // Short-lived cache so duplicate calls within a single request lifecycle are free.
 // Renewal items rarely change; 60 s is safe and eliminates the N+1 re-fetch in the
-// Monicredit adapter without coupling the adapter to the controller's data.
+// gateway adapter without coupling the adapter to the controller's data.
 // Keyed by state: Lagos carries its own road worthiness price (migration 117), so a
 // single shared entry would quote one state's price to a customer in another.
 const _itemsCache = new Map();

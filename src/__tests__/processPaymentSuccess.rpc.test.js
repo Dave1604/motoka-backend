@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 /**
  * Regression guard for the process_payment_success() RPC.
  *
- * This RPC is the SHARED order-creation path for BOTH Paystack and Monicredit
+ * This RPC is the SHARED order-creation path for BOTH Paystack and Monipay
  * (webhook + verify). It has regressed twice around the same footgun:
  *
  *   - 025 fixed "column reference transaction_id is ambiguous" by using the

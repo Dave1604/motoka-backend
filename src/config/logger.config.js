@@ -30,8 +30,6 @@ const redactSensitiveData = (obj) => {
     'session_token',
     'jwt',
     'bearer',
-    'monicredit_public_key',
-    'monicredit_private_key',
     'paystack_secret_key',
     'paystack_public_key',
     'supabase_service_role_key',

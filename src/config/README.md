@@ -6,7 +6,7 @@
 - Centralized CORS policy management
 - Environment-aware origin validation
 - Supports localhost in development, strict validation in production
-- Allows webhook signature headers (`x-monipay-signature`, `x-paystack-signature`, `x-monicredit-signature`)
+- Allows webhook signature headers (`x-monipay-signature`, `x-paystack-signature`)
 
 ### Logger Configuration (`logger.config.js`)
 - Pino-based structured logging

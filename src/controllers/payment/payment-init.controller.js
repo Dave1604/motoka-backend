@@ -8,7 +8,6 @@ import { GatewayError } from '../../services/payment/gateway/gateway.interface.j
 import {
   createTransaction,
   updateTransactionWithPaystackInit,
-  updateTransactionWithMonicreditInit,
   updateTransactionWithMonipayInit,
   TransactionError
 } from '../../services/payment/transaction.service.js';
@@ -40,7 +39,6 @@ import {
   SUCCESS_MESSAGES
 } from '../../constants/payment.constants.js';
 import { PaystackError } from '../../services/payment/paystack.service.js';
-import { MonicreditError } from '../../services/payment/monicredit/index.js';
 import { MonipayError } from '../../services/payment/monipay/index.js';
 import {
   getIdempotencyResponse,
@@ -281,9 +279,6 @@ export const initializePayment = async (req, res) => {
     }
     
     let payment_gateway = rawPaymentGateway?.toLowerCase().trim() || null;
-    if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
-      payment_gateway = PAYMENT_GATEWAY.MONIPAY;
-    }
     if (!payment_gateway ||
         (payment_gateway !== PAYMENT_GATEWAY.PAYSTACK && payment_gateway !== PAYMENT_GATEWAY.MONIPAY)) {
       if (rawPaymentGateway) {
@@ -651,8 +646,6 @@ export const initializePayment = async (req, res) => {
     
     if (payment_gateway === PAYMENT_GATEWAY.MONIPAY) {
       await updateTransactionWithMonipayInit(transaction.reference, gatewayResult);
-    } else if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
-      await updateTransactionWithMonicreditInit(transaction.reference, gatewayResult);
     } else {
       await updateTransactionWithPaystackInit(transaction.reference, gatewayResult);
     }
@@ -669,29 +662,12 @@ export const initializePayment = async (req, res) => {
       gateway: payment_gateway
     };
     
-    if (payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
-      // Amounts are stored in kobo internally; send naira to the frontend
-      Object.assign(responseData, {
-        order_id: gatewayResult.order_id,
-        transaction_id_monicredit: gatewayResult.transaction_id,
-        customer: gatewayResult.customer,
-        account_number: gatewayResult.account_number,
-        bank_name: gatewayResult.bank_name,
-        account_name: gatewayResult.account_name,
-        payment_url: gatewayResult.authorization_url || null,
-        checkout_url: gatewayResult.authorization_url || null,
-        total_amount: gatewayResult.total_amount ? gatewayResult.total_amount / 100 : 0,
-        amount: amount / 100,
-        expires_at: gatewayResult.expires_at
-      });
-    } else {
-      // Paystack expects kobo — do not convert
-      Object.assign(responseData, {
-        authorization_url: gatewayResult.authorization_url,
-        access_code: gatewayResult.access_code,
-        amount
-      });
-    }
+    // Amounts stay in kobo
+    Object.assign(responseData, {
+      authorization_url: gatewayResult.authorization_url,
+      access_code: gatewayResult.access_code,
+      amount
+    });
 
     if (idempotencyKey) {
       await storeIdempotencyResponse(idempotencyKey, userId, transaction.id, responseData, false);
@@ -752,14 +728,6 @@ export const initializePayment = async (req, res) => {
       return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
     if (error instanceof MonipayError) {
-      return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
-    }
-    if (error instanceof MonicreditError) {
-      logError('[Payment Init] MonicreditError details', {
-        message: error.message,
-        code: error.code,
-        statusCode: error.statusCode
-      });
       return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode || 500);
     }
     if (error instanceof TransactionError) {

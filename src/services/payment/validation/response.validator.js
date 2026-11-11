@@ -80,7 +80,7 @@ export function validateVerifyResponse(response) {
  * Validate webhook payload
  * 
  * @param {Object} payload - Webhook payload
- * @param {string} gateway - Gateway name ('paystack' or 'monicredit')
+ * @param {string} gateway - Gateway name ('paystack' or 'monipay')
  * @returns {boolean} True if valid
  * @throws {ValidationError} If validation fails
  */
@@ -102,12 +102,6 @@ export function validateWebhookPayload(payload, gateway) {
     const hasEvent = payload.event || payload.type || payload.status;
     if (!hasRef && !hasEvent) {
       throw new ValidationError('Monipay webhook must have an event or reference', 'event', payload.event);
-    }
-  } else if (gateway === 'monicredit') {
-    // Monicredit webhooks may have varying structures
-    const hasOrderId = payload.order_id || payload.data?.order_id || payload.transid;
-    if (!hasOrderId) {
-      throw new ValidationError('Monicredit webhook must have order_id or transid', 'order_id', payload.order_id);
     }
   }
   

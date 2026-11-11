@@ -60,7 +60,6 @@ export const initGuestRenewal = async (req, res) => {
     // ── Validate payment gateway ─────────────────────────────────────────────
     const rawGateway = payment_gateway?.toLowerCase();
     let gateway = rawGateway || PAYMENT_GATEWAY.MONIPAY;
-    if (gateway === PAYMENT_GATEWAY.MONICREDIT) gateway = PAYMENT_GATEWAY.MONIPAY;
     if (gateway !== PAYMENT_GATEWAY.MONIPAY && gateway !== PAYMENT_GATEWAY.PAYSTACK) {
       return response.error(res, 'payment_gateway must be "monipay" or "paystack"', 400);
     }

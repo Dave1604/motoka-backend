@@ -53,10 +53,10 @@ export const ladipoCreateOrderBodySchema = z.object({
 });
 
 export const ladipoPayOrderBodySchema = z.object({
-  payment_gateway: z.enum(['paystack', 'monipay', 'monicredit']).optional().default('monipay'),
+  payment_gateway: z.enum(['paystack', 'monipay']).optional().default('monipay'),
 });
 
-/** Paystack reference or Monicredit / Ladipo gateway reference string */
+/** Paystack / Monipay / Ladipo gateway reference string */
 export const ladipoVerifyPaymentBodySchema = z.object({
   reference: z.string().trim().min(8).max(256),
 });

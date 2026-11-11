@@ -33,12 +33,9 @@ Test cards / bank transfer: use the current notes in the Monipay dashboard.
 
 ## Gateway architecture
 
-- **Gateway abstraction** (`gateway/`) — Paystack + Monipay (Monicredit adapter kept for historical rows)
-- Incoming `monicredit` on new inits is mapped to `monipay`
+- **Gateway abstraction** (`gateway/`) — Paystack + Monipay
 - Set `PRIMARY_GATEWAY` / `FALLBACK_GATEWAY` in environment variables. See `.env.example`.
 
 ### Paystack
 Alternate hosted checkout (`payment_gateway: paystack`).
 
-### Monicredit (legacy)
-Existing `monicredit` transactions can still be verified. New payments do not initialize Monicredit.

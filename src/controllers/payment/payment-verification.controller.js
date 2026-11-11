@@ -7,14 +7,12 @@ import { GatewayFactory } from '../../services/payment/gateway/gateway.factory.j
 import {
   getTransactionByReference,
   getTransactionByPaystackReference,
-  getTransactionByMonicreditOrderId,
   markTransactionAbandoned,
   processPaymentSuccess,
   updateTransactionStatus,
   TransactionError,
   createTransaction,
   updateTransactionWithPaystackInit,
-  updateTransactionWithMonicreditInit,
   updateTransactionWithMonipayInit
 } from '../../services/payment/transaction.service.js';
 import {
@@ -35,7 +33,6 @@ import {
   SUCCESS_MESSAGES
 } from '../../constants/payment.constants.js';
 import { PaystackError } from '../../services/payment/paystack.service.js';
-import { MonicreditError } from '../../services/payment/monicredit/index.js';
 import { MonipayError } from '../../services/payment/monipay/index.js';
 import { PaymentSuccessService } from '../../services/payment/payment-success.service.js';
 import { getSupabaseAdmin } from '../../config/supabase.js';
@@ -51,10 +48,9 @@ export const verifyPayment = async (req, res) => {
       return paymentResponse.error(res, 'Payment reference is required', HTTP_STATUS.BAD_REQUEST);
     }
     
-    // Resolution order: internal ref → Paystack ref → Monicredit order ID
+    // Resolution order: internal ref → Paystack ref
     let transaction = await getTransactionByReference(reference);
     if (!transaction) transaction = await getTransactionByPaystackReference(reference);
-    if (!transaction) transaction = await getTransactionByMonicreditOrderId(reference);
     
     if (!transaction) {
       logError('Transaction not found for verification', { reference, userId });
@@ -65,9 +61,7 @@ export const verifyPayment = async (req, res) => {
       return paymentResponse.forbidden(res, ERROR_MESSAGES.UNAUTHORIZED);
     }
     
-    const paymentGateway = transaction.payment_gateway === PAYMENT_GATEWAY.MONICREDIT
-      ? PAYMENT_GATEWAY.MONICREDIT
-      : (transaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY);
+    const paymentGateway = transaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY;
     
     let metaData = {};
     try {
@@ -96,10 +90,8 @@ export const verifyPayment = async (req, res) => {
       }
 
       const existingOrder = await getOrderByTransactionId(transaction.id).catch(() => null);
-      const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success';
-
       return paymentResponse.success(res, {
-        status: statusForResponse,
+        status: 'success',
         message: 'Payment verified successfully',
         reference: transaction.reference,
         transaction_id: transaction.id,
@@ -115,9 +107,7 @@ export const verifyPayment = async (req, res) => {
     const gateway = GatewayFactory.getGateway(paymentGateway);
     
     let verifyTransactionId = transaction.reference;
-    if (paymentGateway === PAYMENT_GATEWAY.MONICREDIT) {
-      verifyTransactionId = transaction.monicredit_order_id || transaction.monicredit_transaction_id || transaction.reference;
-    } else if (paymentGateway === PAYMENT_GATEWAY.PAYSTACK) {
+    if (paymentGateway === PAYMENT_GATEWAY.PAYSTACK) {
       verifyTransactionId = transaction.paystack_reference || transaction.reference;
     }
     
@@ -141,7 +131,7 @@ export const verifyPayment = async (req, res) => {
       
       paymentMetrics.trackFailure({ gateway: paymentGateway, amount: transaction.amount, errorType });
       
-      if (verifyError instanceof PaystackError || verifyError instanceof MonicreditError || verifyError instanceof MonipayError) {
+      if (verifyError instanceof PaystackError || verifyError instanceof MonipayError) {
         return paymentResponse.error(res, verifyError.message, verifyError.statusCode);
       }
       return paymentResponse.error(res, ERROR_MESSAGES.PAYMENT_VERIFY_FAILED, HTTP_STATUS.SERVER_ERROR);
@@ -271,8 +261,6 @@ export const verifyPayment = async (req, res) => {
           carSlug = carData?.slug;
         }
         
-        // Monicredit returns "APPROVED"; Paystack returns "success"
-        const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success';
 
         await logPaymentAudit({
           eventType: 'verify',
@@ -288,7 +276,7 @@ export const verifyPayment = async (req, res) => {
         });
         
         return paymentResponse.success(res, {
-          status: statusForResponse,
+          status: 'success',
           message: processResult.orderStatus === 'scheduled'
             ? `Payment received. Processing starts ${processResult.scheduledFor} — we'll notify you.`
             : 'Payment verified successfully',
@@ -324,7 +312,7 @@ export const verifyPayment = async (req, res) => {
             .eq('status', 'pending')
             .single();
           return paymentResponse.success(res, {
-            status: paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success',
+            status: 'success',
             message: 'Payment verified. Your car already has a renewal in progress.',
             reference: transaction.reference,
             transaction_id: transaction.id,
@@ -362,11 +350,10 @@ export const verifyPayment = async (req, res) => {
       carSlug = carData?.slug;
     }
     
-    const statusForResponse = paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? 'APPROVED' : 'success';
     const existingOrder = await getOrderByTransactionId(transaction.id).catch(() => null);
 
     return paymentResponse.success(res, {
-      status: statusForResponse,
+      status: 'success',
       message: 'Payment already verified',
       reference: transaction.reference,
       transaction_id: transaction.id,
@@ -384,7 +371,7 @@ export const verifyPayment = async (req, res) => {
     
     const isProduction = process.env.NODE_ENV === 'production';
     
-    if (error instanceof PaystackError || error instanceof MonicreditError || error instanceof MonipayError) {
+    if (error instanceof PaystackError || error instanceof MonipayError) {
       return paymentResponse.error(res, isProduction ? getUserFriendlyMessage(error) : error.message, error.statusCode);
     }
     if (error instanceof AmountValidationError) {
@@ -511,11 +498,7 @@ export const cancelPayment = async (req, res) => {
     // errors we still abandon — verify recovery / the poller backstop it.
     let cancelGateway = null;
     try {
-      cancelGateway = GatewayFactory.getGateway(
-        transaction.payment_gateway === PAYMENT_GATEWAY.MONICREDIT
-          ? PAYMENT_GATEWAY.MONICREDIT
-          : (transaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY)
-      );
+      cancelGateway = GatewayFactory.getGateway(transaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY);
     } catch (gatewayErr) {
       logWarn('[Cancel Payment] Unsupported gateway — proceeding with cancel', {
         reference,
@@ -528,9 +511,7 @@ export const cancelPayment = async (req, res) => {
         const cancelVerifyId =
           transaction.payment_gateway === PAYMENT_GATEWAY.PAYSTACK
             ? (transaction.paystack_reference || reference)
-            : (transaction.payment_gateway === PAYMENT_GATEWAY.MONICREDIT
-                ? (transaction.monicredit_order_id || transaction.monicredit_transaction_id || reference)
-                : reference);
+            : reference;
         const cancelVerifyResult = await cancelGateway.verifyPayment(cancelVerifyId);
         const cancelGatewayPaid =
           cancelVerifyResult?.success === true ||
@@ -617,9 +598,7 @@ export const retryPayment = async (req, res) => {
       carId: originalTransaction.car_id,
       amount: originalTransaction.amount,
       paymentType: originalTransaction.payment_type,
-      paymentGateway: originalTransaction.payment_gateway === PAYMENT_GATEWAY.MONICREDIT
-        ? PAYMENT_GATEWAY.MONIPAY
-        : (originalTransaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY),
+      paymentGateway: originalTransaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY,
       metadata: {
         ...metaData,
         retry_of: reference,
@@ -635,8 +614,7 @@ export const retryPayment = async (req, res) => {
       return paymentResponse.error(res, 'User email not found', HTTP_STATUS.BAD_REQUEST);
     }
     
-    let retryGateway = originalTransaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY;
-    if (retryGateway === PAYMENT_GATEWAY.MONICREDIT) retryGateway = PAYMENT_GATEWAY.MONIPAY;
+    const retryGateway = originalTransaction.payment_gateway || PAYMENT_GATEWAY.MONIPAY;
     const gateway = GatewayFactory.getGateway(retryGateway);
     
     const { data: car } = await supabaseAdmin
@@ -662,8 +640,6 @@ export const retryPayment = async (req, res) => {
     
     if (retryGateway === PAYMENT_GATEWAY.MONIPAY) {
       await updateTransactionWithMonipayInit(newTransaction.reference, gatewayResult);
-    } else if (retryGateway === PAYMENT_GATEWAY.MONICREDIT) {
-      await updateTransactionWithMonicreditInit(newTransaction.reference, gatewayResult);
     } else {
       await updateTransactionWithPaystackInit(newTransaction.reference, gatewayResult);
     }
@@ -676,15 +652,8 @@ export const retryPayment = async (req, res) => {
       gateway: retryGateway
     };
     
-    if (retryGateway === PAYMENT_GATEWAY.PAYSTACK || retryGateway === PAYMENT_GATEWAY.MONIPAY) {
-      responseData.authorization_url = gatewayResult.authorization_url;
-      responseData.access_code = gatewayResult.access_code;
-    } else if (retryGateway === PAYMENT_GATEWAY.MONICREDIT) {
-      responseData.order_id = gatewayResult.order_id;
-      responseData.account_number = gatewayResult.account_number;
-      responseData.bank_name = gatewayResult.bank_name;
-      responseData.account_name = gatewayResult.account_name;
-    }
+    responseData.authorization_url = gatewayResult.authorization_url;
+    responseData.access_code = gatewayResult.access_code;
     
     return paymentResponse.created(res, responseData, 'Payment retry initialized successfully');
     
