@@ -53,7 +53,6 @@ export async function createTransaction({
   const allowedGateways = [
     PAYMENT_GATEWAY.PAYSTACK,
     PAYMENT_GATEWAY.MONIPAY,
-    PAYMENT_GATEWAY.MONICREDIT,
     PAYMENT_GATEWAY.WALLET,
   ];
   if (!allowedGateways.includes(paymentGateway)) {
@@ -268,65 +267,6 @@ export async function updateTransactionWithMonipayInit(reference, monipayData) {
     throw new TransactionError('Failed to update transaction', HTTP_STATUS.SERVER_ERROR);
   }
 
-  return transaction;
-}
-
-export async function updateTransactionWithMonicreditInit(reference, monicreditData) {
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const { data: transaction, error } = await supabaseAdmin
-    .from('payment_transactions')
-    .update({
-      monicredit_order_id: monicreditData.order_id,
-      monicredit_transaction_id: monicreditData.transaction_id,
-      monicredit_account_number: monicreditData.account_number,
-      monicredit_bank_name: monicreditData.bank_name,
-      monicredit_account_name: monicreditData.account_name,
-      payment_gateway: 'monicredit'
-    })
-    .eq('reference', reference)
-    .select('*')
-    .single();
-  
-  if (error) {
-    logError('Update transaction with Monicredit init error', { error, reference });
-    throw new TransactionError('Failed to update transaction', HTTP_STATUS.SERVER_ERROR);
-  }
-  
-  return transaction;
-}
-
-export async function getTransactionByMonicreditOrderId(orderId) {
-  if (!orderId) {
-    return null;
-  }
-  
-  // Validate order ID format to prevent SQL injection in .or() interpolation
-  assertSafeReference(orderId, 'order ID');
-  
-  const supabaseAdmin = getSupabaseAdmin();
-  
-  const { data: transactions, error } = await supabaseAdmin
-    .from('payment_transactions')
-    .select('*')
-    .or(`reference.eq.${orderId},monicredit_order_id.eq.${orderId}`)
-    .order('created_at', { ascending: false })
-    .limit(1);
-  
-  if (error && error.code !== 'PGRST116') {
-    logError('Get transaction by Monicredit order ID error', { error, orderId });
-  }
-  
-  const transaction = transactions && transactions.length > 0 ? transactions[0] : null;
-  
-  if (transactions && transactions.length > 1) {
-    logWarn('[Transaction Service] Multiple transactions found for Monicredit order ID', {
-      orderId,
-      count: transactions.length,
-      usingMostRecent: transaction?.id
-    });
-  }
-  
   return transaction;
 }
 

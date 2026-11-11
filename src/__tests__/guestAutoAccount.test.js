@@ -18,9 +18,6 @@ jest.unstable_mockModule('../services/courier/deliveryQuote.service.js', () => (
 jest.unstable_mockModule('../services/courier/terminal.service.js', () => ({
   TerminalError: class TerminalError extends Error {},
 }));
-jest.unstable_mockModule('../services/payment/monicredit/monicredit.service.js', () => ({
-  verifyTransaction: jest.fn(),
-}));
 jest.unstable_mockModule('../services/payment/paystack.service.js', () => ({
   initializeTransaction: jest.fn(),
   verifyTransaction: jest.fn(),

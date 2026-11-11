@@ -3,7 +3,6 @@ import { authenticate } from '../middleware/authenticate.js';
 import { checkEmailVerified } from '../middleware/checkEmailVerified.js';
 import { verifyPaystackWebhook } from '../middleware/verifyPaystackWebhook.js';
 import { verifyMonipayWebhook } from '../middleware/verifyMonipayWebhook.js';
-import { verifyMonicreditWebhook } from '../middleware/verifyMonicreditWebhook.js';
 import { paymentLimiter, webhookLimiter } from '../middleware/rateLimiter.js';
 import {
   initializePayment,
@@ -32,7 +31,6 @@ import { releaseSweepHandler } from '../services/payment/renewalSweeper.service.
 import {
   handlePaystackWebhook,
   handleMonipayWebhook,
-  handleMonicreditWebhook
 } from '../controllers/payment/webhook.controller.js';
 
 import {
@@ -114,26 +112,6 @@ router.post(
     }
   },
   handleMonipayWebhook
-);
-
-router.post(
-  '/webhooks/monicredit',
-  webhookLimiter,
-  express.raw({ type: 'application/json', limit: '2mb' }),
-  verifyMonicreditWebhook,
-  (req, res, next) => {
-    try {
-      const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
-      req.body = raw ? JSON.parse(raw) : {};
-      next();
-    } catch (error) {
-      return res.status(400).json({
-        status: false,
-        message: 'Invalid JSON payload'
-      });
-    }
-  },
-  handleMonicreditWebhook
 );
 
 router.get('/payment-schedule', authenticate, getRenewalItems);

@@ -30,9 +30,7 @@ jest.unstable_mockModule('../services/payment/renewalItems.service.js', () => ({
 jest.unstable_mockModule('../services/payment/transaction.service.js', () => ({
   createTransaction: (...args) => mockCreateTransaction(...args),
   updateTransactionWithPaystackInit: (...args) => mockUpdateTransactionWithPaystackInit(...args),
-  updateTransactionWithMonicreditInit: jest.fn(),
   updateTransactionWithMonipayInit: jest.fn(),
-  getTransactionByMonicreditOrderId: jest.fn(),
   updateTransactionStatus: (...args) => mockUpdateTransactionStatus(...args),
   getTransactionByReference: (...args) => mockGetTransactionByReference(...args),
   getTransactionByPaystackReference: (...args) => mockGetTransactionByPaystackReference(...args),

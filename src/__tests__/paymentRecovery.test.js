@@ -15,9 +15,7 @@ const mockLogPaymentAudit = jest.fn();
 jest.unstable_mockModule('../services/payment/transaction.service.js', () => ({
   createTransaction: jest.fn(),
   updateTransactionWithPaystackInit: jest.fn(),
-  updateTransactionWithMonicreditInit: jest.fn(),
   updateTransactionWithMonipayInit: jest.fn(),
-  getTransactionByMonicreditOrderId: jest.fn(),
   updateTransactionStatus: (...args) => mockUpdateTransactionStatus(...args),
   getTransactionByReference: (...args) => mockGetTransactionByReference(...args),
   getTransactionByPaystackReference: (...args) => mockGetTransactionByPaystackReference(...args),

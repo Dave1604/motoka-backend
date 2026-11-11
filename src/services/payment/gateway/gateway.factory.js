@@ -1,5 +1,4 @@
 import { PAYMENT_GATEWAY } from '../../../constants/payment.constants.js';
-import { MonicreditAdapter } from '../monicredit/index.js';
 import { MonipayAdapter } from '../monipay/index.js';
 import { PaystackAdapter } from '../paystack/paystack.adapter.js';
 import { GatewayError } from './gateway.interface.js';
@@ -28,8 +27,6 @@ export class GatewayFactory {
       case PAYMENT_GATEWAY.MONIPAY.toLowerCase():
         return MonipayAdapter;
 
-      case PAYMENT_GATEWAY.MONICREDIT.toLowerCase():
-        return MonicreditAdapter;
         
       default:
         throw new GatewayError(

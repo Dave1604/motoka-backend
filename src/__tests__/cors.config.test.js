@@ -174,7 +174,6 @@ describe('CORS Configuration', () => {
     it('should include required headers for webhook signatures', () => {
       const config = getCorsConfig();
       
-      expect(config.allowedHeaders).toContain('x-monicredit-signature');
       expect(config.allowedHeaders).toContain('x-monipay-signature');
       expect(config.allowedHeaders).toContain('x-ship-signature');
       expect(config.allowedHeaders).toContain('x-signature');

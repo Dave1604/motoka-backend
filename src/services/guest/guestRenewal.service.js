@@ -5,7 +5,7 @@
  *  1. Validate input and compute pricing (never trust client totals)
  *  2. Upsert a guest_customer record
  *  3. Create a guest_renewal_order in status "pending_payment"
- *  4. Call the selected payment gateway (MoniCredit or Paystack) directly,
+ *  4. Call the selected payment gateway (Monipay or Paystack) directly,
  *     bypassing the authenticated adapters that require a user profile from DB
  *  5. Expose helpers for status polling, receipt retrieval, and webhook updates
  */
@@ -17,7 +17,6 @@ import { getRenewalItems, validateRenewalItemsSelection } from '../payment/renew
 import { quoteFromDeliveryFields, DeliveryQuoteError } from '../courier/deliveryQuote.service.js';
 import { TerminalError } from '../courier/terminal.service.js';
 import { generatePaymentReference, sanitizeAttribution } from '../../utils/paymentHelpers.js';
-import { verifyTransaction as monicreditVerify } from '../payment/monicredit/monicredit.service.js';
 import { initializeTransaction as paystackInit, verifyTransaction as paystackVerify } from '../payment/paystack.service.js';
 import { initializeTransaction as monipayInit, verifyTransaction as monipayVerify } from '../payment/monipay/monipay.service.js';
 import { PAYMENT_GATEWAY } from '../../constants/payment.constants.js';
@@ -76,9 +75,6 @@ export async function initiateGuestRenewal({
   renewalState = null,
   attribution = null
 }) {
-  if (paymentGateway === PAYMENT_GATEWAY.MONICREDIT) {
-    paymentGateway = PAYMENT_GATEWAY.MONIPAY;
-  }
   if (paymentGateway !== PAYMENT_GATEWAY.PAYSTACK) {
     paymentGateway = PAYMENT_GATEWAY.MONIPAY;
   }
@@ -245,13 +241,7 @@ export async function initiateGuestRenewal({
     expiresAt: order.expires_at,
     gateway: paymentGateway,
     totalAmount: totalAmount / 100,
-    ...(paymentGateway === PAYMENT_GATEWAY.MONICREDIT ? {
-      accountNumber: gatewayResult.account_number,
-      bankName: gatewayResult.bank_name,
-      accountName: gatewayResult.account_name,
-    } : {
-      accessCode: gatewayResult.access_code
-    })
+    accessCode: gatewayResult.access_code
   };
 }
 
@@ -783,26 +773,6 @@ export async function verifyGuestPayment(orderId, reference) {
     }
   }
 
-  if (order.payment_gateway === PAYMENT_GATEWAY.MONICREDIT) {
-    let verifyResult;
-    try {
-      verifyResult = await monicreditVerify(ref);
-    } catch (err) {
-      logError('[GuestRenewal] MoniCredit verify call failed', { ref, err: err.message });
-      return { status: 'pending_payment' };
-    }
-
-    const dataStatus = verifyResult?.data?.status?.toLowerCase() || '';
-    if (dataStatus === 'approved' || dataStatus === 'success') {
-      const paid = await markGuestOrderPaid(ref);
-      if (paid) {
-        return { status: 'payment_success', receiptToken: order.receipt_token };
-      }
-    } else if (dataStatus === 'failed' || dataStatus === 'cancelled') {
-      await markGuestOrderFailed(ref);
-      return { status: 'payment_failed' };
-    }
-  }
 
   if (order.expires_at && new Date(order.expires_at) < new Date()) {
     throw Object.assign(new Error('This order has expired'), { statusCode: 410 });

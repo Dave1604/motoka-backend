@@ -51,7 +51,7 @@ export const ORDER_TYPE = {
   DRIVER_LICENSE: 'driver_license'
 };
 
-// All values in kobo. Monicredit expects Naira — divide by 100 at API boundary.
+// All values in kobo.
 export const PAYMENT_LIMITS = {
   MIN_AMOUNT: 10000,        // ₦100
   MAX_AMOUNT: 100000000,    // ₦1,000,000
@@ -62,7 +62,7 @@ export const PAYMENT_LIMITS = {
 export const PAYMENT_GATEWAY = {
   PAYSTACK: 'paystack',
   MONIPAY: 'monipay',
-  MONICREDIT: 'monicredit',
+  MONICREDIT: 'monicredit', // retired 2026-11; kept for the DB enum and historical rows
   WALLET: 'wallet',
   MANUAL: 'manual'
 };
@@ -131,9 +131,6 @@ export const ERROR_MESSAGES = {
   MONIPAY_INIT_FAILED: 'Failed to initialize Monipay payment',
   MONIPAY_VERIFY_FAILED: 'Failed to verify Monipay payment',
   MONIPAY_API_ERROR: 'Monipay API error',
-  MONICREDIT_INIT_FAILED: 'Failed to initialize Monicredit payment',
-  MONICREDIT_VERIFY_FAILED: 'Failed to verify Monicredit payment',
-  MONICREDIT_API_ERROR: 'Monicredit API error',
   INVALID_PAYMENT_GATEWAY: 'Invalid payment gateway selected',
   
   SUBSCRIPTION_NOT_FOUND: 'Subscription not found',
